@@ -1,0 +1,16 @@
+{
+  "configured": true,
+  "bar_name": "The Tiki Hut Karaoke Lounge",
+  "host_pin": "1234",
+  "port": 8000,
+  "remote_mode": "bore",
+  "remote_port": 38480,
+  "public_host": "bore.pub:38480",
+  "target_lufs": -16.0,
+  "intermission_seconds": 20,
+  "tts_enabled": false,
+  "bgm_enabled": true,
+  "bgm_volume": 0.25,
+  "google_client_id": "",
+  "google_client_secret": ""
+}

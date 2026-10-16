@@ -1,0 +1,36 @@
+# Virtual environments
+venv/
+env/
+.venv/
+ENV/
+
+# Python byte-code and caches
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# Databases, PID and runtime session secrets
+data/*.db
+data/*.db-wal
+data/*.db-shm
+data/*.pid
+data/host_token.txt
+*.db
+
+# Downloaded platform binaries & build metadata
+bin/
+.crates.toml
+.crates2.json
+
+# Local downloaded media files (keep folder structure via .gitkeep)
+karaoke_library/tracks/*
+!karaoke_library/tracks/.gitkeep
+karaoke_library/playlists_m3u/*
+!karaoke_library/playlists_m3u/.gitkeep
+
+# Environment and OS files
+.env
+.DS_Store
+Thumbs.db
