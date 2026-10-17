@@ -487,8 +487,8 @@ async def api_enqueue_song(req: QueueSongRequest, request: Request):
     if not singer:
         singer = get_or_create_singer(req.singer_token, "Guest", ip_address=client_ip)
 
-    # Check for duplicates if not forced and not a host override
-    if not req.force and not is_host_request(request):
+    # Check for duplicates if not forced
+    if not req.force:
         dup = check_song_queue_duplicate(
             singer_id=singer["id"],
             track_id=req.track_id,

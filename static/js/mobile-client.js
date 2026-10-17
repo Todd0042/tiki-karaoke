@@ -445,10 +445,11 @@ function renderSearchResults(data, query) {
                     <div style="color: var(--text-muted); font-size: 0.85rem;">${escapeHtml(track.artist)}</div>
                     <span class="badge-local" style="margin-top: 4px;">⚡ Downloaded</span>
                 </div>
-                <button onclick="openQueueModal(${track.id}, '${escapeHtml(track.title)}', '${escapeHtml(track.artist)}', '${track.video_id}')" class="btn-neon-pink" style="padding: 8px 14px; font-size: 0.85rem;">
+                <button class="btn-neon-pink local-queue-btn" style="padding: 8px 14px; font-size: 0.85rem;">
                     + Queue
                 </button>
             `;
+            card.querySelector(".local-queue-btn").onclick = () => openQueueModal(track.id, track.title, track.artist, track.video_id);
             localSection.appendChild(card);
         });
         container.appendChild(localSection);
@@ -487,11 +488,12 @@ function renderSearchResults(data, query) {
                             ${bestVersion.attributes.length ? `• ${bestVersion.attributes.join(', ')}` : ''}
                         </div>
                     </div>
-                    <button onclick="openQueueModal(null, '${escapeHtml(group.title)}', '${escapeHtml(group.artist)}', '${bestVersion.video_id}')" class="btn-neon-cyan" style="padding: 8px 14px; font-size: 0.85rem;">
+                    <button class="btn-neon-cyan yt-queue-btn" style="padding: 8px 14px; font-size: 0.85rem;">
                         + Queue
                     </button>
                 </div>
             `;
+            card.querySelector(".yt-queue-btn").onclick = () => openQueueModal(null, group.title, group.artist, bestVersion.video_id);
             ytSection.appendChild(card);
         });
         container.appendChild(ytSection);
@@ -499,20 +501,43 @@ function renderSearchResults(data, query) {
 }
 
 // Queue Modal & Pitch Selector
-function openQueueModal(trackId, title, artist, videoId) {
+// Queue Modal & Pitch Selector
+async function openQueueModal(trackId, title, artist, videoId) {
     selectedTrackForQueue = { trackId, title, artist, videoId };
     selectedPitch = 0;
     activeDuplicateInfo = null;
 
-    const formSec = document.getElementById("queueModalFormSection");
-    const dupSec = document.getElementById("queueModalDuplicateSection");
-    if (formSec) formSec.style.display = "block";
-    if (dupSec) dupSec.style.display = "none";
-
     document.getElementById("modalSongTitle").innerText = `${artist} - ${title}`;
     resetPitchButtons();
     document.getElementById("duetInput").value = "";
+
+    const dupSec = document.getElementById("queueModalDuplicateSection");
+    if (dupSec) dupSec.style.display = "none";
+    const submitBtn = document.getElementById("submitQueueBtn");
+    if (submitBtn) submitBtn.innerText = "+ Queue Song";
+
     document.getElementById("queueModal").style.display = "flex";
+
+    // Asynchronously check if song is already in queue or performed recently
+    try {
+        const token = currentSinger ? currentSinger.token : "";
+        const params = new URLSearchParams({
+            singer_token: token,
+            title: title || "",
+            artist: artist || "",
+            video_id: videoId || ""
+        });
+        if (trackId) params.set("track_id", trackId);
+        const res = await fetch(`/api/queue/check-duplicate?${params.toString()}`);
+        if (res.ok) {
+            const data = await res.json();
+            if (data.duplicate && data.duplicate.duplicate_found) {
+                showDuplicateAdvisory(data.duplicate);
+            }
+        }
+    } catch (e) {
+        console.log("Duplicate pre-check error:", e);
+    }
 }
 
 function closeQueueModal() {
@@ -539,7 +564,7 @@ function resetPitchButtons() {
     selectPitch(0);
 }
 
-function submitQueue(force = false) {
+function submitQueue() {
     if (!selectedTrackForQueue) return;
     if (!currentSinger || !currentSinger.token || currentSinger.token === "undefined" || !currentSinger.name || currentSinger.name === "undefined") {
         showToast("⚠️ Please choose your nickname first!");
@@ -556,7 +581,7 @@ function submitQueue(force = false) {
         singer_token: currentSinger.token,
         duet_partner: duet,
         pitch_shift: selectedPitch,
-        force: force
+        force: Boolean(activeDuplicateInfo)
     };
 
     fetch("/api/queue", {
@@ -576,7 +601,7 @@ function submitQueue(force = false) {
         return data;
     })
     .then(data => {
-        if (!data) return; // handled by in-DOM duplicate advisory
+        if (!data) return; // duplicate notice displayed in modal
         closeQueueModal();
         showToast("🌺 Song Queued! Check Live Queue for your spot.");
         loadLiveQueue();
@@ -590,70 +615,73 @@ function submitQueue(force = false) {
 
 function showDuplicateAdvisory(dup) {
     activeDuplicateInfo = dup;
-    const formSec = document.getElementById("queueModalFormSection");
     const dupSec = document.getElementById("queueModalDuplicateSection");
-    if (formSec) formSec.style.display = "none";
     if (dupSec) dupSec.style.display = "block";
 
     const badge = document.getElementById("dupModalBadge");
-    const title = document.getElementById("dupModalTitle");
-    const song = document.getElementById("dupModalSong");
     const singerAvatar = document.getElementById("dupSingerAvatar");
-    const singerLabel = document.getElementById("dupSingerLabel");
     const singerName = document.getElementById("dupSingerName");
+    const duetTargetName = document.getElementById("dupDuetTargetName");
     const queuePos = document.getElementById("dupQueuePosition");
     const advisoryText = document.getElementById("dupAdvisoryText");
     const joinDuetBtn = document.getElementById("dupJoinDuetBtn");
-    const forceBtn = document.getElementById("dupForceQueueBtn");
+    const submitBtn = document.getElementById("submitQueueBtn");
 
-    song.innerText = dup.song_title || `${dup.artist} - ${dup.title}`;
-    singerAvatar.innerText = dup.existing_singer_avatar || "🌺";
-    singerName.innerText = dup.existing_singer_name || "Another Singer";
+    if (singerAvatar) singerAvatar.innerText = dup.existing_singer_avatar || "🌺";
+    if (singerName) singerName.innerText = dup.existing_singer_name || "Another Singer";
+    if (duetTargetName) duetTargetName.innerText = dup.existing_singer_name || "Friend";
 
     if (dup.match_type === "playing") {
-        badge.innerText = "Currently Playing";
-        badge.style.color = "var(--neon-lime)";
-        badge.style.background = "rgba(57,255,20,0.15)";
-        title.innerText = "On Stage Right Now!";
-        singerLabel.innerText = "Singing Live";
-        queuePos.innerText = "Currently on stage";
-        advisoryText.innerText = dup.is_self 
-            ? "You are singing this song on stage right now! Enjoy your performance!" 
-            : `${dup.existing_singer_name} is performing this song on stage right now! Head up and cheer them on or sing along!`;
-        joinDuetBtn.style.display = "none";
-        forceBtn.innerText = "⚡ Queue It Again Anyway";
+        if (badge) {
+            badge.innerText = "Currently Playing";
+            badge.style.color = "var(--neon-lime)";
+            badge.style.background = "rgba(57,255,20,0.15)";
+        }
+        if (queuePos) queuePos.innerText = "Live on Stage";
+        if (advisoryText) {
+            advisoryText.innerText = dup.is_self 
+                ? "You are singing this song on stage right now! Enjoy your performance!" 
+                : `${dup.existing_singer_name} is performing this song on stage right now! Head up and cheer them on or sing along!`;
+        }
+        if (joinDuetBtn) joinDuetBtn.style.display = "none";
+        if (submitBtn) submitBtn.innerText = "+ Queue Anyway";
     } else if (dup.match_type === "self") {
-        badge.innerText = "Already In Your Queue";
-        badge.style.color = "var(--neon-gold)";
-        badge.style.background = "rgba(255,183,3,0.15)";
-        title.innerText = "You Already Have This Queued!";
-        singerLabel.innerText = "Queued By You";
-        queuePos.innerText = dup.position_in_line ? `Position #${dup.position_in_line} in line` : "Upcoming in queue";
-        advisoryText.innerText = `You already have this song in the queue (${dup.position_in_line ? '#' + dup.position_in_line + ' in line' : 'upcoming'})! Are you sure you want to sing the same song multiple times tonight?`;
-        joinDuetBtn.style.display = "none";
-        forceBtn.innerText = "⚡ Yes, Queue Again";
+        if (badge) {
+            badge.innerText = "Already In Your Queue";
+            badge.style.color = "var(--neon-gold)";
+            badge.style.background = "rgba(255,183,3,0.15)";
+        }
+        if (queuePos) queuePos.innerText = dup.position_in_line ? `Position #${dup.position_in_line} in line` : "Upcoming in queue";
+        if (advisoryText) {
+            advisoryText.innerText = `You already have this song in the queue (${dup.position_in_line ? '#' + dup.position_in_line + ' in line' : 'upcoming'})! Are you sure you want to sing the same song multiple times tonight?`;
+        }
+        if (joinDuetBtn) joinDuetBtn.style.display = "none";
+        if (submitBtn) submitBtn.innerText = "+ Queue Again Anyway";
     } else if (dup.match_type === "played_tonight") {
-        badge.innerText = "Sung Earlier Tonight";
-        badge.style.color = "var(--neon-pink)";
-        badge.style.background = "rgba(255,42,133,0.15)";
-        title.innerText = "Encore Request?";
-        singerLabel.innerText = "Sung Earlier By";
-        queuePos.innerText = "Completed earlier tonight";
-        advisoryText.innerText = `This song was already sung earlier tonight by ${dup.existing_singer_name}. Are you sure you'd like to perform it again as an encore?`;
-        joinDuetBtn.style.display = "none";
-        forceBtn.innerText = "⚡ Request Encore";
+        if (badge) {
+            badge.innerText = "Sung Earlier Tonight";
+            badge.style.color = "var(--neon-pink)";
+            badge.style.background = "rgba(255,42,133,0.15)";
+        }
+        if (queuePos) queuePos.innerText = "Completed earlier tonight";
+        if (advisoryText) {
+            advisoryText.innerText = `This song was already sung earlier tonight by ${dup.existing_singer_name}. Feel free to queue an encore!`;
+        }
+        if (joinDuetBtn) joinDuetBtn.style.display = "none";
+        if (submitBtn) submitBtn.innerText = "+ Queue Encore";
     } else {
         // Other singer has it queued
-        badge.innerText = "Already in Queue";
-        badge.style.color = "var(--neon-cyan)";
-        badge.style.background = "rgba(0,240,255,0.15)";
-        title.innerText = "Song Already Queued!";
-        singerLabel.innerText = "Currently Queued By";
-        queuePos.innerText = dup.position_in_line ? `Position #${dup.position_in_line} in line` : "Upcoming in queue";
-        advisoryText.innerText = `Are you sure? ${dup.existing_singer_name} already has this song in queue (${dup.position_in_line ? '#' + dup.position_in_line + ' in line' : 'upcoming'}). Consider singing along with them as a duet and discuss as appropriate!`;
-        joinDuetBtn.style.display = "block";
-        joinDuetBtn.innerText = `👯 Sing Duet with ${dup.existing_singer_name}`;
-        forceBtn.innerText = "⚡ Queue My Own Turn Anyway";
+        if (badge) {
+            badge.innerText = "Already in Queue";
+            badge.style.color = "var(--neon-cyan)";
+            badge.style.background = "rgba(0,240,255,0.15)";
+        }
+        if (queuePos) queuePos.innerText = dup.position_in_line ? `Position #${dup.position_in_line} in line` : "Upcoming in queue";
+        if (advisoryText) {
+            advisoryText.innerText = `Are you sure? ${dup.existing_singer_name} already has this song in queue (${dup.position_in_line ? '#' + dup.position_in_line + ' in line' : 'upcoming'}). Consider singing along with them as a duet and discuss as appropriate!`;
+        }
+        if (joinDuetBtn) joinDuetBtn.style.display = "block";
+        if (submitBtn) submitBtn.innerText = "+ Queue Anyway";
     }
 }
 
@@ -791,10 +819,11 @@ function loadHistory() {
                         <div style="font-weight: 700;">${escapeHtml(item.title)}</div>
                         <div style="color: var(--text-muted); font-size: 0.85rem;">${escapeHtml(item.artist)}</div>
                     </div>
-                    <button onclick="openQueueModal(null, '${escapeHtml(item.title)}', '${escapeHtml(item.artist)}', '${item.video_id}')" class="btn-ghost" style="font-size: 0.8rem;">
+                    <button class="btn-ghost history-requeue-btn" style="font-size: 0.8rem;">
                         Sing Again
                     </button>
                 `;
+                card.querySelector(".history-requeue-btn").onclick = () => openQueueModal(null, item.title, item.artist, item.video_id);
                 list.appendChild(card);
             });
         });
@@ -1316,11 +1345,11 @@ function loadLibraryTracks() {
                             </span>
                         </div>
                     </div>
-                    <button onclick="openQueueModal(${track.id}, '${escapeHtml(track.title).replace(/'/g, "\\'")}', '${escapeHtml(track.artist).replace(/'/g, "\\'")}', '${track.video_id}')" 
-                            class="btn-neon-pink" style="padding: 9px 14px; font-size: 0.85rem; white-space: nowrap; flex-shrink: 0;">
+                    <button class="btn-neon-pink lib-queue-btn" style="padding: 9px 14px; font-size: 0.85rem; white-space: nowrap; flex-shrink: 0;">
                         + Queue
                     </button>
                 `;
+                card.querySelector(".lib-queue-btn").onclick = () => openQueueModal(track.id, track.title, track.artist, track.video_id);
                 container.appendChild(card);
             });
 
