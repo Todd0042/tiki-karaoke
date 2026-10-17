@@ -365,25 +365,113 @@ def search_local_tracks(query: str, limit: int = 25) -> List[Dict[str, Any]]:
     return [dict(r) for r in rows]
 
 # Queue Operations & Fair Rotation
+def rebalance_queue_round_robin(conn=None):
+    """
+    Recalculates sort_order for all pending songs using fair round-robin rotation.
+    1. Effective round: Each singer gets at most 1 song per round.
+       - A singer currently playing on stage has their next pending song placed in Round 2.
+       - Other singers have their 1st pending song in Round 1, 2nd pending song in Round 2, etc.
+    2. Within the same round:
+       - Singers who have sung fewer songs tonight get higher priority.
+       - Singers who have waited longest since their last completed song get higher priority.
+       - Ties broken by initial queue arrival time (created_at, id).
+    """
+    close_conn = False
+    if conn is None:
+        conn = get_db()
+        close_conn = True
+
+    try:
+        # 1. Identify currently playing singer (if any)
+        cursor = conn.execute("SELECT singer_id FROM queue WHERE status = 'playing' LIMIT 1")
+        playing_row = cursor.fetchone()
+        playing_singer_id = playing_row["singer_id"] if playing_row else None
+
+        # 2. Get history stats per singer (completed song count and last played timestamp)
+        cursor = conn.execute("""
+            SELECT singer_id, COUNT(*) as completed_count, MAX(played_at) as last_played
+            FROM history
+            GROUP BY singer_id
+        """)
+        stats_rows = cursor.fetchall()
+        history_stats = {
+            r["singer_id"]: {
+                "completed_count": r["completed_count"],
+                "last_played": r["last_played"] or ""
+            } for r in stats_rows
+        }
+
+        # 3. Get all pending tracks ordered by created_at ASC, id ASC
+        cursor = conn.execute("""
+            SELECT id, singer_id, created_at
+            FROM queue
+            WHERE status = 'pending'
+            ORDER BY created_at ASC, id ASC
+        """)
+        pending_rows = cursor.fetchall()
+        if not pending_rows:
+            return
+
+        # 4. Group pending songs by singer to compute each song's turn/round for that singer
+        singer_pending_counts = {}
+        annotated = []
+        for r in pending_rows:
+            s_id = r["singer_id"]
+            count = singer_pending_counts.get(s_id, 0) + 1
+            singer_pending_counts[s_id] = count
+
+            # If this singer is currently playing on stage, their turn in Round 1 is live,
+            # so their 1st pending song belongs in Round 2.
+            # Otherwise, their 1st pending song belongs in Round 1.
+            is_currently_playing = (s_id == playing_singer_id)
+            effective_round = count + 1 if is_currently_playing else count
+
+            h = history_stats.get(s_id, {"completed_count": 0, "last_played": ""})
+            completed_count = h["completed_count"]
+            last_played = h["last_played"]
+
+            annotated.append({
+                "id": r["id"],
+                "singer_id": s_id,
+                "effective_round": effective_round,
+                "completed_count": completed_count,
+                "last_played": last_played,
+                "created_at": r["created_at"]
+            })
+
+        # Sort key:
+        # (1) effective_round ASC (Round 1 songs before Round 2)
+        # (2) completed_count ASC (Singers with fewer completed songs go first in their round)
+        # (3) last_played ASC ("" sorts first for singers who haven't sung yet tonight)
+        # (4) created_at ASC (Earlier queue time)
+        # (5) id ASC
+        annotated.sort(key=lambda x: (
+            x["effective_round"],
+            x["completed_count"],
+            x["last_played"],
+            x["created_at"],
+            x["id"]
+        ))
+
+        # Update sort_order in database
+        for idx, item in enumerate(annotated):
+            conn.execute("UPDATE queue SET sort_order = ? WHERE id = ?", (float(idx + 1), item["id"]))
+        if close_conn:
+            conn.commit()
+
+    finally:
+        if close_conn:
+            conn.close()
+
 def enqueue_song(track_id: int, singer_id: int, duet_partner: str = "", pitch_shift: int = 0) -> int:
     conn = get_db()
     with conn:
         cursor = conn.execute("""
-            SELECT COUNT(*) as count FROM queue 
-            WHERE singer_id = ? AND status IN ('pending', 'playing')
-        """, (singer_id,))
-        singer_pending = cursor.fetchone()["count"]
-
-        cursor = conn.execute("SELECT COALESCE(MAX(sort_order), 0) as max_sort FROM queue WHERE status = 'pending'")
-        max_sort = cursor.fetchone()["max_sort"]
-
-        sort_order = max_sort + 1.0 + (singer_pending * 0.5)
-
-        cursor = conn.execute("""
             INSERT INTO queue (track_id, singer_id, duet_partner, pitch_shift, sort_order)
-            VALUES (?, ?, ?, ?, ?)
-        """, (track_id, singer_id, duet_partner, pitch_shift, sort_order))
+            VALUES (?, ?, ?, ?, 999999.0)
+        """, (track_id, singer_id, duet_partner, pitch_shift))
         queue_id = cursor.lastrowid
+        rebalance_queue_round_robin(conn)
     conn.close()
     return queue_id
 
@@ -497,6 +585,7 @@ def set_queue_status(queue_id: int, status: str):
             conn.execute("UPDATE queue SET status = 'completed' WHERE id = ?", (queue_id,))
         elif status == 'skipped':
             conn.execute("UPDATE queue SET status = 'skipped' WHERE id = ?", (queue_id,))
+        rebalance_queue_round_robin(conn)
     conn.close()
 
 def remove_from_queue(queue_id: int, singer_id: Optional[int] = None) -> bool:
@@ -507,6 +596,8 @@ def remove_from_queue(queue_id: int, singer_id: Optional[int] = None) -> bool:
         else:
             cursor = conn.execute("DELETE FROM queue WHERE id = ?", (queue_id,))
         deleted = cursor.rowcount > 0
+        if deleted:
+            rebalance_queue_round_robin(conn)
     conn.close()
     return deleted
 

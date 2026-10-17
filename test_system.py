@@ -86,28 +86,44 @@ class TestTikiKaraoke(unittest.TestCase):
         self.assertEqual(len(journey_group["versions"]), 2)
 
     def test_05_queue_and_fair_rotation(self):
-        s1 = get_or_create_singer("s1", "Alice", "🌺")
-        s2 = get_or_create_singer("s2", "Bob", "🌴")
+        s1 = get_or_create_singer("s_rr_1", "Scott_FairTest", "🌴")
+        s2 = get_or_create_singer("s_rr_2", "Andy_FairTest", "🌺")
 
-        t1 = save_track("v_a", "Song A", "Artist A", "Artist A - Song A")
-        t2 = save_track("v_b", "Song B", "Artist B", "Artist B - Song B")
+        t1 = save_track("v_a1", "Song A1", "Artist A", "Artist A - Song A1")
+        t2 = save_track("v_a2", "Song A2", "Artist A", "Artist A - Song A2")
+        t3 = save_track("v_b1", "Song B1", "Artist B", "Artist B - Song B1")
 
-        # Alice queues Song A
-        q1 = enqueue_song(t1, s1["id"], pitch_shift=-2)
-        # Bob queues Song B
-        q2 = enqueue_song(t2, s2["id"], pitch_shift=1)
+        # Scott queues Song A1 and Song A2
+        q_a1 = enqueue_song(t1, s1["id"], pitch_shift=-2)
+        q_a2 = enqueue_song(t2, s1["id"], pitch_shift=0)
 
+        # Scott's Song A1 starts playing
+        set_queue_status(q_a1, "playing")
+
+        # Andy queues Song B1 while Scott is playing
+        q_b1 = enqueue_song(t3, s2["id"], pitch_shift=1)
+
+        # In fair round-robin:
+        # Index 0: Scott's Song A1 (currently playing)
+        # Index 1: Andy's Song B1 (Round 1 for Andy, MUST be next up!)
+        # Index 2: Scott's Song A2 (Round 2 for Scott)
         queue = get_queue()
-        self.assertGreaterEqual(len(queue), 2)
-        self.assertEqual(queue[0]["pitch_shift"], -2)
+        self.assertEqual(len(queue), 3)
+        self.assertEqual(queue[0]["queue_id"], q_a1)
+        self.assertEqual(queue[0]["status"], "playing")
+        self.assertEqual(queue[1]["queue_id"], q_b1) # Andy moved up!
+        self.assertEqual(queue[2]["queue_id"], q_a2) # Scott's 2nd song
 
-        # Set status to playing then completed
-        set_queue_status(q1, "playing")
-        set_queue_status(q1, "completed")
+        # Complete Scott's song
+        set_queue_status(q_a1, "completed")
+        queue_after = get_queue()
+        self.assertEqual(len(queue_after), 2)
+        self.assertEqual(queue_after[0]["queue_id"], q_b1) # Andy is still next up
+        self.assertEqual(queue_after[1]["queue_id"], q_a2)
 
         history = get_singer_history(s1["id"])
         self.assertGreaterEqual(len(history), 1)
-        self.assertEqual(history[0]["title"], "Song A")
+        self.assertEqual(history[0]["title"], "Song A1")
 
     def test_06_loudnorm_ffmpeg_helper(self):
         # Create a tiny test audio file and test normalization filter
