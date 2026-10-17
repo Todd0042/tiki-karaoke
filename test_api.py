@@ -191,6 +191,64 @@ class TestAPIEndpoints(unittest.TestCase):
             self.assertEqual(r_state.status_code, 200)
             self.assertTrue(r_state.json()["has_stage_display"])
 
+    def test_duplicate_song_queue_and_duet_api(self):
+        # 1. Register 2 singers
+        r = self.client.post("/api/singer/register", json={"token": "tok_singer_a", "name": "SingerA", "avatar": "🌴"})
+        self.assertEqual(r.status_code, 200)
+        r = self.client.post("/api/singer/register", json={"token": "tok_singer_b", "name": "SingerB", "avatar": "🦜"})
+        self.assertEqual(r.status_code, 200)
+
+        # 2. Singer A queues "Hotel California"
+        r = self.client.post("/api/queue", json={
+            "video_id": "v_hotel_cal",
+            "title": "Hotel California",
+            "artist": "Eagles",
+            "singer_token": "tok_singer_a"
+        })
+        self.assertEqual(r.status_code, 200)
+        q_id = r.json()["queue_id"]
+
+        # 3. Check duplicate endpoint
+        r = self.client.get("/api/queue/check-duplicate?singer_token=tok_singer_b&title=Hotel%20California&artist=Eagles")
+        self.assertEqual(r.status_code, 200)
+        dup_data = r.json().get("duplicate")
+        self.assertIsNotNone(dup_data)
+        self.assertEqual(dup_data["existing_singer_name"], "SingerA")
+
+        # 4. Singer B attempts to queue "Hotel California" without force -> 409 duplicate warning
+        r = self.client.post("/api/queue", json={
+            "video_id": "v_hotel_cal",
+            "title": "Hotel California",
+            "artist": "Eagles",
+            "singer_token": "tok_singer_b",
+            "force": False
+        })
+        self.assertEqual(r.status_code, 409)
+        resp_dup = r.json()
+        self.assertEqual(resp_dup.get("status"), "duplicate_warning")
+        self.assertEqual(resp_dup["duplicate"]["existing_singer_name"], "SingerA")
+        self.assertEqual(resp_dup["duplicate"]["match_type"], "other_singer")
+
+        # 5. Singer B joins as duet partner to Singer A's queue item
+        r = self.client.post(f"/api/queue/{q_id}/join-duet", json={
+            "singer_token": "tok_singer_b",
+            "partner_name": "SingerB"
+        })
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["duet_partner"], "SingerB")
+
+        # 6. Singer B queues with force: True -> succeeds
+        r = self.client.post("/api/queue", json={
+            "video_id": "v_hotel_cal",
+            "title": "Hotel California",
+            "artist": "Eagles",
+            "singer_token": "tok_singer_b",
+            "force": True
+        })
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("queue_id", r.json())
+
 if __name__ == "__main__":
     unittest.main()
+
 

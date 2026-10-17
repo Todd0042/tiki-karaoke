@@ -202,7 +202,8 @@ function startTrackPlayback(track) {
     const joinQR = document.getElementById("joinQROverlay");
     if (joinQR) joinQR.style.bottom = "105px";
     document.getElementById("intermissionOverlay").style.display = "none";
-    document.getElementById("nowSinger").innerText = track.singer_name;
+    const singerText = track.duet_partner ? `${track.singer_name} & ${track.duet_partner}` : track.singer_name;
+    document.getElementById("nowSinger").innerText = singerText;
     document.getElementById("nowTitle").innerText = `${track.artist} - ${track.title}`;
     updatePitchBadge(track.pitch_shift || 0);
 
@@ -328,12 +329,13 @@ function triggerIntermission(nextTrack, duration = 20) {
             subtext.style.display = "block";
         }
 
-        document.getElementById("intermissionSinger").innerText = nextTrack.singer_name;
+        const nextSingerText = nextTrack.duet_partner ? `${nextTrack.singer_name} & ${nextTrack.duet_partner}` : nextTrack.singer_name;
+        document.getElementById("intermissionSinger").innerText = nextSingerText;
         document.getElementById("intermissionSong").innerText = `${nextTrack.artist} - ${nextTrack.title}`;
         document.getElementById("intermissionKey").innerText = nextTrack.pitch_shift !== 0 ? `Key: ${nextTrack.pitch_shift > 0 ? '+' : ''}${nextTrack.pitch_shift}` : "Key: Standard";
 
         // Virtual DJ TTS Announcer (if enabled)
-        speakAnnouncerIntro(nextTrack.singer_name, nextTrack.title);
+        speakAnnouncerIntro(nextSingerText, nextTrack.title);
     } else {
         if (idleQRBox) idleQRBox.style.display = "flex";
         if (countdownCircle) countdownCircle.style.display = "none";
@@ -470,7 +472,8 @@ function updateNextTicker(queue) {
     const ticker = document.getElementById("upNextSinger");
     const pending = queue.filter(q => q.status === "pending");
     if (pending.length > 0) {
-        ticker.innerText = `${pending[0].singer_name} ("${pending[0].title}")`;
+        const nextSinger = pending[0].duet_partner ? `${pending[0].singer_name} & ${pending[0].duet_partner}` : pending[0].singer_name;
+        ticker.innerText = `${nextSinger} ("${pending[0].title}")`;
     } else {
         ticker.innerText = "Queue is open — scan to sing!";
     }

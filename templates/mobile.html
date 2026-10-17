@@ -424,39 +424,82 @@
 
     <!-- Queue & Pitch Selector Modal -->
     <div id="queueModal" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); backdrop-filter: blur(12px); display: none; align-items: center; justify-content: center; z-index: 100; padding: 20px;">
-        <div class="tiki-card-pink" style="max-width: 400px; width: 100%; padding: 24px;">
-            <h3 class="font-tiki neon-cyan" style="font-size: 1.3rem; margin-bottom: 6px;">Add to Stage Queue</h3>
-            <div id="modalSongTitle" style="font-weight: 700; margin-bottom: 16px; color: #fff;">Song Title</div>
+        <div class="tiki-card-pink" style="max-width: 420px; width: 100%; padding: 24px;">
+            
+            <!-- Standard Queue Form Section -->
+            <div id="queueModalFormSection">
+                <h3 class="font-tiki neon-cyan" style="font-size: 1.3rem; margin-bottom: 6px;">Add to Stage Queue</h3>
+                <div id="modalSongTitle" style="font-weight: 700; margin-bottom: 16px; color: #fff;">Song Title</div>
 
-            <!-- Key / Pitch Transposition -->
-            <div style="margin-bottom: 16px;">
-                <label style="font-size: 0.85rem; color: var(--neon-gold); font-weight: 700; display: block; margin-bottom: 8px;">
-                    🎵 KEY / PITCH ADJUSTMENT:
-                </label>
-                <div style="display: flex; gap: 4px;">
-                    <button type="button" class="pitch-btn" data-pitch="-3" onclick="selectPitch(-3)">-3</button>
-                    <button type="button" class="pitch-btn" data-pitch="-2" onclick="selectPitch(-2)">-2</button>
-                    <button type="button" class="pitch-btn" data-pitch="-1" onclick="selectPitch(-1)">-1</button>
-                    <button type="button" class="pitch-btn active" data-pitch="0" onclick="selectPitch(0)">Std</button>
-                    <button type="button" class="pitch-btn" data-pitch="1" onclick="selectPitch(1)">+1</button>
-                    <button type="button" class="pitch-btn" data-pitch="2" onclick="selectPitch(2)">+2</button>
-                    <button type="button" class="pitch-btn" data-pitch="3" onclick="selectPitch(3)">+3</button>
+                <!-- Key / Pitch Transposition -->
+                <div style="margin-bottom: 16px;">
+                    <label style="font-size: 0.85rem; color: var(--neon-gold); font-weight: 700; display: block; margin-bottom: 8px;">
+                        🎵 KEY / PITCH ADJUSTMENT:
+                    </label>
+                    <div style="display: flex; gap: 4px;">
+                        <button type="button" class="pitch-btn" data-pitch="-3" onclick="selectPitch(-3)">-3</button>
+                        <button type="button" class="pitch-btn" data-pitch="-2" onclick="selectPitch(-2)">-2</button>
+                        <button type="button" class="pitch-btn" data-pitch="-1" onclick="selectPitch(-1)">-1</button>
+                        <button type="button" class="pitch-btn active" data-pitch="0" onclick="selectPitch(0)">Std</button>
+                        <button type="button" class="pitch-btn" data-pitch="1" onclick="selectPitch(1)">+1</button>
+                        <button type="button" class="pitch-btn" data-pitch="2" onclick="selectPitch(2)">+2</button>
+                        <button type="button" class="pitch-btn" data-pitch="3" onclick="selectPitch(3)">+3</button>
+                    </div>
+                </div>
+
+                <!-- Optional Duet Partner -->
+                <div style="margin-bottom: 20px;">
+                    <label style="font-size: 0.85rem; color: var(--text-muted); display: block; margin-bottom: 6px;">
+                        Duet Partner (Optional):
+                    </label>
+                    <input type="text" id="duetInput" placeholder="Friend's Name" 
+                           style="width: 100%; padding: 10px 14px; border-radius: 10px; background: rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.2); color: #fff;">
+                </div>
+
+                <div style="display: flex; gap: 10px;">
+                    <button type="button" onclick="closeQueueModal()" class="btn-ghost" style="flex: 1;">Cancel</button>
+                    <button type="button" id="submitQueueBtn" onclick="submitQueue(false)" class="btn-neon-pink" style="flex: 2;">+ Queue Song</button>
                 </div>
             </div>
 
-            <!-- Optional Duet Partner -->
-            <div style="margin-bottom: 20px;">
-                <label style="font-size: 0.85rem; color: var(--text-muted); display: block; margin-bottom: 6px;">
-                    Duet Partner (Optional):
-                </label>
-                <input type="text" id="duetInput" placeholder="Friend's Name" 
-                       style="width: 100%; padding: 10px 14px; border-radius: 10px; background: rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.2); color: #fff;">
+            <!-- In-DOM Duplicate Song Advisory Section (No Popups!) -->
+            <div id="queueModalDuplicateSection" style="display: none;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                    <span id="dupModalBadge" style="font-size: 0.75rem; background: rgba(0,240,255,0.2); color: var(--neon-cyan); padding: 4px 8px; border-radius: 6px; font-weight: 800; text-transform: uppercase;">Already in Queue</span>
+                    <button type="button" onclick="closeQueueModal()" class="btn-ghost" style="padding: 2px 8px; font-size: 0.85rem;">✕</button>
+                </div>
+                <h3 id="dupModalTitle" class="font-tiki neon-cyan" style="font-size: 1.25rem; margin: 4px 0 6px 0;">Song Already Queued!</h3>
+                <div id="dupModalSong" style="font-weight: 700; color: #fff; margin-bottom: 12px; font-size: 0.95rem;">Artist - Title</div>
+
+                <!-- Singer Spotlight Box -->
+                <div id="dupSingerBox" style="background: rgba(0,0,0,0.4); border: 1px solid rgba(0,240,255,0.3); border-radius: 12px; padding: 12px; margin-bottom: 12px; display: flex; align-items: center; gap: 12px;">
+                    <div id="dupSingerAvatar" style="font-size: 2.2rem;">🍹</div>
+                    <div>
+                        <div id="dupSingerLabel" style="font-size: 0.72rem; color: var(--text-muted); text-transform: uppercase; font-weight: 700;">Currently Queued By</div>
+                        <div id="dupSingerName" style="font-size: 1.1rem; font-weight: 800; color: var(--neon-gold);">Scott</div>
+                        <div id="dupQueuePosition" style="font-size: 0.8rem; color: var(--neon-cyan);">Up Next • #1 in line</div>
+                    </div>
+                </div>
+
+                <!-- Advisory Text -->
+                <p id="dupAdvisoryText" style="font-size: 0.88rem; color: var(--text-muted); line-height: 1.45; margin-bottom: 16px;">
+                    Scott already has this song in queue! Consider singing along with them as a duet and discuss as appropriate.
+                </p>
+
+                <!-- Actions -->
+                <div style="display: flex; flex-direction: column; gap: 8px;">
+                    <button type="button" id="dupJoinDuetBtn" onclick="handleJoinDuet()" class="btn-neon-cyan" style="width: 100%; padding: 11px; font-weight: 800; font-size: 0.92rem; border-radius: 10px;">
+                        👯 Add Me as Duet Partner
+                    </button>
+                    <button type="button" id="dupForceQueueBtn" onclick="submitQueue(true)" class="btn-ghost" style="width: 100%; padding: 10px; border-color: rgba(255,42,133,0.5); color: var(--neon-pink); font-size: 0.88rem; border-radius: 10px;">
+                        ⚡ Queue My Own Turn Anyway
+                    </button>
+                    <button type="button" onclick="closeQueueModal()" class="btn-ghost" style="width: 100%; padding: 6px; font-size: 0.82rem; border: none; color: var(--text-muted);">
+                        ✕ Choose a Different Song
+                    </button>
+                </div>
             </div>
 
-            <div style="display: flex; gap: 10px;">
-                <button type="button" onclick="closeQueueModal()" class="btn-ghost" style="flex: 1;">Cancel</button>
-                <button type="button" onclick="submitQueue()" class="btn-neon-pink" style="flex: 2;">+ Queue Song</button>
-            </div>
         </div>
     </div>
 

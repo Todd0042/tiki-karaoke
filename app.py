@@ -7,7 +7,7 @@ from typing import List, Dict, Any, Optional
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, Response, WebSocket, WebSocketDisconnect, HTTPException, Depends
-from fastapi.responses import HTMLResponse, StreamingResponse, FileResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, StreamingResponse, FileResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
@@ -32,7 +32,7 @@ from database import (
     get_taken_avatars_for_name, purge_all_singers,
     migrate_storage_paths, get_browsable_tracks,
     get_unique_downloaded_artists, get_cleanup_candidates,
-    prune_local_track
+    prune_local_track, check_song_queue_duplicate, add_duet_partner
 )
 from search import tiered_search
 from downloader import (
@@ -167,6 +167,11 @@ class QueueSongRequest(BaseModel):
     singer_token: str
     duet_partner: str = ""
     pitch_shift: int = 0
+    force: bool = False
+
+class JoinDuetRequest(BaseModel):
+    singer_token: str
+    partner_name: Optional[str] = None
 
 class PruneTracksRequest(BaseModel):
     track_ids: List[int]
@@ -441,12 +446,65 @@ async def api_singer_history(token: str):
 async def api_get_queue():
     return get_queue()
 
+@app.get("/api/queue/check-duplicate")
+async def api_check_duplicate(
+    singer_token: str = "",
+    track_id: Optional[int] = None,
+    video_id: Optional[str] = None,
+    title: Optional[str] = None,
+    artist: Optional[str] = None
+):
+    singer = get_singer_by_token(singer_token) if singer_token else None
+    singer_id = singer["id"] if singer else 0
+    dup = check_song_queue_duplicate(
+        singer_id=singer_id,
+        track_id=track_id,
+        video_id=video_id,
+        title=title,
+        artist=artist
+    )
+    return {"duplicate": dup}
+
+@app.post("/api/queue/{queue_id}/join-duet")
+async def api_join_duet(queue_id: int, req: JoinDuetRequest):
+    singer = get_singer_by_token(req.singer_token)
+    name = req.partner_name or (singer["name"] if singer else "Friend")
+    res = add_duet_partner(queue_id, name)
+    if not res:
+        raise HTTPException(status_code=404, detail="Queue item not found.")
+    
+    queue = get_queue()
+    await manager.broadcast({
+        "type": "queue_updated",
+        "queue": queue
+    })
+    return {"status": "ok", "duet_partner": res["duet_partner"], "queue": queue}
+
 @app.post("/api/queue")
 async def api_enqueue_song(req: QueueSongRequest, request: Request):
     client_ip = request.client.host if request.client else ""
     singer = get_singer_by_token(req.singer_token)
     if not singer:
         singer = get_or_create_singer(req.singer_token, "Guest", ip_address=client_ip)
+
+    # Check for duplicates if not forced and not a host override
+    if not req.force and not is_host_request(request):
+        dup = check_song_queue_duplicate(
+            singer_id=singer["id"],
+            track_id=req.track_id,
+            video_id=req.video_id,
+            title=req.title,
+            artist=req.artist
+        )
+        if dup:
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "status": "duplicate_warning",
+                    "duplicate": dup,
+                    "detail": "Song is already in queue or performed recently."
+                }
+            )
 
     # Ensure track is in DB
     track_id = req.track_id

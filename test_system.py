@@ -230,6 +230,59 @@ class TestTikiKaraoke(unittest.TestCase):
         self.assertEqual(track["local_path"], "")
         self.assertEqual(track["title"], "Delete Me")
 
+    def test_11_duplicate_song_detection_and_duet_partner(self):
+        from database import check_song_queue_duplicate, add_duet_partner
+        s_scott = get_or_create_singer("s_scott_dup", "ScottDup", "🍹")
+        s_andy = get_or_create_singer("s_andy_dup", "AndyDup", "🦜")
+
+        t_bohemian = save_track("v_boh_01", "Bohemian Rhapsody", "Queen", "Queen - Bohemian Rhapsody")
+        t_bohemian_alt = save_track("v_boh_alt", "Bohemian Rhapsody", "Queen", "Queen - Bohemian Rhapsody (Karaoke)")
+
+        # 1. No duplicate initially
+        dup = check_song_queue_duplicate(s_scott["id"], track_id=t_bohemian)
+        self.assertIsNone(dup)
+
+        # 2. Scott queues Bohemian Rhapsody
+        q_id = enqueue_song(t_bohemian, s_scott["id"])
+
+        # 3. Andy checks duplicate by exact track_id
+        dup_andy = check_song_queue_duplicate(s_andy["id"], track_id=t_bohemian)
+        self.assertIsNotNone(dup_andy)
+        self.assertEqual(dup_andy["match_type"], "other_singer")
+        self.assertEqual(dup_andy["existing_singer_name"], "ScottDup")
+        self.assertFalse(dup_andy["is_self"])
+        self.assertEqual(dup_andy["position_in_line"], 1)
+
+        # 4. Andy checks duplicate by title & artist (alternate video_id)
+        dup_alt = check_song_queue_duplicate(s_andy["id"], video_id=t_bohemian_alt, title="Bohemian Rhapsody", artist="Queen")
+        self.assertIsNotNone(dup_alt)
+        self.assertEqual(dup_alt["match_type"], "other_singer")
+
+        # 5. Scott checks duplicate on own song
+        dup_self = check_song_queue_duplicate(s_scott["id"], track_id=t_bohemian)
+        self.assertIsNotNone(dup_self)
+        self.assertEqual(dup_self["match_type"], "self")
+        self.assertTrue(dup_self["is_self"])
+
+        # 6. Song starts playing
+        set_queue_status(q_id, "playing")
+        dup_playing = check_song_queue_duplicate(s_andy["id"], track_id=t_bohemian)
+        self.assertIsNotNone(dup_playing)
+        self.assertEqual(dup_playing["match_type"], "playing")
+
+        # 7. Add duet partner
+        res = add_duet_partner(q_id, "Andy")
+        self.assertEqual(res["duet_partner"], "Andy")
+
+        # 8. Add second duet partner
+        res2 = add_duet_partner(q_id, "Sarah")
+        self.assertEqual(res2["duet_partner"], "Andy & Sarah")
+
+        # 9. Duplicate addition doesn't repeat
+        res3 = add_duet_partner(q_id, "Andy")
+        self.assertEqual(res3["duet_partner"], "Andy & Sarah")
+
 if __name__ == "__main__":
     unittest.main()
+
 

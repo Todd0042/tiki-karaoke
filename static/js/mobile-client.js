@@ -10,6 +10,7 @@ let ws = null;
 let searchDebounceTimer = null;
 let selectedTrackForQueue = null;
 let selectedPitch = 0;
+let activeDuplicateInfo = null;
 
 document.addEventListener("DOMContentLoaded", () => {
     checkIdentity();
@@ -501,6 +502,12 @@ function renderSearchResults(data, query) {
 function openQueueModal(trackId, title, artist, videoId) {
     selectedTrackForQueue = { trackId, title, artist, videoId };
     selectedPitch = 0;
+    activeDuplicateInfo = null;
+
+    const formSec = document.getElementById("queueModalFormSection");
+    const dupSec = document.getElementById("queueModalDuplicateSection");
+    if (formSec) formSec.style.display = "block";
+    if (dupSec) dupSec.style.display = "none";
 
     document.getElementById("modalSongTitle").innerText = `${artist} - ${title}`;
     resetPitchButtons();
@@ -510,6 +517,7 @@ function openQueueModal(trackId, title, artist, videoId) {
 
 function closeQueueModal() {
     document.getElementById("queueModal").style.display = "none";
+    activeDuplicateInfo = null;
 }
 
 function selectPitch(semitones) {
@@ -531,7 +539,7 @@ function resetPitchButtons() {
     selectPitch(0);
 }
 
-function submitQueue() {
+function submitQueue(force = false) {
     if (!selectedTrackForQueue) return;
     if (!currentSinger || !currentSinger.token || currentSinger.token === "undefined" || !currentSinger.name || currentSinger.name === "undefined") {
         showToast("⚠️ Please choose your nickname first!");
@@ -547,7 +555,8 @@ function submitQueue() {
         artist: selectedTrackForQueue.artist,
         singer_token: currentSinger.token,
         duet_partner: duet,
-        pitch_shift: selectedPitch
+        pitch_shift: selectedPitch,
+        force: force
     };
 
     fetch("/api/queue", {
@@ -556,13 +565,18 @@ function submitQueue() {
         body: JSON.stringify(payload)
     })
     .then(async res => {
-        if (!res.ok) {
-            const errData = await res.json().catch(() => ({}));
-            throw new Error(errData.detail || "Failed to queue song.");
+        const data = await res.json().catch(() => ({}));
+        if (res.status === 409 && data.status === "duplicate_warning" && data.duplicate) {
+            showDuplicateAdvisory(data.duplicate);
+            return null;
         }
-        return res.json();
+        if (!res.ok) {
+            throw new Error(data.detail || "Failed to queue song.");
+        }
+        return data;
     })
     .then(data => {
+        if (!data) return; // handled by in-DOM duplicate advisory
         closeQueueModal();
         showToast("🌺 Song Queued! Check Live Queue for your spot.");
         loadLiveQueue();
@@ -570,7 +584,110 @@ function submitQueue() {
         document.querySelector('[data-tab="queueTab"]').click();
     })
     .catch((err) => {
-        alert(err.message || "Failed to queue song.");
+        showToast(err.message || "Failed to queue song.");
+    });
+}
+
+function showDuplicateAdvisory(dup) {
+    activeDuplicateInfo = dup;
+    const formSec = document.getElementById("queueModalFormSection");
+    const dupSec = document.getElementById("queueModalDuplicateSection");
+    if (formSec) formSec.style.display = "none";
+    if (dupSec) dupSec.style.display = "block";
+
+    const badge = document.getElementById("dupModalBadge");
+    const title = document.getElementById("dupModalTitle");
+    const song = document.getElementById("dupModalSong");
+    const singerAvatar = document.getElementById("dupSingerAvatar");
+    const singerLabel = document.getElementById("dupSingerLabel");
+    const singerName = document.getElementById("dupSingerName");
+    const queuePos = document.getElementById("dupQueuePosition");
+    const advisoryText = document.getElementById("dupAdvisoryText");
+    const joinDuetBtn = document.getElementById("dupJoinDuetBtn");
+    const forceBtn = document.getElementById("dupForceQueueBtn");
+
+    song.innerText = dup.song_title || `${dup.artist} - ${dup.title}`;
+    singerAvatar.innerText = dup.existing_singer_avatar || "🌺";
+    singerName.innerText = dup.existing_singer_name || "Another Singer";
+
+    if (dup.match_type === "playing") {
+        badge.innerText = "Currently Playing";
+        badge.style.color = "var(--neon-lime)";
+        badge.style.background = "rgba(57,255,20,0.15)";
+        title.innerText = "On Stage Right Now!";
+        singerLabel.innerText = "Singing Live";
+        queuePos.innerText = "Currently on stage";
+        advisoryText.innerText = dup.is_self 
+            ? "You are singing this song on stage right now! Enjoy your performance!" 
+            : `${dup.existing_singer_name} is performing this song on stage right now! Head up and cheer them on or sing along!`;
+        joinDuetBtn.style.display = "none";
+        forceBtn.innerText = "⚡ Queue It Again Anyway";
+    } else if (dup.match_type === "self") {
+        badge.innerText = "Already In Your Queue";
+        badge.style.color = "var(--neon-gold)";
+        badge.style.background = "rgba(255,183,3,0.15)";
+        title.innerText = "You Already Have This Queued!";
+        singerLabel.innerText = "Queued By You";
+        queuePos.innerText = dup.position_in_line ? `Position #${dup.position_in_line} in line` : "Upcoming in queue";
+        advisoryText.innerText = `You already have this song in the queue (${dup.position_in_line ? '#' + dup.position_in_line + ' in line' : 'upcoming'})! Are you sure you want to sing the same song multiple times tonight?`;
+        joinDuetBtn.style.display = "none";
+        forceBtn.innerText = "⚡ Yes, Queue Again";
+    } else if (dup.match_type === "played_tonight") {
+        badge.innerText = "Sung Earlier Tonight";
+        badge.style.color = "var(--neon-pink)";
+        badge.style.background = "rgba(255,42,133,0.15)";
+        title.innerText = "Encore Request?";
+        singerLabel.innerText = "Sung Earlier By";
+        queuePos.innerText = "Completed earlier tonight";
+        advisoryText.innerText = `This song was already sung earlier tonight by ${dup.existing_singer_name}. Are you sure you'd like to perform it again as an encore?`;
+        joinDuetBtn.style.display = "none";
+        forceBtn.innerText = "⚡ Request Encore";
+    } else {
+        // Other singer has it queued
+        badge.innerText = "Already in Queue";
+        badge.style.color = "var(--neon-cyan)";
+        badge.style.background = "rgba(0,240,255,0.15)";
+        title.innerText = "Song Already Queued!";
+        singerLabel.innerText = "Currently Queued By";
+        queuePos.innerText = dup.position_in_line ? `Position #${dup.position_in_line} in line` : "Upcoming in queue";
+        advisoryText.innerText = `Are you sure? ${dup.existing_singer_name} already has this song in queue (${dup.position_in_line ? '#' + dup.position_in_line + ' in line' : 'upcoming'}). Consider singing along with them as a duet and discuss as appropriate!`;
+        joinDuetBtn.style.display = "block";
+        joinDuetBtn.innerText = `👯 Sing Duet with ${dup.existing_singer_name}`;
+        forceBtn.innerText = "⚡ Queue My Own Turn Anyway";
+    }
+}
+
+function handleJoinDuet() {
+    if (!activeDuplicateInfo || !activeDuplicateInfo.existing_queue_id) return;
+    if (!currentSinger || !currentSinger.token) {
+        showToast("⚠️ Nickname required to join duet!");
+        showOnboardingModal();
+        return;
+    }
+
+    fetch(`/api/queue/${activeDuplicateInfo.existing_queue_id}/join-duet`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            singer_token: currentSinger.token,
+            partner_name: currentSinger.name
+        })
+    })
+    .then(async res => {
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.detail || "Could not join duet.");
+        }
+        return res.json();
+    })
+    .then(data => {
+        closeQueueModal();
+        showToast(`🎉 You're now singing a duet with ${activeDuplicateInfo.existing_singer_name}!`);
+        loadLiveQueue();
+        document.querySelector('[data-tab="queueTab"]').click();
+    })
+    .catch(err => {
+        showToast(err.message || "Failed to join duet.");
     });
 }
 

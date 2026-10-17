@@ -608,6 +608,175 @@ def reorder_queue(ordered_queue_ids: List[int]):
             conn.execute("UPDATE queue SET sort_order = ? WHERE id = ?", (float(idx + 1), q_id))
     conn.close()
 
+def normalize_song_string(s: str) -> str:
+    if not s:
+        return ""
+    import re
+    return re.sub(r'[^a-z0-9]+', ' ', s.lower()).strip()
+
+def check_song_queue_duplicate(
+    singer_id: int,
+    track_id: Optional[int] = None,
+    video_id: Optional[str] = None,
+    title: Optional[str] = None,
+    artist: Optional[str] = None
+) -> Optional[Dict[str, Any]]:
+    """
+    Checks if a song is already active in queue (playing or pending) or sung earlier tonight.
+    Returns details about the duplicate or None if clear to queue.
+    """
+    conn = get_db()
+    norm_title = normalize_song_string(title or "")
+    norm_artist = normalize_song_string(artist or "")
+
+    # 1. Check active queue (playing or pending)
+    cursor = conn.execute("""
+        SELECT 
+            q.id as queue_id,
+            q.status,
+            q.singer_id,
+            q.duet_partner,
+            q.sort_order,
+            s.name as singer_name,
+            s.avatar as singer_avatar,
+            t.id as track_id,
+            t.video_id,
+            t.title,
+            t.artist
+        FROM queue q
+        JOIN tracks t ON q.track_id = t.id
+        JOIN singers s ON q.singer_id = s.id
+        WHERE q.status IN ('playing', 'pending')
+        ORDER BY 
+            CASE q.status WHEN 'playing' THEN 0 ELSE 1 END,
+            q.sort_order ASC,
+            q.id ASC
+    """)
+    active_rows = [dict(r) for r in cursor.fetchall()]
+
+    # Calculate pending queue positions (1st in line, 2nd in line...)
+    pending_count = 0
+    for r in active_rows:
+        if r["status"] == "pending":
+            pending_count += 1
+            r["position_in_line"] = pending_count
+        else:
+            r["position_in_line"] = 0
+
+    for item in active_rows:
+        is_match = False
+        if track_id and item["track_id"] == track_id:
+            is_match = True
+        elif video_id and item["video_id"] == video_id:
+            is_match = True
+        elif norm_title and norm_artist:
+            item_title = normalize_song_string(item["title"])
+            item_artist = normalize_song_string(item["artist"])
+            if norm_title == item_title and norm_artist == item_artist:
+                is_match = True
+
+        if is_match:
+            conn.close()
+            is_self = (item["singer_id"] == singer_id)
+            if item["status"] == "playing":
+                match_type = "playing"
+            elif is_self:
+                match_type = "self"
+            else:
+                match_type = "other_singer"
+
+            return {
+                "duplicate_found": True,
+                "match_type": match_type,
+                "status": item["status"],
+                "existing_queue_id": item["queue_id"],
+                "existing_singer_id": item["singer_id"],
+                "existing_singer_name": item["singer_name"],
+                "existing_singer_avatar": item["singer_avatar"],
+                "existing_duet_partner": item.get("duet_partner") or "",
+                "is_self": is_self,
+                "song_title": f"{item['artist']} - {item['title']}",
+                "title": item["title"],
+                "artist": item["artist"],
+                "position_in_line": item["position_in_line"]
+            }
+
+    # 2. Check history (sung within the last 6 hours)
+    cursor = conn.execute("""
+        SELECT 
+            h.id as history_id,
+            h.played_at,
+            h.singer_id,
+            s.name as singer_name,
+            s.avatar as singer_avatar,
+            t.id as track_id,
+            t.video_id,
+            t.title,
+            t.artist
+        FROM history h
+        JOIN tracks t ON h.track_id = t.id
+        JOIN singers s ON h.singer_id = s.id
+        WHERE h.played_at >= datetime('now', '-6 hours')
+        ORDER BY h.played_at DESC
+    """)
+    history_rows = [dict(r) for r in cursor.fetchall()]
+
+    for item in history_rows:
+        is_match = False
+        if track_id and item["track_id"] == track_id:
+            is_match = True
+        elif video_id and item["video_id"] == video_id:
+            is_match = True
+        elif norm_title and norm_artist:
+            item_title = normalize_song_string(item["title"])
+            item_artist = normalize_song_string(item["artist"])
+            if norm_title == item_title and norm_artist == item_artist:
+                is_match = True
+
+        if is_match:
+            conn.close()
+            is_self = (item["singer_id"] == singer_id)
+            return {
+                "duplicate_found": True,
+                "match_type": "played_tonight",
+                "status": "completed",
+                "existing_queue_id": None,
+                "existing_singer_id": item["singer_id"],
+                "existing_singer_name": item["singer_name"],
+                "existing_singer_avatar": item["singer_avatar"],
+                "existing_duet_partner": "",
+                "is_self": is_self,
+                "song_title": f"{item['artist']} - {item['title']}",
+                "title": item["title"],
+                "artist": item["artist"],
+                "played_at": item["played_at"],
+                "position_in_line": None
+            }
+
+    conn.close()
+    return None
+
+def add_duet_partner(queue_id: int, new_partner_name: str) -> Optional[Dict[str, Any]]:
+    conn = get_db()
+    with conn:
+        cursor = conn.execute("SELECT duet_partner FROM queue WHERE id = ?", (queue_id,))
+        row = cursor.fetchone()
+        if not row:
+            conn.close()
+            return None
+        current_duet = (row["duet_partner"] or "").strip()
+        clean_new = new_partner_name.strip()
+        if not current_duet:
+            updated_duet = clean_new
+        elif clean_new.lower() in [p.strip().lower() for p in current_duet.replace('&', ',').split(',')]:
+            updated_duet = current_duet
+        else:
+            updated_duet = f"{current_duet} & {clean_new}"
+        
+        conn.execute("UPDATE queue SET duet_partner = ? WHERE id = ?", (updated_duet, queue_id))
+    conn.close()
+    return {"queue_id": queue_id, "duet_partner": updated_duet}
+
 # History & Stats
 def get_singer_history(singer_id: int) -> List[Dict[str, Any]]:
     conn = get_db()
