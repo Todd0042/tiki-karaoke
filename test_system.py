@@ -1,7 +1,13 @@
-import sys
 import os
+import sys
+import shutil
+import tempfile
 import unittest
 from pathlib import Path
+
+# Create isolated test environment before importing database/config
+test_dir = tempfile.mkdtemp(prefix="tiki_sys_test_")
+os.environ["TIKI_DATA_DIR"] = test_dir
 
 # Add current dir to path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -21,6 +27,10 @@ class TestTikiKaraoke(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         init_db()
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(test_dir, ignore_errors=True)
 
     def setUp(self):
         from database import get_db

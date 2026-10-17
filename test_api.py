@@ -1,9 +1,16 @@
+import os
 import sys
+import shutil
+import tempfile
 import unittest
 from pathlib import Path
-from fastapi.testclient import TestClient
+
+# Create isolated test environment before importing app/config
+test_dir = tempfile.mkdtemp(prefix="tiki_api_test_")
+os.environ["TIKI_DATA_DIR"] = test_dir
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from fastapi.testclient import TestClient
 from app import app
 from database import init_db
 
@@ -12,6 +19,10 @@ class TestAPIEndpoints(unittest.TestCase):
     def setUpClass(cls):
         init_db()
         cls.client = TestClient(app)
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(test_dir, ignore_errors=True)
 
     def setUp(self):
         from database import get_db
@@ -290,7 +301,53 @@ class TestAPIEndpoints(unittest.TestCase):
                 "singer_token": f"anon_token_{i}"
             })
             self.assertEqual(r.status_code, 200)
-            self.assertIn("queue_id", r.json())
+    def test_bgm_tracks_endpoint(self):
+        r = self.client.get("/api/bgm-tracks")
+        self.assertEqual(r.status_code, 200)
+        data = r.json()
+        self.assertIn("tracks", data)
+        self.assertGreaterEqual(len(data["tracks"]), 5)
+        for track in data["tracks"]:
+            self.assertTrue(track.endswith(".mp3"))
+
+    def test_host_stop_and_skip_endpoints(self):
+        # Queue a song
+        r = self.client.post("/api/queue", json={
+            "video_id": "v_stop_test",
+            "title": "Stop Test Song",
+            "artist": "Stop Artist",
+            "singer_token": "tok_stop_host"
+        })
+        self.assertEqual(r.status_code, 200)
+        q_id = r.json()["queue_id"]
+
+        # Play it
+        r = self.client.post(f"/api/queue/{q_id}/play")
+        self.assertEqual(r.status_code, 200)
+
+        # Stop stage
+        r = self.client.post("/api/host/stop")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["status"], "ok")
+
+        # Verify state: playing is None, next is the pending song
+        r = self.client.get("/api/state")
+        self.assertEqual(r.status_code, 200)
+        state = r.json()
+        self.assertIsNone(state["playing"])
+        self.assertIsNotNone(state["next"])
+        self.assertEqual(state["next"]["queue_id"], q_id)
+
+        # Skip track
+        r = self.client.post("/api/host/skip")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["status"], "ok")
+
+        # Verify queue is now empty of pending tracks
+        r = self.client.get("/api/state")
+        state = r.json()
+        self.assertIsNone(state["playing"])
+        self.assertIsNone(state["next"])
 
 if __name__ == "__main__":
     unittest.main()

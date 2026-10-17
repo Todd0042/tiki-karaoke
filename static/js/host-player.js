@@ -14,6 +14,8 @@ let intermissionRemaining = 20;
 let isIntermission = false;
 let isMutedViewer = false;
 let configuredAudioSink = null;
+let bgmPlaylist = [];
+let currentBgmIndex = -1;
 
 const myDisplayId = localStorage.getItem("tiki_display_id") || ("disp_" + Math.random().toString(36).substring(2, 8));
 localStorage.setItem("tiki_display_id", myDisplayId);
@@ -32,6 +34,7 @@ let myDisplayName = getMyDisplayName();
 document.addEventListener("DOMContentLoaded", () => {
     initWebSocket();
     initAudio();
+    initBGMPlaylist();
     initYouTubeAPI();
     setupEventListeners();
     fetchCurrentState();
@@ -147,6 +150,9 @@ function handleSocketMessage(data) {
         case "skip_track":
             skipCurrentTrack();
             break;
+        case "stop_track":
+            stopCurrentTrack(data.next_track);
+            break;
         case "pause_track":
             pausePlayback();
             break;
@@ -200,7 +206,11 @@ function initYouTubeAPI() {
             },
             events: {
                 onReady: () => console.log("[YouTube] IFrame API Ready"),
-                onStateChange: onYouTubeStateChange
+                onStateChange: onYouTubeStateChange,
+                onError: (e) => {
+                    console.error("[YouTube] Player error code:", e.data);
+                    onPlaybackFailure(`YouTube error code ${e.data}`, currentTrack);
+                }
             }
         });
     };
@@ -264,6 +274,10 @@ function startTrackPlayback(track) {
                 if (unmuteOverlay) unmuteOverlay.style.display = "flex";
             });
         localVideo.onended = onSongFinished;
+        localVideo.onerror = (e) => {
+            console.error("[Host] Local video playback failed to load or decode:", e);
+            onPlaybackFailure("Local file missing or unplayable", track);
+        };
     } else {
         // Fallback to YouTube IFrame player
         localVideo.style.display = "none";
@@ -281,6 +295,12 @@ function startTrackPlayback(track) {
     }
 }
 
+function onPlaybackFailure(reason, failedTrack) {
+    console.warn(`[Host Playback] Failure: ${reason}. Auto-skipping to avoid freeze...`);
+    fetch("/api/host/skip", { method: "POST" })
+        .catch(err => console.error("[Host] Auto-skip call failed:", err));
+}
+
 function onSongFinished() {
     if (!currentTrack) return;
     fetch(`/api/queue/${currentTrack.queue_id}/complete`, { method: "POST" });
@@ -291,20 +311,46 @@ function onSongFinished() {
 
 function skipCurrentTrack() {
     const localVideo = document.getElementById("localVideo");
-    localVideo.pause();
+    if (localVideo) {
+        localVideo.pause();
+        localVideo.style.display = "none";
+        localVideo.removeAttribute("src");
+        localVideo.load();
+    }
     if (ytPlayer && ytPlayer.stopVideo) ytPlayer.stopVideo();
-    onSongFinished();
+    const ytContainer = document.getElementById("youtubeContainer");
+    if (ytContainer) ytContainer.style.display = "none";
+
+    currentTrack = null;
+    fadeInBGM();
 }
 
 function pausePlayback() {
     const localVideo = document.getElementById("localVideo");
-    if (localVideo.style.display !== "none") localVideo.pause();
-    if (ytPlayer && ytPlayer.pauseVideo) ytPlayer.pauseVideo();
+    if (localVideo && localVideo.style.display !== "none") {
+        if (localVideo.paused) {
+            localVideo.play().catch(() => {});
+        } else {
+            localVideo.pause();
+        }
+    }
+    if (ytPlayer) {
+        if (typeof ytPlayer.getPlayerState === "function") {
+            const state = ytPlayer.getPlayerState();
+            if (state === YT.PlayerState.PLAYING) {
+                ytPlayer.pauseVideo();
+            } else if (state === YT.PlayerState.PAUSED) {
+                ytPlayer.playVideo();
+            }
+        } else if (ytPlayer.pauseVideo) {
+            ytPlayer.pauseVideo();
+        }
+    }
 }
 
 function resumePlayback() {
     const localVideo = document.getElementById("localVideo");
-    if (localVideo.style.display !== "none") localVideo.play();
+    if (localVideo && localVideo.style.display !== "none") localVideo.play().catch(() => {});
     if (ytPlayer && ytPlayer.playVideo) ytPlayer.playVideo();
 }
 
@@ -343,7 +389,10 @@ function triggerIntermission(nextTrack, duration = 20) {
     if (nextTrack) {
         if (idleQRBox) idleQRBox.style.display = "none";
         if (countdownCircle) countdownCircle.style.display = "flex";
-        if (upNextBadge) upNextBadge.style.display = "inline-block";
+        if (upNextBadge) {
+            upNextBadge.style.display = "inline-block";
+            upNextBadge.innerText = "🎤 UP NEXT ON STAGE";
+        }
         if (subtext) {
             subtext.innerText = "Get ready! Head up to the microphone! 🌺";
             subtext.style.display = "block";
@@ -381,6 +430,64 @@ function triggerIntermission(nextTrack, duration = 20) {
     }, 1000);
 }
 
+function stopCurrentTrack(nextTrack) {
+    isIntermission = true;
+    currentTrack = null;
+    clearInterval(intermissionTimer);
+    intermissionTimer = null;
+
+    const overlay = document.getElementById("intermissionOverlay");
+    if (overlay) overlay.style.display = "flex";
+    const nowPlayingBar = document.getElementById("nowPlayingBar");
+    if (nowPlayingBar) nowPlayingBar.style.display = "none";
+    const localVideo = document.getElementById("localVideo");
+    if (localVideo) {
+        localVideo.pause();
+        localVideo.style.display = "none";
+        localVideo.removeAttribute("src");
+        localVideo.load();
+    }
+    const ytContainer = document.getElementById("youtubeContainer");
+    if (ytContainer) ytContainer.style.display = "none";
+    if (ytPlayer && ytPlayer.stopVideo) ytPlayer.stopVideo();
+
+    fadeInBGM();
+
+    const idleQRBox = document.getElementById("idleStageQRBox");
+    const countdownCircle = document.getElementById("countdownCircle");
+    const subtext = document.getElementById("intermissionSubtext");
+    const upNextBadge = document.querySelector("#intermissionOverlay .badge-youtube");
+    const joinQR = document.getElementById("joinQROverlay");
+    if (joinQR) joinQR.style.bottom = "25px";
+
+    if (countdownCircle) countdownCircle.style.display = "none";
+
+    if (nextTrack) {
+        if (idleQRBox) idleQRBox.style.display = "none";
+        if (upNextBadge) {
+            upNextBadge.style.display = "inline-block";
+            upNextBadge.innerText = "⏸️ STAGE ON STANDBY";
+        }
+        if (subtext) {
+            subtext.innerText = "Stage on standby. Awaiting Host to press Play / Start! 🌺";
+            subtext.style.display = "block";
+        }
+
+        const nextSingerText = nextTrack.duet_partner ? `${nextTrack.singer_name} & ${nextTrack.duet_partner}` : nextTrack.singer_name;
+        document.getElementById("intermissionSinger").innerText = nextSingerText;
+        document.getElementById("intermissionSong").innerText = `${nextTrack.artist} - ${nextTrack.title}`;
+        document.getElementById("intermissionKey").innerText = nextTrack.pitch_shift !== 0 ? `Key: ${nextTrack.pitch_shift > 0 ? '+' : ''}${nextTrack.pitch_shift}` : "Key: Standard";
+    } else {
+        if (idleQRBox) idleQRBox.style.display = "flex";
+        if (upNextBadge) upNextBadge.style.display = "none";
+        if (subtext) subtext.style.display = "none";
+
+        document.getElementById("intermissionSinger").innerText = "Queue is Open!";
+        document.getElementById("intermissionSong").innerText = "The stage is yours! Pick your favorite song!";
+        document.getElementById("intermissionKey").innerText = "";
+    }
+}
+
 function stopIntermission() {
     isIntermission = false;
     clearInterval(intermissionTimer);
@@ -408,7 +515,53 @@ function speakAnnouncerIntro(singerName, songTitle) {
         }).catch(() => {});
 }
 
-// BGM Fading
+// BGM Shuffled Playlist Engine
+async function initBGMPlaylist() {
+    try {
+        const res = await fetch("/api/bgm-tracks");
+        const data = await res.json();
+        if (data.tracks && data.tracks.length > 0) {
+            bgmPlaylist = shuffleArray([...data.tracks]);
+            currentBgmIndex = 0;
+            const bgm = document.getElementById("bgmPlayer");
+            if (bgm) {
+                bgm.removeAttribute("loop");
+                bgm.src = bgmPlaylist[0];
+                bgm.onended = playNextBGM;
+            }
+            console.log(`[BGM] Loaded ${bgmPlaylist.length} background music tracks (shuffled)`);
+        }
+    } catch (e) {
+        console.warn("[BGM] Failed to fetch BGM tracks:", e);
+    }
+}
+
+function shuffleArray(arr) {
+    const a = [...arr];
+    for (let i = a.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+}
+
+function playNextBGM() {
+    if (!bgmPlaylist || bgmPlaylist.length === 0) return;
+    currentBgmIndex = (currentBgmIndex + 1) % bgmPlaylist.length;
+    if (currentBgmIndex === 0) {
+        bgmPlaylist = shuffleArray(bgmPlaylist);
+    }
+    const nextSrc = bgmPlaylist[currentBgmIndex];
+    const bgm = document.getElementById("bgmPlayer");
+    if (bgm) {
+        bgm.src = nextSrc;
+        if (isIntermission && !isMutedViewer) {
+            bgm.volume = 0.25;
+            bgm.play().catch(() => {});
+        }
+    }
+}
+
 function fadeOutBGM() {
     const bgm = document.getElementById("bgmPlayer");
     if (!bgm) return;
@@ -428,6 +581,13 @@ function fadeOutBGM() {
 function fadeInBGM() {
     const bgm = document.getElementById("bgmPlayer");
     if (!bgm) return;
+    if (isMutedViewer) {
+        bgm.muted = true;
+        return;
+    }
+    if (!bgm.src && bgmPlaylist.length > 0) {
+        bgm.src = bgmPlaylist[currentBgmIndex >= 0 ? currentBgmIndex : 0];
+    }
     bgm.volume = 0;
     bgm.play().catch(() => {});
     let vol = 0;
@@ -471,7 +631,11 @@ function fetchCurrentState() {
             if (data.playing) {
                 startTrackPlayback(data.playing);
             } else if (data.next) {
-                triggerIntermission(data.next, data.intermission_seconds || 20);
+                if (data.intermission_seconds && data.intermission_seconds > 0) {
+                    triggerIntermission(data.next, data.intermission_seconds);
+                } else {
+                    stopCurrentTrack(data.next);
+                }
             } else {
                 triggerIntermission(null, 0);
             }
@@ -506,10 +670,10 @@ function setupEventListeners() {
             toggleHostQRModal();
         } else if (e.key === " ") {
             // Space to Pause/Resume
-            if (currentTrack) pausePlayback();
+            pausePlayback();
         } else if (e.key === "n" || e.key === "N") {
             // N for Next/Skip
-            skipCurrentTrack();
+            fetch("/api/host/skip", { method: "POST" });
         } else if (e.key === "[") {
             // Pitch down 1 semitone
             if (audioDSP) audioDSP.setPitch(audioDSP.currentPitch - 1);

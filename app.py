@@ -34,7 +34,7 @@ from database import (
     migrate_storage_paths, get_browsable_tracks,
     get_unique_downloaded_artists, get_cleanup_candidates,
     prune_local_track, check_song_queue_duplicate, add_duet_partner,
-    remove_duet_partner
+    remove_duet_partner, clear_queue_on_startup
 )
 from search import tiered_search
 from downloader import (
@@ -140,6 +140,7 @@ register_download_callback(on_download_finished)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    clear_queue_on_startup()
     worker_task = asyncio.create_task(downloader_worker())
     print("=" * 60)
     print("🌴 FLORIDA TIKI KARAOKE LOUNGE 🌴")
@@ -704,13 +705,74 @@ async def api_update_settings(settings: Dict[str, str]):
         set_setting(k, str(v))
     return {"status": "ok"}
 
+@app.get("/api/bgm-tracks")
+async def api_get_bgm_tracks():
+    bgm_dir = STATIC_DIR / "bgm"
+    if not bgm_dir.exists():
+        return {"tracks": []}
+    tracks = sorted([f"/static/bgm/{f.name}" for f in bgm_dir.glob("*.mp3")])
+    return {"tracks": tracks}
+
 @app.post("/api/host/skip")
 async def host_skip_action(request: Request):
+    global current_intermission_end
+    current = get_current_playing()
+    if current:
+        set_queue_status(current["queue_id"], "skipped")
+    else:
+        queue = get_queue()
+        pending = [q for q in queue if q["status"] == "pending"]
+        if pending:
+            set_queue_status(pending[0]["queue_id"], "skipped")
+
     await manager.broadcast({"type": "skip_track"})
+
+    queue = get_queue()
+    pending = [q for q in queue if q["status"] == "pending"]
+    if pending:
+        dur = int(get_setting("intermission_seconds", str(DEFAULT_INTERMISSION_SECONDS)))
+        current_intermission_end = time.time() + dur
+        await manager.broadcast({
+            "type": "start_intermission",
+            "next_track": pending[0],
+            "duration": dur
+        })
+    else:
+        current_intermission_end = None
+        await manager.broadcast({"type": "queue_empty"})
+
+    await manager.broadcast({"type": "queue_updated", "queue": queue})
+    return {"status": "ok"}
+
+@app.post("/api/host/stop")
+async def host_stop_action(request: Request):
+    global current_intermission_end
+    current_intermission_end = None
+
+    current = get_current_playing()
+    if current:
+        set_queue_status(current["queue_id"], "pending")
+
+    queue = get_queue()
+    pending = [q for q in queue if q["status"] == "pending"]
+    next_track = pending[0] if pending else None
+
+    await manager.broadcast({
+        "type": "stop_track",
+        "next_track": next_track
+    })
+    await manager.broadcast({"type": "queue_updated", "queue": queue})
     return {"status": "ok"}
 
 @app.post("/api/host/toggle-pause")
 async def host_pause_action(request: Request):
+    current = get_current_playing()
+    if not current:
+        queue = get_queue()
+        pending = [q for q in queue if q["status"] == "pending"]
+        if pending:
+            await api_play_queue_item(pending[0]["queue_id"])
+            return {"status": "ok", "action": "started"}
     await manager.broadcast({"type": "pause_track"})
     return {"status": "ok"}
 

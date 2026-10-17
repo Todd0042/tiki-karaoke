@@ -973,6 +973,10 @@ function hostPauseResume() {
     fetch("/api/host/toggle-pause", { method: "POST" });
 }
 
+function hostStop() {
+    fetch("/api/host/stop", { method: "POST" });
+}
+
 function hostStartNow() {
     fetch("/api/host/start-now", { method: "POST" });
 }

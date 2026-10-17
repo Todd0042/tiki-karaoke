@@ -526,6 +526,13 @@ def get_queue() -> List[Dict[str, Any]]:
     conn.close()
     return [dict(r) for r in rows]
 
+def clear_queue_on_startup():
+    """Clears any lingering queue entries when the server starts so queue starts fresh."""
+    conn = get_db()
+    with conn:
+        conn.execute("DELETE FROM queue")
+    conn.close()
+
 def get_current_playing() -> Optional[Dict[str, Any]]:
     conn = get_db()
     cursor = conn.execute("""
@@ -601,6 +608,10 @@ def set_queue_status(queue_id: int, status: str):
             conn.execute("UPDATE queue SET status = 'completed' WHERE id = ?", (queue_id,))
         elif status == 'skipped':
             conn.execute("UPDATE queue SET status = 'skipped' WHERE id = ?", (queue_id,))
+        elif status == 'pending':
+            conn.execute("UPDATE queue SET status = 'pending', played_at = NULL WHERE id = ?", (queue_id,))
+        else:
+            conn.execute("UPDATE queue SET status = ? WHERE id = ?", (status, queue_id))
         rebalance_queue_round_robin(conn)
     conn.close()
 
