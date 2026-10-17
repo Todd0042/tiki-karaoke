@@ -349,6 +349,70 @@ class TestAPIEndpoints(unittest.TestCase):
         self.assertIsNone(state["playing"])
         self.assertIsNone(state["next"])
 
+    def test_singer_songbook_and_profile(self):
+        token = "tok_scott_songbook"
+        # Register singer Scott
+        r = self.client.post("/api/singer/register", json={
+            "token": token,
+            "name": "Scott",
+            "avatar": "🌴"
+        })
+        self.assertEqual(r.status_code, 200)
+
+        # Profile check
+        r = self.client.get(f"/api/singer/{token}/profile")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["name"], "Scott")
+        self.assertEqual(r.json()["avatar"], "🌴")
+
+        # Queue Song A twice with pitch +2
+        self.client.post("/api/queue", json={
+            "video_id": "v_song_a",
+            "title": "Song A",
+            "artist": "Artist Alpha",
+            "singer_token": token,
+            "pitch_shift": 2,
+            "force": True
+        })
+        self.client.post("/api/queue", json={
+            "video_id": "v_song_a",
+            "title": "Song A",
+            "artist": "Artist Alpha",
+            "singer_token": token,
+            "pitch_shift": 2,
+            "force": True
+        })
+
+        # Queue Song B once with pitch -1
+        self.client.post("/api/queue", json={
+            "video_id": "v_song_b",
+            "title": "Song B",
+            "artist": "Artist Beta",
+            "singer_token": token,
+            "pitch_shift": -1,
+            "force": True
+        })
+
+        # Fetch Songbook
+        r = self.client.get(f"/api/singer/{token}/songbook")
+        self.assertEqual(r.status_code, 200)
+        book = r.json()
+        self.assertEqual(book["singer"]["name"], "Scott")
+        self.assertEqual(book["total_queued"], 3)
+        self.assertEqual(book["unique_songs"], 2)
+
+        songs = book["songs"]
+        self.assertEqual(len(songs), 2)
+        # Song A must be first because it was queued 2 times
+        self.assertEqual(songs[0]["title"], "Song A")
+        self.assertEqual(songs[0]["times_queued"], 2)
+        self.assertEqual(songs[0]["preferred_pitch"], 2)
+
+        # Song B must be second (queued 1 time)
+        self.assertEqual(songs[1]["title"], "Song B")
+        self.assertEqual(songs[1]["times_queued"], 1)
+        self.assertEqual(songs[1]["preferred_pitch"], -1)
+
 if __name__ == "__main__":
     unittest.main()
 

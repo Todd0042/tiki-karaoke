@@ -97,6 +97,18 @@ def init_db():
             value TEXT
         );
 
+        CREATE TABLE IF NOT EXISTS singer_song_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            singer_id INTEGER NOT NULL REFERENCES singers(id),
+            track_id INTEGER NOT NULL REFERENCES tracks(id),
+            pitch_shift INTEGER DEFAULT 0,
+            duet_partner TEXT DEFAULT '',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_singer_song_log_singer ON singer_song_log(singer_id, track_id);
+        CREATE INDEX IF NOT EXISTS idx_singer_song_log_time ON singer_song_log(singer_id, created_at);
+
         -- Default settings
         INSERT OR IGNORE INTO settings (key, value) VALUES ('tts_enabled', 'false');
         INSERT OR IGNORE INTO settings (key, value) VALUES ('intermission_seconds', '20');
@@ -119,6 +131,17 @@ def init_db():
                 last_played = (SELECT MAX(played_at) FROM history WHERE history.track_id = tracks.id)
             WHERE EXISTS (SELECT 1 FROM history WHERE history.track_id = tracks.id)
               AND (play_count = 0 OR play_count IS NULL);
+        """)
+
+        # Backfill historical singer queue records into singer_song_log if missing
+        conn.execute("""
+            INSERT INTO singer_song_log (singer_id, track_id, pitch_shift, duet_partner, created_at)
+            SELECT singer_id, track_id, pitch_shift, duet_partner, played_at FROM history
+            WHERE NOT EXISTS (
+                SELECT 1 FROM singer_song_log 
+                WHERE singer_song_log.singer_id = history.singer_id 
+                  AND singer_song_log.track_id = history.track_id
+            );
         """)
 
         conn.execute("CREATE INDEX IF NOT EXISTS idx_tracks_library ON tracks(is_downloaded, play_count, last_played)")
@@ -487,6 +510,25 @@ def enqueue_song(track_id: int, singer_id: int, duet_partner: str = "", pitch_sh
             VALUES (?, ?, ?, ?, 999999.0)
         """, (track_id, singer_id, duet_partner, pitch_shift))
         queue_id = cursor.lastrowid
+
+        # Record in singer songbook log for personal queue tracking across sessions
+        conn.execute("""
+            INSERT INTO singer_song_log (singer_id, track_id, pitch_shift, duet_partner)
+            VALUES (?, ?, ?, ?)
+        """, (singer_id, track_id, pitch_shift, duet_partner))
+
+        # If duet partner is also a registered singer, log for their profile too
+        if duet_partner:
+            partner_row = conn.execute(
+                "SELECT id FROM singers WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) LIMIT 1",
+                (duet_partner,)
+            ).fetchone()
+            if partner_row:
+                conn.execute("""
+                    INSERT INTO singer_song_log (singer_id, track_id, pitch_shift, duet_partner)
+                    VALUES (?, ?, ?, '')
+                """, (partner_row["id"], track_id, pitch_shift))
+
         rebalance_queue_round_robin(conn)
     conn.close()
     return queue_id
@@ -801,6 +843,19 @@ def add_duet_partner(queue_id: int, new_partner_name: str) -> Optional[Dict[str,
             updated_duet = f"{current_duet} & {clean_new}"
         
         conn.execute("UPDATE queue SET duet_partner = ? WHERE id = ?", (updated_duet, queue_id))
+
+        # Log for the joining partner in singer_song_log
+        q_item = conn.execute("SELECT track_id, pitch_shift FROM queue WHERE id = ?", (queue_id,)).fetchone()
+        if q_item:
+            partner_singer = conn.execute(
+                "SELECT id FROM singers WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) LIMIT 1",
+                (clean_new,)
+            ).fetchone()
+            if partner_singer:
+                conn.execute("""
+                    INSERT INTO singer_song_log (singer_id, track_id, pitch_shift, duet_partner)
+                    VALUES (?, ?, ?, '')
+                """, (partner_singer["id"], q_item["track_id"], q_item["pitch_shift"]))
     conn.close()
     return {"queue_id": queue_id, "duet_partner": updated_duet}
 
@@ -891,6 +946,35 @@ def get_singer_history(singer_id: int) -> List[Dict[str, Any]]:
         JOIN tracks t ON h.track_id = t.id
         WHERE h.singer_id = ?
         ORDER BY h.played_at DESC
+    """, (singer_id,))
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+def get_singer_songbook(singer_id: int) -> List[Dict[str, Any]]:
+    """Returns all unique songs queued by this singer across sessions, ranked by queue frequency."""
+    conn = get_db()
+    cursor = conn.execute("""
+        SELECT 
+            t.id as track_id,
+            t.video_id,
+            t.title,
+            t.artist,
+            t.duration,
+            t.is_downloaded,
+            COUNT(l.id) as times_queued,
+            MAX(l.created_at) as last_queued_at,
+            (
+                SELECT pitch_shift 
+                FROM singer_song_log 
+                WHERE singer_id = l.singer_id AND track_id = l.track_id 
+                ORDER BY id DESC LIMIT 1
+            ) as preferred_pitch
+        FROM singer_song_log l
+        JOIN tracks t ON l.track_id = t.id
+        WHERE l.singer_id = ?
+        GROUP BY t.id, t.video_id, t.title, t.artist, t.duration, t.is_downloaded
+        ORDER BY times_queued DESC, last_queued_at DESC
     """, (singer_id,))
     rows = cursor.fetchall()
     conn.close()

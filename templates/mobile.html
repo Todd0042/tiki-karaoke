@@ -253,8 +253,25 @@
                 </button>
             </div>
 
-            <h2 class="font-tiki neon-cyan" style="font-size: 1.2rem; margin-bottom: 12px;">⭐ My Songs Sung Tonight</h2>
-            <div id="historyList"></div>
+            <!-- Personal Songbook Header -->
+            <div style="display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 12px;">
+                <div>
+                    <h2 class="font-tiki neon-cyan" style="font-size: 1.25rem; margin: 0 0 4px 0;">⭐ My Songbook</h2>
+                    <div id="songbookSubtext" style="font-size: 0.8rem; color: var(--text-muted);">Ranked by your most queued tracks across all visits</div>
+                </div>
+                <button onclick="loadSongbook()" class="btn-ghost" style="padding: 4px 10px; font-size: 0.78rem;">↻ Refresh</button>
+            </div>
+
+            <!-- Sort Pills -->
+            <div id="songbookSortPills" style="display: flex; gap: 6px; overflow-x: auto; padding-bottom: 8px; margin-bottom: 14px;" class="custom-scroll">
+                <button class="lib-sort-btn active" data-songbook-sort="frequency" onclick="setSongbookSort('frequency')">🔥 Most Queued</button>
+                <button class="lib-sort-btn" data-songbook-sort="recent" onclick="setSongbookSort('recent')">🕒 Recent</button>
+                <button class="lib-sort-btn" data-songbook-sort="alpha" onclick="setSongbookSort('alpha')">🔤 Title A-Z</button>
+            </div>
+
+            <!-- Ranked Song List -->
+            <div id="songbookList"></div>
+            <div id="historyList" style="display: none;"></div>
         </section>
 
         <!-- TAB 4: Host DJ Controls (Protected) -->

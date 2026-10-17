@@ -34,7 +34,7 @@ from database import (
     migrate_storage_paths, get_browsable_tracks,
     get_unique_downloaded_artists, get_cleanup_candidates,
     prune_local_track, check_song_queue_duplicate, add_duet_partner,
-    remove_duet_partner, clear_queue_on_startup
+    remove_duet_partner, clear_queue_on_startup, get_singer_songbook
 )
 from search import tiered_search
 from downloader import (
@@ -457,6 +457,40 @@ async def api_singer_history(token: str):
     if not singer:
         return []
     return get_singer_history(singer["id"])
+
+@app.get("/api/singer/{token}/songbook")
+async def api_singer_songbook(token: str):
+    singer = get_singer_by_token(token)
+    if not singer:
+        return {
+            "singer": None,
+            "songs": [],
+            "total_queued": 0,
+            "unique_songs": 0
+        }
+    songs = get_singer_songbook(singer["id"])
+    total_queued = sum(s.get("times_queued", 1) for s in songs)
+    return {
+        "singer": {
+            "name": singer["name"],
+            "avatar": singer["avatar"],
+            "token": singer["token"]
+        },
+        "songs": songs,
+        "total_queued": total_queued,
+        "unique_songs": len(songs)
+    }
+
+@app.get("/api/singer/{token}/profile")
+async def api_singer_profile(token: str):
+    singer = get_singer_by_token(token)
+    if not singer:
+        raise HTTPException(status_code=404, detail="Singer profile not found.")
+    return {
+        "token": singer["token"],
+        "name": singer["name"],
+        "avatar": singer["avatar"]
+    }
 
 # Queue API
 @app.get("/api/queue")

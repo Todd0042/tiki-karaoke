@@ -23,8 +23,8 @@ document.addEventListener("DOMContentLoaded", () => {
 // Identity & Session
 function checkIdentity() {
     let token = localStorage.getItem("tiki_token") || getCookie("tiki_token");
-    let name = localStorage.getItem("tiki_name");
-    let avatar = localStorage.getItem("tiki_avatar") || "🌺";
+    let name = localStorage.getItem("tiki_name") || getCookie("tiki_name");
+    let avatar = localStorage.getItem("tiki_avatar") || getCookie("tiki_avatar") || "🌺";
 
     if (!token || token === "undefined" || token === "null") {
         token = null;
@@ -34,12 +34,39 @@ function checkIdentity() {
     if (!name || name === "undefined" || name === "null") {
         name = null;
         localStorage.removeItem("tiki_name");
+        setCookie("tiki_name", "", -1);
     }
 
     if (token && name) {
         currentSinger = { token, name, avatar };
         updateSingerHeader();
         registerSingerWithServer();
+    } else if (token) {
+        // Token was preserved in cookie or storage, restore profile from server!
+        fetch(`/api/singer/${token}/profile`)
+            .then(res => res.ok ? res.json() : null)
+            .then(prof => {
+                if (prof && prof.name) {
+                    currentSinger = prof;
+                    localStorage.setItem("tiki_token", prof.token);
+                    localStorage.setItem("tiki_name", prof.name);
+                    localStorage.setItem("tiki_avatar", prof.avatar || "🌺");
+                    setCookie("tiki_token", prof.token, 365);
+                    setCookie("tiki_name", prof.name, 365);
+                    setCookie("tiki_avatar", prof.avatar || "🌺", 365);
+                    updateSingerHeader();
+                    registerSingerWithServer();
+                } else {
+                    currentSinger = null;
+                    updateSingerHeader();
+                    showOnboardingModal();
+                }
+            })
+            .catch(() => {
+                currentSinger = null;
+                updateSingerHeader();
+                showOnboardingModal();
+            });
     } else {
         currentSinger = null;
         updateSingerHeader();
@@ -85,7 +112,9 @@ function registerSingerWithServer() {
             localStorage.setItem("tiki_token", data.token);
             localStorage.setItem("tiki_name", data.name);
             localStorage.setItem("tiki_avatar", data.avatar || "🌺");
-            setCookie("tiki_token", data.token, 7);
+            setCookie("tiki_token", data.token, 365);
+            setCookie("tiki_name", data.name, 365);
+            setCookie("tiki_avatar", data.avatar || "🌺", 365);
             updateSingerHeader();
         }
     })
@@ -253,8 +282,10 @@ function completeOnboarding() {
         currentSinger = data;
         localStorage.setItem("tiki_token", data.token);
         localStorage.setItem("tiki_name", data.name);
-        localStorage.setItem("tiki_avatar", data.avatar);
-        setCookie("tiki_token", data.token, 7);
+        localStorage.setItem("tiki_avatar", data.avatar || "🌺");
+        setCookie("tiki_token", data.token, 365);
+        setCookie("tiki_name", data.name, 365);
+        setCookie("tiki_avatar", data.avatar || "🌺", 365);
 
         document.getElementById("onboardingModal").style.display = "none";
         updateSingerHeader();
@@ -522,13 +553,16 @@ function renderSearchResults(data, query) {
 
 // Queue Modal & Pitch Selector
 // Queue Modal & Pitch Selector
-async function openQueueModal(trackId, title, artist, videoId) {
+async function openQueueModal(trackId, title, artist, videoId, initialPitch = 0) {
     selectedTrackForQueue = { trackId, title, artist, videoId };
-    selectedPitch = 0;
+    selectedPitch = initialPitch || 0;
     activeDuplicateInfo = null;
 
     document.getElementById("modalSongTitle").innerText = `${artist} - ${title}`;
     resetPitchButtons();
+    if (selectedPitch !== 0) {
+        selectPitch(selectedPitch);
+    }
     document.getElementById("duetInput").value = "";
 
     const dupSec = document.getElementById("queueModalDuplicateSection");
@@ -917,39 +951,127 @@ function sendReaction(emoji) {
     showToast(`Sent ${emoji} to stage screen!`);
 }
 
-// History & Surprise Me
-function loadHistory() {
-    if (!currentSinger) return;
-    fetch(`/api/singer/${currentSinger.token}/history`)
+// Personal Songbook & Queue Frequency Tracking
+let currentSongbookCache = [];
+let currentSongbookSort = "frequency";
+
+function setSongbookSort(sortType) {
+    currentSongbookSort = sortType;
+    document.querySelectorAll("[data-songbook-sort]").forEach(btn => {
+        if (btn.getAttribute("data-songbook-sort") === sortType) {
+            btn.classList.add("active");
+        } else {
+            btn.classList.remove("active");
+        }
+    });
+    renderSongbookList();
+}
+
+function loadSongbook() {
+    if (!currentSinger || !currentSinger.token) return;
+    const list = document.getElementById("songbookList");
+    if (!list) return;
+
+    fetch(`/api/singer/${currentSinger.token}/songbook`)
         .then(res => res.json())
-        .then(history => {
-            const list = document.getElementById("historyList");
-            list.innerHTML = "";
-            if (history.length === 0) {
-                list.innerHTML = '<div style="color: var(--text-muted); text-align: center; padding: 20px;">No songs sung yet tonight. Step up to the mic! 🎤</div>';
-                return;
+        .then(data => {
+            currentSongbookCache = data.songs || [];
+            const subtext = document.getElementById("songbookSubtext");
+            if (subtext) {
+                if (data.total_queued > 0) {
+                    const singerName = data.singer?.name || currentSinger.name || "My";
+                    subtext.innerText = `${singerName}'s Songbook • ${data.unique_songs} song${data.unique_songs === 1 ? '' : 's'} (${data.total_queued} total time${data.total_queued === 1 ? '' : 's'} queued)`;
+                } else {
+                    subtext.innerText = "Ranked by your most queued tracks across all visits";
+                }
             }
-            history.forEach(item => {
-                const card = document.createElement("div");
-                card.className = "tiki-card";
-                card.style.padding = "12px 16px";
-                card.style.marginBottom = "10px";
-                card.style.display = "flex";
-                card.style.justifyContent = "space-between";
-                card.style.alignItems = "center";
-                card.innerHTML = `
-                    <div>
-                        <div style="font-weight: 700;">${escapeHtml(item.title)}</div>
-                        <div style="color: var(--text-muted); font-size: 0.85rem;">${escapeHtml(item.artist)}</div>
-                    </div>
-                    <button class="btn-ghost history-requeue-btn" style="font-size: 0.8rem;">
-                        Sing Again
-                    </button>
-                `;
-                card.querySelector(".history-requeue-btn").onclick = () => openQueueModal(null, item.title, item.artist, item.video_id);
-                list.appendChild(card);
-            });
+            renderSongbookList();
+        })
+        .catch(err => {
+            console.error("[Songbook] Error loading personal songbook:", err);
+            list.innerHTML = '<div style="color: var(--text-muted); text-align: center; padding: 20px;">Unable to load personal songbook. Tap refresh to retry!</div>';
         });
+}
+
+function renderSongbookList() {
+    const list = document.getElementById("songbookList");
+    if (!list) return;
+    list.innerHTML = "";
+
+    if (!currentSongbookCache || currentSongbookCache.length === 0) {
+        list.innerHTML = `
+            <div style="text-align: center; padding: 30px 16px; color: var(--text-muted);">
+                <div style="font-size: 2.2rem; margin-bottom: 8px;">🌴</div>
+                <div style="font-size: 1.05rem; font-weight: 700; color: #fff; margin-bottom: 6px;">Your Personal Songbook is Empty!</div>
+                <p style="font-size: 0.85rem; max-width: 280px; margin: 0 auto 16px auto;">Search for a song or spin the Tiki Wheel to queue your first karaoke performance!</p>
+                <button onclick="document.querySelector('[data-tab=\\'searchTab\\']').click()" class="btn-neon-cyan" style="font-size: 0.85rem; padding: 8px 18px;">
+                    🔍 Browse & Search Songs
+                </button>
+            </div>
+        `;
+        return;
+    }
+
+    // Sort according to currentSongbookSort
+    const sorted = [...currentSongbookCache];
+    if (currentSongbookSort === "frequency") {
+        sorted.sort((a, b) => (b.times_queued || 0) - (a.times_queued || 0));
+    } else if (currentSongbookSort === "recent") {
+        sorted.sort((a, b) => new Date(b.last_queued_at || 0) - new Date(a.last_queued_at || 0));
+    } else if (currentSongbookSort === "alpha") {
+        sorted.sort((a, b) => (a.title || "").localeCompare(b.title || ""));
+    }
+
+    sorted.forEach((item, index) => {
+        const card = document.createElement("div");
+        card.className = "tiki-card";
+        card.style.padding = "14px 16px";
+        card.style.marginBottom = "10px";
+        card.style.display = "flex";
+        card.style.justifyContent = "space-between";
+        card.style.alignItems = "center";
+        card.style.gap = "12px";
+
+        // Frequency rank badge
+        let badgeHtml = "";
+        const count = item.times_queued || 1;
+        if (currentSongbookSort === "frequency" && index === 0 && count > 1) {
+            badgeHtml = `<span style="background: rgba(255, 183, 3, 0.2); border: 1px solid var(--neon-gold); color: var(--neon-gold); padding: 2px 8px; border-radius: 8px; font-size: 0.72rem; font-weight: 700;">👑 #1 Pick • ${count}x Queued</span>`;
+        } else if (count > 1) {
+            badgeHtml = `<span style="background: rgba(255, 42, 133, 0.15); border: 1px solid var(--neon-pink); color: var(--neon-pink); padding: 2px 8px; border-radius: 8px; font-size: 0.72rem; font-weight: 700;">🔥 ${count}x Queued</span>`;
+        } else {
+            badgeHtml = `<span style="background: rgba(0, 240, 255, 0.12); border: 1px solid rgba(0, 240, 255, 0.3); color: var(--neon-cyan); padding: 2px 8px; border-radius: 8px; font-size: 0.72rem; font-weight: 600;">⭐ 1x Queued</span>`;
+        }
+
+        let pitchHtml = "";
+        if (item.preferred_pitch && item.preferred_pitch !== 0) {
+            const sign = item.preferred_pitch > 0 ? "+" : "";
+            pitchHtml = `<span class="badge-key" style="font-size: 0.7rem; padding: 2px 6px;">Key: ${sign}${item.preferred_pitch}</span>`;
+        }
+
+        card.innerHTML = `
+            <div style="flex: 1; min-width: 0;">
+                <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px; flex-wrap: wrap;">
+                    ${badgeHtml}
+                    ${pitchHtml}
+                </div>
+                <div style="font-weight: 700; font-size: 0.95rem; color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(item.title)}</div>
+                <div style="color: var(--text-muted); font-size: 0.82rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(item.artist)}</div>
+            </div>
+            <button class="btn-ghost history-requeue-btn" style="padding: 7px 14px; font-size: 0.82rem; font-weight: 700; color: var(--neon-cyan); border-color: rgba(0,240,255,0.4); white-space: nowrap;">
+                Sing Again
+            </button>
+        `;
+
+        card.querySelector(".history-requeue-btn").onclick = () => {
+            openQueueModal(item.track_id, item.title, item.artist, item.video_id, item.preferred_pitch || 0);
+        };
+        list.appendChild(card);
+    });
+}
+
+function loadHistory() {
+    loadSongbook();
 }
 
 function spinTikiWheel() {
@@ -1046,15 +1168,15 @@ function escapeHtml(str) {
     return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
 }
 
-function setCookie(name, val, days) {
+function setCookie(name, val, days = 365) {
     const d = new Date();
     d.setTime(d.getTime() + (days * 24 * 60 * 60 * 1000));
-    document.cookie = `${name}=${val};expires=${d.toUTCString()};path=/`;
+    document.cookie = `${name}=${encodeURIComponent(val)};expires=${d.toUTCString()};path=/;SameSite=Lax`;
 }
 
 function getCookie(name) {
     const match = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
-    return match ? match[2] : null;
+    return match ? decodeURIComponent(match[2]) : null;
 }
 
 function toggleHostInstructionsModal(show) {
