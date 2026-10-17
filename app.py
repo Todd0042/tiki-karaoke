@@ -33,7 +33,8 @@ from database import (
     get_taken_avatars_for_name, purge_all_singers,
     migrate_storage_paths, get_browsable_tracks,
     get_unique_downloaded_artists, get_cleanup_candidates,
-    prune_local_track, check_song_queue_duplicate, add_duet_partner
+    prune_local_track, check_song_queue_duplicate, add_duet_partner,
+    remove_duet_partner
 )
 from search import tiered_search
 from downloader import (
@@ -183,6 +184,10 @@ class QueueSongRequest(BaseModel):
 class JoinDuetRequest(BaseModel):
     singer_token: str
     partner_name: Optional[str] = None
+
+class LeaveDuetRequest(BaseModel):
+    singer_token: str
+    singer_name: Optional[str] = None
 
 class PruneTracksRequest(BaseModel):
     track_ids: List[int]
@@ -490,6 +495,21 @@ async def api_join_duet(queue_id: int, req: JoinDuetRequest):
         "queue": queue
     })
     return {"status": "ok", "duet_partner": res["duet_partner"], "queue": queue}
+
+@app.post("/api/queue/{queue_id}/leave-duet")
+async def api_leave_duet(queue_id: int, req: LeaveDuetRequest):
+    singer = get_singer_by_token(req.singer_token)
+    name = req.singer_name or (singer["name"] if singer else "")
+    res = remove_duet_partner(queue_id, singer_name=name, singer_token=req.singer_token)
+    if not res:
+        raise HTTPException(status_code=404, detail="Queue item not found.")
+
+    queue = get_queue()
+    await manager.broadcast({
+        "type": "queue_updated",
+        "queue": queue
+    })
+    return {"status": "ok", "result": res, "queue": queue}
 
 @app.post("/api/queue")
 async def api_enqueue_song(req: QueueSongRequest, request: Request):

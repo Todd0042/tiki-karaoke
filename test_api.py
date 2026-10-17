@@ -245,6 +245,30 @@ class TestAPIEndpoints(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.json()["duet_partner"], "SingerB")
 
+        # 5b. Singer B leaves duet -> partner cleared
+        r = self.client.post(f"/api/queue/{q_id}/leave-duet", json={
+            "singer_token": "tok_singer_b",
+            "singer_name": "SingerB"
+        })
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["result"]["duet_partner"], "")
+
+        # 5c. Singer B rejoins duet
+        r = self.client.post(f"/api/queue/{q_id}/join-duet", json={
+            "singer_token": "tok_singer_b",
+            "partner_name": "SingerB"
+        })
+        self.assertEqual(r.status_code, 200)
+
+        # 5d. Singer A (primary) leaves duet -> Singer B promoted to primary!
+        r = self.client.post(f"/api/queue/{q_id}/leave-duet", json={
+            "singer_token": "tok_singer_a",
+            "singer_name": "SingerA"
+        })
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["result"]["primary_name"], "SingerB")
+        self.assertEqual(r.json()["result"]["duet_partner"], "")
+
         # 6. Singer B queues with force: True -> succeeds
         r = self.client.post("/api/queue", json={
             "video_id": "v_hotel_cal",

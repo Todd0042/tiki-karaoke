@@ -793,6 +793,76 @@ def add_duet_partner(queue_id: int, new_partner_name: str) -> Optional[Dict[str,
     conn.close()
     return {"queue_id": queue_id, "duet_partner": updated_duet}
 
+def remove_duet_partner(queue_id: int, singer_name: str, singer_token: str = "") -> Optional[Dict[str, Any]]:
+    conn = get_db()
+    with conn:
+        cursor = conn.execute("""
+            SELECT q.id, q.singer_id, q.duet_partner, q.status, s.name as primary_name, s.token as primary_token
+            FROM queue q
+            JOIN singers s ON q.singer_id = s.id
+            WHERE q.id = ?
+        """, (queue_id,))
+        row = cursor.fetchone()
+        if not row:
+            conn.close()
+            return None
+
+        primary_name = (row["primary_name"] or "").strip()
+        duet_raw = (row["duet_partner"] or "").strip()
+        partners = [p.strip() for p in duet_raw.replace("&", ",").split(",") if p.strip()]
+
+        clean_name = singer_name.strip()
+        is_primary = False
+        if singer_token and row["primary_token"] and singer_token == row["primary_token"]:
+            is_primary = True
+        elif clean_name and primary_name and clean_name.lower() == primary_name.lower():
+            is_primary = True
+
+        res = None
+        if is_primary:
+            if not partners:
+                conn.execute("DELETE FROM queue WHERE id = ?", (queue_id,))
+                rebalance_queue_round_robin(conn)
+                res = {"queue_id": queue_id, "deleted": True}
+            else:
+                new_primary_name = partners[0]
+                remaining_partners = partners[1:]
+                new_duet = " & ".join(remaining_partners)
+
+                s_chk = conn.execute("""
+                    SELECT id FROM singers 
+                    WHERE LOWER(TRIM(name)) = LOWER(TRIM(?))
+                    ORDER BY id ASC LIMIT 1
+                """, (new_primary_name,)).fetchone()
+                if s_chk:
+                    new_singer_id = s_chk["id"]
+                else:
+                    new_tok = f"usr_{secrets.token_hex(6)}"
+                    c2 = conn.execute("INSERT INTO singers (token, name, avatar) VALUES (?, ?, '🎤')", (new_tok, new_primary_name))
+                    new_singer_id = c2.lastrowid
+
+                conn.execute("UPDATE queue SET singer_id = ?, duet_partner = ? WHERE id = ?", (new_singer_id, new_duet, queue_id))
+                rebalance_queue_round_robin(conn)
+                res = {
+                    "queue_id": queue_id,
+                    "primary_name": new_primary_name,
+                    "duet_partner": new_duet,
+                    "deleted": False
+                }
+        else:
+            new_partners = [p for p in partners if p.lower() != clean_name.lower()]
+            new_duet = " & ".join(new_partners)
+            conn.execute("UPDATE queue SET duet_partner = ? WHERE id = ?", (new_duet, queue_id))
+            res = {
+                "queue_id": queue_id,
+                "primary_name": primary_name,
+                "duet_partner": new_duet,
+                "deleted": False
+            }
+
+    conn.close()
+    return res
+
 # History & Stats
 def get_singer_history(singer_id: int) -> List[Dict[str, Any]]:
     conn = get_db()

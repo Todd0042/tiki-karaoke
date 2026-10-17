@@ -767,6 +767,31 @@ function renderQueue(queue) {
         const isPlaying = item.status === "playing";
         const isMine = currentSinger && item.singer_id === currentSinger.id;
 
+        const myName = (currentSinger && currentSinger.name) ? currentSinger.name.trim().toLowerCase() : "";
+        const primaryName = (item.singer_name || "").trim().toLowerCase();
+        const rawPartners = (item.duet_partner || "").trim();
+        const partnerNames = rawPartners 
+            ? rawPartners.replace(/&/g, ",").split(",").map(p => p.trim()).filter(Boolean)
+            : [];
+        
+        const isPrimary = Boolean(currentSinger && (item.singer_id === currentSinger.id || (myName && primaryName === myName)));
+        const isPartner = Boolean(myName && partnerNames.some(p => p.toLowerCase() === myName));
+        const amISingerOnSong = isPrimary || isPartner;
+        const totalSingersCount = 1 + partnerNames.length;
+
+        // If user is the only remaining singer, do not show button (they have the ✕ button)
+        const isOnlySinger = amISingerOnSong && (totalSingersCount === 1);
+        const showDuetToggle = !isOnlySinger;
+        const isLeaving = amISingerOnSong && totalSingersCount > 1;
+
+        const duetBtnLabel = isLeaving ? "🚪 Leave Song" : "👯 Join Duet";
+        const duetBtnClass = isLeaving ? "btn-leave-duet" : "btn-join-duet";
+        const duetBtnStyle = isLeaving 
+            ? "border-color: rgba(255, 170, 0, 0.45); color: #ffaa00;" 
+            : "border-color: var(--neon-cyan); color: var(--neon-cyan);";
+
+        const showCancelBtn = (isMine || isHost) && !isPlaying;
+
         const card = document.createElement("div");
         card.className = isPlaying ? "tiki-card-pink pulse-glow" : "tiki-card";
         card.style.padding = "16px";
@@ -775,27 +800,105 @@ function renderQueue(queue) {
         const pitchText = item.pitch_shift !== 0 ? `Key: ${item.pitch_shift > 0 ? '+' : ''}${item.pitch_shift}` : "Standard Key";
 
         card.innerHTML = `
-            <div style="display: flex; justify-content: space-between; align-items: center;">
-                <div style="display: flex; align-items: center; gap: 12px;">
-                    <div style="font-size: 1.8rem;">${item.singer_avatar || "🌺"}</div>
-                    <div>
+            <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px;">
+                <div style="display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0;">
+                    <div style="font-size: 1.8rem; flex-shrink: 0;">${item.singer_avatar || "🌺"}</div>
+                    <div style="min-width: 0; overflow: hidden;">
                         <div style="font-size: 0.8rem; font-weight: 700; color: ${isPlaying ? 'var(--neon-pink)' : 'var(--neon-cyan)'};">
                             ${isPlaying ? 'NOW SINGING' : `#${index} IN LINE`}
                         </div>
-                        <div style="font-weight: 700; font-size: 1.1rem;">${escapeHtml(item.singer_name)} ${item.duet_partner ? `& ${escapeHtml(item.duet_partner)}` : ''}</div>
-                        <div style="color: var(--text-muted); font-size: 0.9rem;">${escapeHtml(item.artist)} - ${escapeHtml(item.title)}</div>
+                        <div style="font-weight: 700; font-size: 1.05rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                            ${escapeHtml(item.singer_name)} ${item.duet_partner ? `& ${escapeHtml(item.duet_partner)}` : ''}
+                        </div>
+                        <div style="color: var(--text-muted); font-size: 0.88rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                            ${escapeHtml(item.artist)} - ${escapeHtml(item.title)}
+                        </div>
                         <span class="badge-key" style="margin-top: 4px; display: inline-block;">${pitchText}</span>
                     </div>
                 </div>
 
-                ${(isMine || isHost) && !isPlaying ? `
-                    <button onclick="cancelQueuedSong(${item.queue_id})" class="btn-ghost" style="padding: 6px 10px; font-size: 0.8rem; color: #ff5555;">
-                        ✕
-                    </button>
-                ` : ''}
+                <div style="display: flex; align-items: center; gap: 6px; flex-shrink: 0;">
+                    ${showDuetToggle ? `
+                        <button onclick="${isLeaving ? `leaveQueueDuet(${item.queue_id})` : `joinQueueDuet(${item.queue_id})`}" 
+                                class="btn-ghost ${duetBtnClass}" 
+                                style="padding: 6px 10px; font-size: 0.78rem; font-weight: 700; border-radius: 8px; ${duetBtnStyle}; white-space: nowrap;">
+                            ${duetBtnLabel}
+                        </button>
+                    ` : ''}
+
+                    ${showCancelBtn ? `
+                        <button onclick="cancelQueuedSong(${item.queue_id})" class="btn-ghost" style="padding: 6px 10px; font-size: 0.85rem; color: #ff5555; border-radius: 8px;" title="Remove song">
+                            ✕
+                        </button>
+                    ` : ''}
+                </div>
             </div>
         `;
         container.appendChild(card);
+    });
+}
+
+function joinQueueDuet(queueId) {
+    if (!currentSinger || !currentSinger.token || !currentSinger.name || currentSinger.name === "undefined") {
+        showToast("⚠️ Please choose your nickname first!");
+        showOnboardingModal();
+        return;
+    }
+
+    fetch(`/api/queue/${queueId}/join-duet`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            singer_token: currentSinger.token,
+            partner_name: currentSinger.name
+        })
+    })
+    .then(async res => {
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.detail || "Could not join song.");
+        }
+        return res.json();
+    })
+    .then(() => {
+        showToast("👯 You joined this song as a duet partner!");
+        loadLiveQueue();
+    })
+    .catch(err => {
+        showToast(err.message || "Failed to join song.");
+    });
+}
+
+function leaveQueueDuet(queueId) {
+    if (!currentSinger || !currentSinger.token) {
+        showToast("⚠️ Nickname required!");
+        showOnboardingModal();
+        return;
+    }
+
+    if (!confirm("Remove yourself as a singer on this song?")) return;
+
+    fetch(`/api/queue/${queueId}/leave-duet`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            singer_token: currentSinger.token,
+            singer_name: currentSinger.name
+        })
+    })
+    .then(async res => {
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.detail || "Could not remove yourself from song.");
+        }
+        return res.json();
+    })
+    .then(() => {
+        showToast("👋 You removed yourself from this song.");
+        loadLiveQueue();
+    })
+    .catch(err => {
+        showToast(err.message || "Failed to leave song.");
     });
 }
 
