@@ -687,8 +687,8 @@ function showDuplicateAdvisory(dup) {
 
 function handleJoinDuet() {
     if (!activeDuplicateInfo || !activeDuplicateInfo.existing_queue_id) return;
-    if (!currentSinger || !currentSinger.token) {
-        showToast("⚠️ Nickname required to join duet!");
+    if (!currentSinger || !currentSinger.token || !currentSinger.name || currentSinger.name === "undefined") {
+        showToast("⚠️ Please choose your nickname first!");
         showOnboardingModal();
         return;
     }
