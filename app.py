@@ -3,6 +3,7 @@ import io
 import time
 import socket
 import asyncio
+import secrets
 from typing import List, Dict, Any, Optional
 from contextlib import asynccontextmanager
 
@@ -485,7 +486,11 @@ async def api_enqueue_song(req: QueueSongRequest, request: Request):
     client_ip = request.client.host if request.client else ""
     singer = get_singer_by_token(req.singer_token)
     if not singer:
-        singer = get_or_create_singer(req.singer_token, "Guest", ip_address=client_ip)
+        token_suffix = (req.singer_token[-4:] if req.singer_token and len(req.singer_token) >= 4 else secrets.token_hex(2)).upper()
+        try:
+            singer = get_or_create_singer(req.singer_token, f"Guest {token_suffix}", ip_address=client_ip)
+        except Exception:
+            singer = get_or_create_singer(req.singer_token, f"Guest {secrets.token_hex(3).upper()}", ip_address=client_ip)
 
     # Check for duplicates if not forced
     if not req.force:
@@ -804,6 +809,7 @@ async def auth_callback(code: str = ""):
 # WebSockets Hub
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
+    global current_intermission_end
     await manager.connect(websocket)
     try:
         while True:

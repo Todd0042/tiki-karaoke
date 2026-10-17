@@ -13,6 +13,14 @@ class TestAPIEndpoints(unittest.TestCase):
         init_db()
         cls.client = TestClient(app)
 
+    def setUp(self):
+        from database import get_db
+        conn = get_db()
+        with conn:
+            conn.execute("DELETE FROM queue")
+            conn.execute("DELETE FROM history")
+        conn.close()
+
     def test_pages(self):
         # Home/Join page
         r = self.client.get("/join")
@@ -247,6 +255,18 @@ class TestAPIEndpoints(unittest.TestCase):
         })
         self.assertEqual(r.status_code, 200)
         self.assertIn("queue_id", r.json())
+
+    def test_guest_fallback_creation(self):
+        # Multiple anonymous queue requests with distinct new tokens
+        for i in range(5):
+            r = self.client.post("/api/queue", json={
+                "video_id": f"v_guest_{i}",
+                "title": f"Guest Song {i}",
+                "artist": "Guest Artist",
+                "singer_token": f"anon_token_{i}"
+            })
+            self.assertEqual(r.status_code, 200)
+            self.assertIn("queue_id", r.json())
 
 if __name__ == "__main__":
     unittest.main()

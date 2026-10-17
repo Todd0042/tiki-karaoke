@@ -199,7 +199,23 @@ def get_or_create_singer(token: str, name: str = "", avatar: str = "🌺", ip_ad
                 WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) AND avatar = ? AND token != ?
             """, (final_name, clean_avatar, clean_token)).fetchone()
             if chk["cnt"] > 0:
-                raise ValueError(f"'{final_name}' with the {clean_avatar} avatar is already taken! Please pick another avatar.")
+                if not clean_name or clean_name.lower().startswith("guest") or clean_name.lower().startswith("tiki singer"):
+                    avatars = ["🌺", "🦩", "🍹", "🌴", "🦜", "🥥", "🏄", "🍍"]
+                    found = False
+                    for av in avatars:
+                        chk_av = conn.execute("""
+                            SELECT COUNT(*) as cnt FROM singers 
+                            WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) AND avatar = ? AND token != ?
+                        """, (final_name, av, clean_token)).fetchone()
+                        if chk_av["cnt"] == 0:
+                            clean_avatar = av
+                            found = True
+                            break
+                    if not found:
+                        suffix = clean_token[-4:].upper() if len(clean_token) >= 4 else secrets.token_hex(2).upper()
+                        final_name = f"{final_name} {suffix}"
+                else:
+                    raise ValueError(f"'{final_name}' with the {clean_avatar} avatar is already taken! Please pick another avatar.")
 
             cursor = conn.execute("""
                 INSERT INTO singers (token, name, avatar, ip_address)
