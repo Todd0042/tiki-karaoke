@@ -18,7 +18,8 @@ from config import (
     PORT, DEFAULT_INTERMISSION_SECONDS, PUBLIC_HOST,
     load_config, save_config, is_configured,
     get_library_dir, get_tracks_dir, get_playlists_dir, get_data_dir,
-    get_db_path, get_path_info, ensure_storage_dirs, get_storage_status
+    get_db_path, get_path_info, ensure_storage_dirs, get_storage_status,
+    get_available_displays, get_available_audio_sinks
 )
 from database import (
     init_db, get_or_create_singer, get_singer_by_token,
@@ -187,8 +188,27 @@ async def setup_page(request: Request):
     return templates.TemplateResponse(request=request, name="setup.html", context={
         "config": cfg,
         "default_library_dir": str(get_library_dir()),
-        "default_data_dir": str(get_data_dir())
+        "default_data_dir": str(get_data_dir()),
+        "displays": get_available_displays(),
+        "audio_sinks": get_available_audio_sinks()
     })
+
+@app.get("/api/setup/displays")
+async def api_get_setup_displays():
+    return get_available_displays()
+
+@app.get("/api/setup/audio-devices")
+async def api_get_setup_audio_devices():
+    return get_available_audio_sinks()
+
+@app.post("/api/setup/test-display")
+async def api_test_display(payload: Dict[str, Any]):
+    badge = payload.get("badge", "📺 MAIN STAGE DISPLAY")
+    await manager.broadcast({
+        "type": "test_display",
+        "badge": badge
+    })
+    return {"status": "ok"}
 
 @app.post("/api/setup/inspect-path")
 async def api_inspect_storage_path(payload: Dict[str, Any]):
@@ -245,6 +265,12 @@ async def api_save_setup(payload: Dict[str, Any]):
         set_setting("tts_enabled", "true" if payload["tts_enabled"] else "false")
     if "bgm_enabled" in payload:
         set_setting("bgm_enabled", "true" if payload["bgm_enabled"] else "false")
+    if "stage_display" in payload:
+        set_setting("stage_display", str(payload["stage_display"]))
+    if "audio_output_device" in payload:
+        set_setting("audio_output_device", str(payload["audio_output_device"]))
+    if "kiosk_mode" in payload:
+        set_setting("kiosk_mode", "true" if payload["kiosk_mode"] else "false")
     return {"status": "ok", "redirect": "/stage", "config": cfg}
 
 @app.get("/", response_class=HTMLResponse)
@@ -457,16 +483,21 @@ async def api_enqueue_song(req: QueueSongRequest, request: Request):
         "queue": queue
     })
 
-    # If nothing is currently playing and this is the only pending track, trigger intermission/play!
+    # If nothing is currently playing and a stage display is connected, trigger intermission countdown!
     if not current_playing:
         global current_intermission_end
-        dur = int(get_setting("intermission_seconds", str(DEFAULT_INTERMISSION_SECONDS)))
-        current_intermission_end = time.time() + dur
-        await manager.broadcast({
-            "type": "start_intermission",
-            "next_track": queue[0] if queue else None,
-            "duration": dur
-        })
+        stage_displays = manager.get_stage_displays()
+        if stage_displays:
+            dur = int(get_setting("intermission_seconds", str(DEFAULT_INTERMISSION_SECONDS)))
+            current_intermission_end = time.time() + dur
+            await manager.broadcast({
+                "type": "start_intermission",
+                "next_track": queue[0] if queue else None,
+                "duration": dur
+            })
+        else:
+            current_intermission_end = None
+            print("[Stage] Song queued but no Stage Displays are connected. Paused in waiting state.")
 
     return {"status": "ok", "queue_id": queue_id}
 
@@ -520,7 +551,8 @@ async def api_complete_queue_item(queue_id: int):
         "queue": remaining
     })
 
-    if next_up:
+    stage_displays = manager.get_stage_displays()
+    if next_up and stage_displays:
         dur = int(get_setting("intermission_seconds", str(DEFAULT_INTERMISSION_SECONDS)))
         current_intermission_end = time.time() + dur
         await manager.broadcast({
@@ -528,6 +560,9 @@ async def api_complete_queue_item(queue_id: int):
             "next_track": next_up,
             "duration": dur
         })
+    elif next_up:
+        current_intermission_end = None
+        print("[Stage] Song completed but no Stage Displays connected. Waiting for display...")
     else:
         current_intermission_end = None
         await manager.broadcast({
@@ -544,18 +579,21 @@ async def api_get_state():
     queue = get_queue()
     pending = [q for q in queue if q["status"] == "pending"]
     next_up = pending[0] if pending else None
+    stage_displays = manager.get_stage_displays()
     
     intermission_remaining = 0
-    if not current and next_up and current_intermission_end:
+    if not current and next_up and current_intermission_end and stage_displays:
         intermission_remaining = max(0, int(current_intermission_end - time.time()))
-    elif not current and next_up:
+    elif not current and next_up and stage_displays:
         intermission_remaining = int(get_setting("intermission_seconds", str(DEFAULT_INTERMISSION_SECONDS)))
 
     return {
         "playing": current,
         "next": next_up,
         "queue": queue,
-        "intermission_seconds": intermission_remaining
+        "intermission_seconds": intermission_remaining,
+        "has_stage_display": len(stage_displays) > 0,
+        "waiting_for_display": (not current and next_up is not None and len(stage_displays) == 0)
     }
 
 # Host Controls & Settings
@@ -725,6 +763,18 @@ async def websocket_endpoint(websocket: WebSocket):
                     "type": "displays_updated",
                     "displays": manager.get_stage_displays()
                 })
+                # If a song is waiting in queue and nothing is playing, trigger countdown fresh on display connection!
+                current_playing = get_current_playing()
+                queue = get_queue()
+                pending = [q for q in queue if q["status"] == "pending"]
+                if not current_playing and pending and not current_intermission_end:
+                    dur = int(get_setting("intermission_seconds", str(DEFAULT_INTERMISSION_SECONDS)))
+                    current_intermission_end = time.time() + dur
+                    await manager.broadcast({
+                        "type": "start_intermission",
+                        "next_track": pending[0],
+                        "duration": dur
+                    })
             elif msg_type == "stage_audio_state":
                 disp_id = data.get("display_id")
                 if disp_id:

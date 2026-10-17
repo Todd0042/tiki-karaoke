@@ -13,6 +13,7 @@ let intermissionTimer = null;
 let intermissionRemaining = 20;
 let isIntermission = false;
 let isMutedViewer = false;
+let configuredAudioSink = null;
 
 const myDisplayId = localStorage.getItem("tiki_display_id") || ("disp_" + Math.random().toString(36).substring(2, 8));
 localStorage.setItem("tiki_display_id", myDisplayId);
@@ -48,6 +49,8 @@ function initAudio() {
     } else {
         audioDSP = new AudioDSPPipeline();
     }
+
+    applyAudioSink();
 
     document.body.addEventListener("click", () => {
         resumeStagePlayback();
@@ -152,6 +155,9 @@ function handleSocketMessage(data) {
         case "soundboard_play":
             playSoundEffect(data.sound);
             break;
+        case "test_display":
+            showTestDisplayFlash(data.badge);
+            break;
     }
 }
 
@@ -211,6 +217,9 @@ function startTrackPlayback(track) {
 
         localVideo.style.display = "block";
         localVideo.src = `/stream/${track.track_id}`;
+        if (configuredAudioSink && configuredAudioSink !== "default" && typeof localVideo.setSinkId === "function") {
+            localVideo.setSinkId(configuredAudioSink).catch(() => {});
+        }
         if (seekTime > 0) {
             localVideo.currentTime = seekTime;
         } else {
@@ -531,3 +540,65 @@ function toggleHostQRModal() {
     const modal = document.getElementById("hostQRModal");
     modal.style.display = modal.style.display === "flex" ? "none" : "flex";
 }
+
+async function applyAudioSink() {
+    try {
+        const res = await fetch("/api/settings");
+        const settings = await res.json();
+        configuredAudioSink = settings.audio_output_device;
+        if (configuredAudioSink && configuredAudioSink !== "default") {
+            const videoEl = document.getElementById("localVideo");
+            const bgm = document.getElementById("bgmPlayer");
+            if (videoEl && typeof videoEl.setSinkId === "function") {
+                await videoEl.setSinkId(configuredAudioSink);
+            }
+            if (bgm && typeof bgm.setSinkId === "function") {
+                await bgm.setSinkId(configuredAudioSink);
+            }
+            console.log("[AudioSink] Applied audio sink device:", configuredAudioSink);
+        }
+    } catch (e) {
+        console.log("[AudioSink] Notice:", e);
+    }
+}
+
+function showTestDisplayFlash(badge) {
+    let overlay = document.getElementById("testDisplayFlashOverlay");
+    if (!overlay) {
+        overlay = document.createElement("div");
+        overlay.id = "testDisplayFlashOverlay";
+        overlay.style.position = "fixed";
+        overlay.style.top = "0";
+        overlay.style.left = "0";
+        overlay.style.width = "100vw";
+        overlay.style.height = "100vh";
+        overlay.style.zIndex = "999999";
+        overlay.style.background = "radial-gradient(circle at center, rgba(10, 20, 35, 0.95) 0%, rgba(5, 8, 15, 0.98) 100%)";
+        overlay.style.display = "flex";
+        overlay.style.flexDirection = "column";
+        overlay.style.alignItems = "center";
+        overlay.style.justifyContent = "center";
+        overlay.style.border = "4px solid #00f0ff";
+        overlay.style.boxShadow = "inset 0 0 60px rgba(0, 240, 255, 0.6)";
+        overlay.style.transition = "opacity 0.4s ease";
+        document.body.appendChild(overlay);
+    }
+    overlay.innerHTML = `
+        <div style="font-size: 80px; margin-bottom: 20px;">📺</div>
+        <div style="font-size: 38px; font-weight: 900; color: #00f0ff; text-shadow: 0 0 25px rgba(0, 240, 255, 0.8); text-align: center; padding: 0 20px;">
+            ${badge || "STAGE DISPLAY"}
+        </div>
+        <div style="margin-top: 15px; font-size: 20px; color: #ff007f; font-weight: bold; letter-spacing: 2px;">
+            IDENTIFICATION CONFIRMED 🌺
+        </div>
+    `;
+    overlay.style.opacity = "1";
+    overlay.style.display = "flex";
+
+    if (window._testDisplayTimer) clearTimeout(window._testDisplayTimer);
+    window._testDisplayTimer = setTimeout(() => {
+        overlay.style.opacity = "0";
+        setTimeout(() => { overlay.style.display = "none"; }, 400);
+    }, 4000);
+}
+

@@ -225,9 +225,94 @@
                 </div>
             </div>
 
-            <!-- Section 3: Audio & Stage Experience -->
+            <!-- Section 3: Storage & Media Library -->
             <div class="form-section">
-                <div class="section-header">🔊 3. Audio & Stage Experience</div>
+                <div class="section-header">💾 3. Storage & Media Library</div>
+                <div class="field-desc" style="margin-bottom: 14px;">
+                    Choose where downloaded video files, playlists, and database are saved. Perfect for using a dedicated secondary NVMe SSD or storage drive (e.g. <code style="color: var(--neon-gold);">/home/todd/storage/karaoke</code>).
+                </div>
+
+                <div class="field-group">
+                    <label for="libraryDir">Video Media Library Path (Tracks & Playlists)</label>
+                    <div style="display: flex; gap: 8px;">
+                        <input type="text" id="libraryDir" name="library_dir" value="{{ config.library_dir or default_library_dir }}" placeholder="{{ default_library_dir }}" onblur="checkStoragePath('libraryDir', 'libDiskInfo')">
+                        <button type="button" class="btn-ghost" style="white-space: nowrap; padding: 0 16px; border-color: var(--neon-cyan); color: var(--neon-cyan); border-radius: 10px; cursor: pointer;" onclick="checkStoragePath('libraryDir', 'libDiskInfo')">🔍 Check Drive</button>
+                    </div>
+                    <div id="libDiskInfo" class="field-desc" style="margin-top: 6px; font-weight: 500;"></div>
+                </div>
+
+                <div class="field-group">
+                    <label for="dataDir">Database & Runtime Data Path (karaoke.db & host token)</label>
+                    <div style="display: flex; gap: 8px;">
+                        <input type="text" id="dataDir" name="data_dir" value="{{ config.data_dir or default_data_dir }}" placeholder="{{ default_data_dir }}" onblur="checkStoragePath('dataDir', 'dataDiskInfo')">
+                        <button type="button" class="btn-ghost" style="white-space: nowrap; padding: 0 16px; border-color: var(--neon-cyan); color: var(--neon-cyan); border-radius: 10px; cursor: pointer;" onclick="checkStoragePath('dataDir', 'dataDiskInfo')">🔍 Check Drive</button>
+                    </div>
+                    <div id="dataDiskInfo" class="field-desc" style="margin-top: 6px; font-weight: 500;"></div>
+                </div>
+
+                <div style="margin-top: 10px;">
+                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 0.88rem; color: var(--text-muted);">
+                        <input type="checkbox" id="migrateFilesCheck" name="migrate_files" value="true" checked>
+                        <span>📦 Automatically move existing video files if switching to a new library folder</span>
+                    </label>
+                </div>
+            </div>
+
+            <!-- Section 4: Main Stage Display Chooser -->
+            <div class="form-section">
+                <div class="section-header">🖥️ 4. Main Stage Display Chooser</div>
+                <div class="field-desc" style="margin-bottom: 14px;">
+                    Choose which monitor or TV window will host the Main Stage karaoke display when the computer starts up.
+                </div>
+
+                <div class="field-group">
+                    <label for="stageDisplaySelect">Target Monitor / Screen</label>
+                    <div style="display: flex; gap: 8px;">
+                        <select id="stageDisplaySelect" name="stage_display" onchange="onDisplaySelected()" style="flex: 1;">
+                            <option value="0">Detecting displays...</option>
+                        </select>
+                        <button type="button" class="btn-ghost" style="white-space: nowrap; padding: 0 16px; border-color: var(--neon-lime); color: var(--neon-lime); border-radius: 10px; cursor: pointer;" onclick="testDisplayFlash()">📺 Identify Display</button>
+                    </div>
+                    <div id="displayDetailsInfo" class="field-desc" style="margin-top: 6px; color: var(--neon-cyan);"></div>
+                </div>
+
+                <input type="hidden" id="stageDisplayX" name="stage_display_x" value="{{ config.stage_display_x or 0 }}">
+                <input type="hidden" id="stageDisplayY" name="stage_display_y" value="{{ config.stage_display_y or 0 }}">
+                <input type="hidden" id="stageDisplayWidth" name="stage_display_width" value="{{ config.stage_display_width or 1920 }}">
+                <input type="hidden" id="stageDisplayHeight" name="stage_display_height" value="{{ config.stage_display_height or 1080 }}">
+                <input type="hidden" id="stageDisplayName" name="stage_display_name" value="{{ config.stage_display_name or '' }}">
+
+                <div style="margin-top: 10px;">
+                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 0.95rem;">
+                        <input type="checkbox" id="kioskMode" name="kiosk_mode" value="true" {% if config.kiosk_mode is not defined or config.kiosk_mode %}checked{% endif %}>
+                        <span>🖥️ Fullscreen Dedicated Kiosk Mode (borderless TV display window)</span>
+                    </label>
+                </div>
+            </div>
+
+            <!-- Section 5: Audio Output Device Selection -->
+            <div class="form-section">
+                <div class="section-header">🔊 5. Audio Output Device Selection</div>
+                <div class="field-desc" style="margin-bottom: 14px;">
+                    Select where stage audio and music will play (e.g. HDMI out to your TV / AV receiver, PA mixer, or external speakers).
+                </div>
+
+                <div class="field-group">
+                    <label for="audioDeviceSelect">Stage Audio Output Device</label>
+                    <div style="display: flex; gap: 8px;">
+                        <select id="audioDeviceSelect" name="audio_output_device" onchange="onAudioDeviceSelected()" style="flex: 1;">
+                            <option value="default">System Default Output</option>
+                        </select>
+                        <button type="button" class="btn-ghost" style="white-space: nowrap; padding: 0 16px; border-color: var(--neon-gold); color: var(--neon-gold); border-radius: 10px; cursor: pointer;" onclick="testAudioChime()">🔔 Test Sound</button>
+                    </div>
+                    <input type="hidden" id="audioOutputName" name="audio_output_name" value="{{ config.audio_output_name or '' }}">
+                    <div id="audioDeviceInfo" class="field-desc" style="margin-top: 6px; color: var(--neon-gold);"></div>
+                </div>
+            </div>
+
+            <!-- Section 6: Stage Experience & DJ Settings -->
+            <div class="form-section">
+                <div class="section-header">🌴 6. Stage Experience & DJ Settings</div>
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px;">
                     <div class="field-group">
                         <label for="targetLufs">Loudness Target (EBU R128)</label>
@@ -255,39 +340,6 @@
                     <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 0.95rem;">
                         <input type="checkbox" name="tts_enabled" value="true">
                         <span>🎙️ Virtual DJ Voice Announcer (TTS)</span>
-                    </label>
-                </div>
-            </div>
-
-            <!-- Section 4: Storage & Media Library -->
-            <div class="form-section">
-                <div class="section-header">💾 4. Storage & Media Library</div>
-                <div class="field-desc" style="margin-bottom: 14px;">
-                    Choose where downloaded video files, playlists, and database are saved. Perfect for using a dedicated secondary NVMe SSD or storage drive (e.g. <code style="color: var(--neon-gold);">/home/todd/storage/karaoke</code>).
-                </div>
-
-                <div class="field-group">
-                    <label for="libraryDir">Video Media Library Path (Tracks & Playlists)</label>
-                    <div style="display: flex; gap: 8px;">
-                        <input type="text" id="libraryDir" name="library_dir" value="{{ config.library_dir or default_library_dir }}" placeholder="{{ default_library_dir }}" onblur="checkStoragePath('libraryDir', 'libDiskInfo')">
-                        <button type="button" class="btn-ghost" style="white-space: nowrap; padding: 0 16px; border-color: var(--neon-cyan); color: var(--neon-cyan); border-radius: 10px; cursor: pointer;" onclick="checkStoragePath('libraryDir', 'libDiskInfo')">🔍 Check Drive</button>
-                    </div>
-                    <div id="libDiskInfo" class="field-desc" style="margin-top: 6px; font-weight: 500;"></div>
-                </div>
-
-                <div class="field-group">
-                    <label for="dataDir">Database & Runtime Data Path (karaoke.db & host token)</label>
-                    <div style="display: flex; gap: 8px;">
-                        <input type="text" id="dataDir" name="data_dir" value="{{ config.data_dir or default_data_dir }}" placeholder="{{ default_data_dir }}" onblur="checkStoragePath('dataDir', 'dataDiskInfo')">
-                        <button type="button" class="btn-ghost" style="white-space: nowrap; padding: 0 16px; border-color: var(--neon-cyan); color: var(--neon-cyan); border-radius: 10px; cursor: pointer;" onclick="checkStoragePath('dataDir', 'dataDiskInfo')">🔍 Check Drive</button>
-                    </div>
-                    <div id="dataDiskInfo" class="field-desc" style="margin-top: 6px; font-weight: 500;"></div>
-                </div>
-
-                <div style="margin-top: 10px;">
-                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 0.88rem; color: var(--text-muted);">
-                        <input type="checkbox" id="migrateFilesCheck" name="migrate_files" value="true" checked>
-                        <span>📦 Automatically move existing video files if switching to a new library folder</span>
                     </label>
                 </div>
             </div>
@@ -348,10 +400,186 @@
             }
         }
 
-        // Auto-check default storage locations on load
+        let detectedDisplays = [];
+        let detectedAudioDevices = [];
+
+        async function loadDisplays() {
+            const sel = document.getElementById('stageDisplaySelect');
+            if (!sel) return;
+            try {
+                const res = await fetch('/api/setup/displays');
+                detectedDisplays = await res.json();
+                sel.innerHTML = '';
+                const configuredId = parseInt('{{ config.stage_display or 0 }}');
+
+                detectedDisplays.forEach(d => {
+                    const opt = document.createElement('option');
+                    opt.value = d.id;
+                    opt.text = `${d.label}${d.is_primary ? ' ★ Primary' : ''}`;
+                    if (d.id === configuredId) opt.selected = true;
+                    sel.appendChild(opt);
+                });
+                onDisplaySelected();
+            } catch (e) {
+                console.error("Error loading displays:", e);
+                sel.innerHTML = '<option value="0">Default Primary Screen</option>';
+            }
+        }
+
+        function onDisplaySelected() {
+            const sel = document.getElementById('stageDisplaySelect');
+            const infoEl = document.getElementById('displayDetailsInfo');
+            if (!sel || detectedDisplays.length === 0) return;
+            const chosenId = parseInt(sel.value);
+            const disp = detectedDisplays.find(d => d.id === chosenId) || detectedDisplays[0];
+            if (disp) {
+                document.getElementById('stageDisplayX').value = disp.x;
+                document.getElementById('stageDisplayY').value = disp.y;
+                document.getElementById('stageDisplayWidth').value = disp.width;
+                document.getElementById('stageDisplayHeight').value = disp.height;
+                document.getElementById('stageDisplayName').value = disp.name;
+                if (infoEl) {
+                    infoEl.innerHTML = `Resolution: <strong>${disp.width}x${disp.height}</strong> | Position: <strong>+${disp.x}+${disp.y}</strong> ${disp.is_primary ? '(Primary Desktop)' : '(External Screen / TV)'}`;
+                }
+            }
+        }
+
+        async function testDisplayFlash() {
+            const sel = document.getElementById('stageDisplaySelect');
+            const chosenId = sel ? parseInt(sel.value) : 0;
+            const disp = detectedDisplays.find(d => d.id === chosenId) || {x: 0, y: 0, name: "Screen"};
+            
+            // 1. Broadcast test badge to open stage displays
+            fetch('/api/setup/test-display', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ badge: `📺 MAIN STAGE DISPLAY: ${disp.name}` })
+            }).catch(() => {});
+
+            // 2. Open a test window positioned at monitor coordinates for 3.5 seconds
+            try {
+                const testWin = window.open(
+                    'about:blank',
+                    'stage_identify_window',
+                    `left=${disp.x + 50},top=${disp.y + 50},width=600,height=350,menubar=no,toolbar=no`
+                );
+                if (testWin) {
+                    testWin.document.write(`
+                        <body style="background:#080e18; color:#00f0ff; font-family:sans-serif; display:flex; flex-direction:column; align-items:center; justify-content:center; height:100vh; margin:0; text-align:center;">
+                            <div style="font-size:3rem; margin-bottom:10px;">🌴</div>
+                            <h2 style="margin:0; font-size:1.8rem; color:#39ff14;">${disp.label || disp.name}</h2>
+                            <p style="color:#ffb703; font-size:1.1rem; margin-top:8px;">✅ Target Stage Screen Identified!</p>
+                            <div style="font-size:0.8rem; color:#94a3b8; margin-top:15px;">Closing in 3 seconds...</div>
+                        </body>
+                    `);
+                    setTimeout(() => { try { testWin.close(); } catch(e){} }, 3500);
+                }
+            } catch(e) {}
+        }
+
+        async function loadAudioDevices() {
+            const sel = document.getElementById('audioDeviceSelect');
+            if (!sel) return;
+            const configuredSink = '{{ config.audio_output_device or "default" }}';
+
+            try {
+                const res = await fetch('/api/setup/audio-devices');
+                const systemSinks = await res.json();
+                detectedAudioDevices = [...systemSinks];
+
+                // Merge with browser mediaDevices if available
+                if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+                    try {
+                        const browserDevices = await navigator.mediaDevices.enumerateDevices();
+                        browserDevices.filter(d => d.kind === 'audiooutput').forEach(bDev => {
+                            if (!detectedAudioDevices.some(d => d.id === bDev.deviceId)) {
+                                detectedAudioDevices.push({
+                                    id: bDev.deviceId,
+                                    name: bDev.label || bDev.deviceId,
+                                    description: bDev.label || `Audio Output (${bDev.deviceId.slice(0,8)}...)`,
+                                    is_default: bDev.deviceId === 'default'
+                                });
+                            }
+                        });
+                    } catch(e){}
+                }
+
+                sel.innerHTML = '';
+                detectedAudioDevices.forEach(d => {
+                    const opt = document.createElement('option');
+                    opt.value = d.id;
+                    opt.text = d.description || d.name;
+                    if (d.id === configuredSink) opt.selected = true;
+                    sel.appendChild(opt);
+                });
+                onAudioDeviceSelected();
+            } catch (e) {
+                console.error("Error loading audio devices:", e);
+                sel.innerHTML = '<option value="default">System Default Audio Output</option>';
+            }
+        }
+
+        function onAudioDeviceSelected() {
+            const sel = document.getElementById('audioDeviceSelect');
+            const infoEl = document.getElementById('audioDeviceInfo');
+            const nameEl = document.getElementById('audioOutputName');
+            if (!sel || detectedAudioDevices.length === 0) return;
+            const chosen = detectedAudioDevices.find(d => d.id === sel.value);
+            if (chosen) {
+                if (nameEl) nameEl.value = chosen.description || chosen.name;
+                if (infoEl) infoEl.innerText = `Selected Output: ${chosen.description || chosen.name}`;
+            }
+        }
+
+        function testAudioChime() {
+            try {
+                const ctx = new (window.AudioContext || window.webkitAudioContext)();
+                const now = ctx.currentTime;
+                
+                // Play a pleasant 2-tone Tiki chime
+                const osc1 = ctx.createOscillator();
+                const gain1 = ctx.createGain();
+                osc1.type = 'sine';
+                osc1.frequency.setValueAtTime(523.25, now); // C5
+                gain1.gain.setValueAtTime(0.3, now);
+                gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.8);
+                osc1.connect(gain1);
+                gain1.connect(ctx.destination);
+                osc1.start(now);
+                osc1.stop(now + 0.8);
+
+                const osc2 = ctx.createOscillator();
+                const gain2 = ctx.createGain();
+                osc2.type = 'sine';
+                osc2.frequency.setValueAtTime(659.25, now + 0.2); // E5
+                gain2.gain.setValueAtTime(0.35, now + 0.2);
+                gain2.gain.exponentialRampToValueAtTime(0.001, now + 1.2);
+                osc2.connect(gain2);
+                gain2.connect(ctx.destination);
+                osc2.start(now + 0.2);
+                osc2.stop(now + 1.2);
+
+                const osc3 = ctx.createOscillator();
+                const gain3 = ctx.createGain();
+                osc3.type = 'sine';
+                osc3.frequency.setValueAtTime(783.99, now + 0.4); // G5
+                gain3.gain.setValueAtTime(0.4, now + 0.4);
+                gain3.gain.exponentialRampToValueAtTime(0.001, now + 1.5);
+                osc3.connect(gain3);
+                gain3.connect(ctx.destination);
+                osc3.start(now + 0.4);
+                osc3.stop(now + 1.5);
+            } catch(e) {
+                console.error("Audio chime error:", e);
+            }
+        }
+
+        // Auto-check default storage locations, displays, and audio on load
         window.addEventListener('DOMContentLoaded', () => {
             checkStoragePath('libraryDir', 'libDiskInfo');
             checkStoragePath('dataDir', 'dataDiskInfo');
+            loadDisplays();
+            loadAudioDevices();
         });
 
         async function handleSetupSubmit(e) {
@@ -374,7 +602,16 @@
                 tts_enabled: formData.get('tts_enabled') === 'true',
                 library_dir: formData.get('library_dir') || "",
                 data_dir: formData.get('data_dir') || "",
-                migrate_files: formData.get('migrate_files') === 'true'
+                migrate_files: formData.get('migrate_files') === 'true',
+                stage_display: parseInt(formData.get('stage_display') || "0"),
+                stage_display_name: formData.get('stage_display_name') || "",
+                stage_display_x: parseInt(formData.get('stage_display_x') || "0"),
+                stage_display_y: parseInt(formData.get('stage_display_y') || "0"),
+                stage_display_width: parseInt(formData.get('stage_display_width') || "1920"),
+                stage_display_height: parseInt(formData.get('stage_display_height') || "1080"),
+                kiosk_mode: formData.get('kiosk_mode') === 'true',
+                audio_output_device: formData.get('audio_output_device') || "default",
+                audio_output_name: formData.get('audio_output_name') || "System Default Audio Output"
             };
 
             try {

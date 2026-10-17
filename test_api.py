@@ -147,5 +147,50 @@ class TestAPIEndpoints(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.json()["status"], "ok")
 
+    def test_display_and_audio_setup(self):
+        # 1. Test displays discovery API
+        r = self.client.get("/api/setup/displays")
+        self.assertEqual(r.status_code, 200)
+        displays = r.json()
+        self.assertIsInstance(displays, list)
+        self.assertGreaterEqual(len(displays), 1)
+        self.assertIn("id", displays[0])
+        self.assertIn("name", displays[0])
+        self.assertIn("width", displays[0])
+        self.assertIn("height", displays[0])
+
+        # 2. Test audio sinks discovery API
+        r = self.client.get("/api/setup/audio-devices")
+        self.assertEqual(r.status_code, 200)
+        sinks = r.json()
+        self.assertIsInstance(sinks, list)
+        self.assertGreaterEqual(len(sinks), 1)
+        self.assertIn("id", sinks[0])
+        self.assertIn("description", sinks[0])
+
+        # 3. Test test-display broadcast API
+        r = self.client.post("/api/setup/test-display", json={"badge": "📺 MAIN STAGE DISPLAY"})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json().get("status"), "ok")
+
+        # 4. Test WebSocket stage registration & state gating
+        with self.client.websocket_connect("/ws") as ws:
+            ws.send_json({
+                "type": "stage_register",
+                "display_id": "test_stage_screen_1",
+                "name": "Test Stage Monitor",
+                "is_muted": False
+            })
+            resp = ws.receive_json()
+            self.assertEqual(resp.get("type"), "displays_updated")
+            displays_active = resp.get("displays", [])
+            self.assertTrue(any(d["display_id"] == "test_stage_screen_1" for d in displays_active))
+
+            # State check: has_stage_display should now be True
+            r_state = self.client.get("/api/state")
+            self.assertEqual(r_state.status_code, 200)
+            self.assertTrue(r_state.json()["has_stage_display"])
+
 if __name__ == "__main__":
     unittest.main()
+

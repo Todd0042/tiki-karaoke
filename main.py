@@ -11,6 +11,8 @@ import subprocess
 import re
 from pathlib import Path
 
+import shutil
+
 # Ensure project root is in python path
 BASE_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(BASE_DIR))
@@ -87,9 +89,51 @@ atexit.register(cleanup_all_services)
 
 def open_browser_delayed(url: str, delay: float = 1.5):
     time.sleep(delay)
-    print(f"[Launcher] Opening Stage Display: {url}")
+    cfg = load_config()
+    target_disp_idx = int(cfg.get("stage_display", 0))
+    disp_name = cfg.get("stage_display_name", "Primary Display")
+    disp_x = int(cfg.get("stage_display_x", 0))
+    disp_y = int(cfg.get("stage_display_y", 0))
+    kiosk = bool(cfg.get("kiosk_mode", True))
+
+    mode_label = "Fullscreen Kiosk" if kiosk else "Windowed"
+    print(f"[Launcher] Opening Stage Display on Monitor {target_disp_idx} ({disp_name}, {mode_label}): {url}")
+
+    # 1. Try Firefox (supports --kiosk --kiosk-monitor=<n>)
+    firefox_bin = shutil.which("firefox")
+    if firefox_bin:
+        try:
+            # Firefox kiosk-monitor is 1-indexed (monitor 0 -> 1)
+            cmd = [firefox_bin, "--new-instance"]
+            if kiosk:
+                cmd.extend(["--kiosk", f"--kiosk-monitor={target_disp_idx + 1}"])
+            else:
+                cmd.append("--new-window")
+            cmd.append(url)
+            subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, preexec_fn=os.setsid)
+            print(f"[Launcher] ✅ Dedicated Stage Window launched via Firefox on monitor {target_disp_idx}!")
+            return
+        except Exception as e:
+            print(f"[Launcher] Firefox launch error: {e}")
+
+    # 2. Try Chrome / Chromium / Brave / Edge (supports --app and --window-position)
+    for b_name in ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "brave-browser", "microsoft-edge"]:
+        c_bin = shutil.which(b_name)
+        if c_bin:
+            try:
+                cmd = [c_bin, f"--app={url}", f"--window-position={disp_x},{disp_y}"]
+                if kiosk:
+                    cmd.append("--start-fullscreen")
+                subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, preexec_fn=os.setsid)
+                print(f"[Launcher] ✅ Dedicated Stage Window launched via {b_name} on monitor {target_disp_idx} ({disp_x},{disp_y})!")
+                return
+            except Exception as e:
+                print(f"[Launcher] {b_name} launch error: {e}")
+
+    # 3. Fallback to default system browser
     try:
         webbrowser.open(url)
+        print("[Launcher] Default browser launched.")
     except Exception as e:
         print(f"[Launcher] Could not open browser automatically: {e}")
 

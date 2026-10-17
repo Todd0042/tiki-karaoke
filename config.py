@@ -1,8 +1,11 @@
 import os
 import json
 import secrets
+import shutil
+import subprocess
+import re
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
@@ -25,8 +28,88 @@ DEFAULT_CONFIG = {
     "google_client_id": "",
     "google_client_secret": "",
     "library_dir": "",
-    "data_dir": ""
+    "data_dir": "",
+    "stage_display": 0,
+    "stage_display_name": "Primary Display",
+    "stage_display_x": 0,
+    "stage_display_y": 0,
+    "stage_display_width": 1920,
+    "stage_display_height": 1080,
+    "kiosk_mode": True,
+    "audio_output_device": "default",
+    "audio_output_name": "System Default Audio Output"
 }
+
+def get_available_displays() -> List[Dict[str, Any]]:
+    """Returns a list of detected physical display monitors."""
+    monitors = []
+    # 1. Try xrandr on Linux
+    if shutil.which("xrandr"):
+        try:
+            res = subprocess.run(["xrandr", "--listmonitors"], capture_output=True, text=True, timeout=2)
+            lines = res.stdout.strip().split("\n")
+            if len(lines) > 1:
+                for line in lines[1:]:
+                    m = re.search(r'^\s*(\d+):\s*(\S+)\s+(\d+)/\d+x(\d+)/\d+\+(\d+)\+(\d+)\s+(\S+)', line)
+                    if m:
+                        idx, flags, w, h, x, y, name = m.groups()
+                        monitors.append({
+                            "id": int(idx),
+                            "name": name,
+                            "label": f"Monitor {idx}: {name} ({w}x{h})",
+                            "is_primary": "*" in flags,
+                            "width": int(w),
+                            "height": int(h),
+                            "x": int(x),
+                            "y": int(y)
+                        })
+        except Exception as e:
+            print(f"[Display Detection] xrandr error: {e}")
+
+    # Fallback to primary default if no monitors found
+    if not monitors:
+        monitors.append({
+            "id": 0,
+            "name": "Default Display",
+            "label": "Monitor 0: Default Display (Primary)",
+            "is_primary": True,
+            "width": 1920,
+            "height": 1080,
+            "x": 0,
+            "y": 0
+        })
+    return monitors
+
+def get_available_audio_sinks() -> List[Dict[str, Any]]:
+    """Returns detected system audio output devices."""
+    devices = [{
+        "id": "default",
+        "name": "default",
+        "description": "System Default Audio Output",
+        "is_default": True
+    }]
+    # 1. Try pactl on Linux (PipeWire / PulseAudio)
+    if shutil.which("pactl"):
+        try:
+            res = subprocess.run(["pactl", "list", "sinks"], capture_output=True, text=True, timeout=2)
+            sink_blocks = res.stdout.split("Sink #")
+            for block in sink_blocks[1:]:
+                name_match = re.search(r"Name:\s*(\S+)", block)
+                desc_match = re.search(r"Description:\s*([^\n\r]+)", block)
+                if name_match:
+                    sink_name = name_match.group(1).strip()
+                    sink_desc = desc_match.group(1).strip() if desc_match else sink_name
+                    if sink_name not in [d["id"] for d in devices]:
+                        devices.append({
+                            "id": sink_name,
+                            "name": sink_name,
+                            "description": sink_desc,
+                            "is_default": False
+                        })
+        except Exception as e:
+            print(f"[Audio Detection] pactl error: {e}")
+
+    return devices
 
 def get_config_path() -> Path:
     if CONFIG_FILE.exists():

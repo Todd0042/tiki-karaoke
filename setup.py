@@ -16,7 +16,7 @@ sys.path.insert(0, str(BASE_DIR))
 from config import (
     CONFIG_FILE, load_config, save_config, is_configured, DEFAULT_CONFIG,
     get_library_dir, get_tracks_dir, get_playlists_dir, get_data_dir, get_db_path,
-    get_path_info, ensure_storage_dirs
+    get_path_info, ensure_storage_dirs, get_available_displays, get_available_audio_sinks
 )
 from database import init_db, set_setting, migrate_storage_paths
 
@@ -194,6 +194,42 @@ def run_setup():
         shutil.copy2(str(old_db), str(new_db))
         print("  ✅ Copied existing karaoke.db to new data directory!")
 
+    # 5. Display Chooser
+    print("\n🖥️ 5. MAIN STAGE DISPLAY CHOOSER")
+    print("Detected Connected Display Monitors:")
+    displays = get_available_displays()
+    for d in displays:
+        primary_mark = " ★ Primary Desktop" if d.get("is_primary") else " (External / TV)"
+        print(f"  [{d['id']}] {d['name']} - {d['width']}x{d['height']} at offset +{d['x']}+{d['y']}{primary_mark}")
+    
+    current_disp_id = current.get("stage_display", 0)
+    disp_input = prompt(f"Select monitor for Main Stage Display [0-{len(displays)-1}]", str(current_disp_id))
+    try:
+        chosen_disp_idx = int(disp_input)
+    except ValueError:
+        chosen_disp_idx = 0
+    
+    chosen_disp = next((d for d in displays if d["id"] == chosen_disp_idx), displays[0])
+    print(f"  ✅ Selected Stage Monitor: {chosen_disp['name']} ({chosen_disp['width']}x{chosen_disp['height']})")
+
+    kiosk_choice = prompt("Launch in Dedicated Fullscreen Kiosk Mode (borderless window on TV)? [Y/n]", "y")
+    kiosk_mode = kiosk_choice.lower().startswith("y")
+
+    # 6. Audio Output Device
+    print("\n🔊 6. STAGE AUDIO OUTPUT DEVICE")
+    print("Detected System Audio Devices:")
+    audio_sinks = get_available_audio_sinks()
+    for idx, s in enumerate(audio_sinks):
+        print(f"  [{idx}] {s['description']}")
+    
+    sink_input = prompt(f"Select Audio Device for Karaoke Stage [0-{len(audio_sinks)-1}]", "0")
+    try:
+        sink_idx = int(sink_input)
+        chosen_sink = audio_sinks[sink_idx] if 0 <= sink_idx < len(audio_sinks) else audio_sinks[0]
+    except (ValueError, IndexError):
+        chosen_sink = audio_sinks[0]
+    print(f"  ✅ Selected Audio Output: {chosen_sink['description']}")
+
     # Build updated config
     config_data = {
         "configured": True,
@@ -211,7 +247,16 @@ def run_setup():
         "google_client_id": current.get("google_client_id", ""),
         "google_client_secret": current.get("google_client_secret", ""),
         "library_dir": str(lib_path),
-        "data_dir": str(data_path)
+        "data_dir": str(data_path),
+        "stage_display": chosen_disp["id"],
+        "stage_display_name": chosen_disp["name"],
+        "stage_display_x": chosen_disp["x"],
+        "stage_display_y": chosen_disp["y"],
+        "stage_display_width": chosen_disp["width"],
+        "stage_display_height": chosen_disp["height"],
+        "kiosk_mode": kiosk_mode,
+        "audio_output_device": chosen_sink["id"],
+        "audio_output_name": chosen_sink["description"]
     }
 
     print("\n💾 Writing configuration to config.json...")
@@ -223,6 +268,9 @@ def run_setup():
     set_setting("intermission_seconds", str(intermission_seconds))
     set_setting("tts_enabled", "true" if tts_enabled else "false")
     set_setting("bgm_enabled", "true" if bgm_enabled else "false")
+    set_setting("stage_display", str(chosen_disp["id"]))
+    set_setting("audio_output_device", chosen_sink["id"])
+    set_setting("kiosk_mode", "true" if kiosk_mode else "false")
 
     print("\n" + "=" * 65)
     print("\033[1;32m✨ SETUP COMPLETE! Your Karaoke Lounge is ready to rock. ✨\033[0m")
