@@ -317,14 +317,17 @@ function initWebSocket() {
 
 // Navigation Tabs
 function setupNavigation() {
-    document.querySelectorAll(".nav-tab-btn").forEach(btn => {
+    document.querySelectorAll(".nav-tab-btn[data-tab]").forEach(btn => {
         btn.addEventListener("click", () => {
-            document.querySelectorAll(".nav-tab-btn").forEach(b => b.classList.remove("active"));
+            const target = btn.dataset.tab;
+            if (!target) return;
+
+            document.querySelectorAll(".nav-tab-btn[data-tab]").forEach(b => b.classList.remove("active"));
             document.querySelectorAll(".tab-view").forEach(v => v.style.display = "none");
 
             btn.classList.add("active");
-            const target = btn.dataset.tab;
-            document.getElementById(target).style.display = "block";
+            const targetEl = document.getElementById(target);
+            if (targetEl) targetEl.style.display = "block";
 
             if (target === "libraryTab") loadLibraryTracks();
             if (target === "queueTab") loadLiveQueue();
@@ -336,6 +339,23 @@ function setupNavigation() {
             }
         });
     });
+}
+
+function openStageTab(event) {
+    if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+    }
+    const hostToken = localStorage.getItem("tiki_host_token") || "";
+    let stageUrl = "/stage";
+    if (isHost && hostToken) {
+        stageUrl = `/stage?token=${encodeURIComponent(hostToken)}`;
+    } else if (isHost) {
+        stageUrl = "/stage";
+    } else {
+        stageUrl = "/stage?mute=1";
+    }
+    window.open(stageUrl, "_blank");
 }
 
 // Tiered Search & Queue

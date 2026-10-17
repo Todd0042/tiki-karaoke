@@ -39,13 +39,27 @@ document.addEventListener("DOMContentLoaded", () => {
 
 function initAudio() {
     const urlParams = new URLSearchParams(window.location.search);
-    isMutedViewer = urlParams.has("mute") || urlParams.has("view_only");
+    isMutedViewer = urlParams.has("mute") || urlParams.has("muted") || urlParams.has("view_only");
 
     const videoEl = document.getElementById("localVideo");
     if (isMutedViewer) {
         if (videoEl) videoEl.muted = true;
         const bgm = document.getElementById("bgmPlayer");
         if (bgm) bgm.muted = true;
+
+        // Visual indicator on handheld lyrics display
+        const hud = document.getElementById("topHUD");
+        if (hud && !document.getElementById("handheldBadge")) {
+            const badge = document.createElement("div");
+            badge.id = "handheldBadge";
+            badge.style.cssText = "background: rgba(0,240,255,0.18); border: 1px solid var(--neon-cyan); color: var(--neon-cyan); padding: 4px 10px; border-radius: 12px; font-size: 0.78rem; font-weight: 700; display: flex; align-items: center; gap: 4px; pointer-events: auto;";
+            badge.innerHTML = "<span>🔇 Handheld Lyrics (Muted)</span>";
+            hud.appendChild(badge);
+        }
+        const unmuteBtn = document.querySelector("#unmuteOverlay button");
+        if (unmuteBtn) {
+            unmuteBtn.innerText = "▶️ Tap to Sync Handheld Lyrics";
+        }
     } else {
         audioDSP = new AudioDSPPipeline();
     }
@@ -59,7 +73,11 @@ function initAudio() {
 
 function resumeStagePlayback() {
     const videoEl = document.getElementById("localVideo");
-    if (audioDSP && !isMutedViewer) {
+    if (isMutedViewer) {
+        if (videoEl) videoEl.muted = true;
+        const bgm = document.getElementById("bgmPlayer");
+        if (bgm) bgm.muted = true;
+    } else if (audioDSP) {
         audioDSP.init(videoEl);
         audioDSP.resume();
     }
@@ -71,12 +89,14 @@ function resumeStagePlayback() {
         if (currentTrack && currentTrack.elapsed_seconds && videoEl.currentTime < currentTrack.elapsed_seconds - 3) {
             videoEl.currentTime = currentTrack.elapsed_seconds;
         }
+        if (isMutedViewer) videoEl.muted = true;
         videoEl.play().then(() => {
             const unmute = document.getElementById("unmuteOverlay");
             if (unmute) unmute.style.display = "none";
         }).catch(e => console.log(e));
     }
     if (ytPlayer && ytPlayer.playVideo) {
+        if (isMutedViewer && ytPlayer.mute) ytPlayer.mute();
         ytPlayer.playVideo();
     }
     const unmute = document.getElementById("unmuteOverlay");
