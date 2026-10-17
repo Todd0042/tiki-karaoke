@@ -2,10 +2,11 @@ import sqlite3
 import datetime
 from pathlib import Path
 from typing import List, Dict, Any, Optional
-from config import DB_PATH
+from config import get_db_path, get_data_dir, ensure_storage_dirs, DB_PATH
 
 def get_db():
-    conn = sqlite3.connect(DB_PATH)
+    ensure_storage_dirs()
+    conn = sqlite3.connect(get_db_path())
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
@@ -548,3 +549,20 @@ def get_all_settings() -> Dict[str, str]:
     rows = cursor.fetchall()
     conn.close()
     return {r["key"]: r["value"] for r in rows}
+
+def migrate_storage_paths(old_base_dir: str, new_base_dir: str) -> int:
+    """Updates local_path in tracks table if the library location was moved."""
+    old_base = str(old_base_dir).rstrip("/\\")
+    new_base = str(new_base_dir).rstrip("/\\")
+    if not old_base or not new_base or old_base == new_base:
+        return 0
+    conn = get_db()
+    with conn:
+        cursor = conn.execute(
+            "UPDATE tracks SET local_path = replace(local_path, ?, ?) WHERE local_path LIKE ?",
+            (old_base, new_base, f"{old_base}%")
+        )
+        count = cursor.rowcount
+    conn.close()
+    return count
+

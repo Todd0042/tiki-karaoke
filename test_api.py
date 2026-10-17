@@ -95,5 +95,18 @@ class TestAPIEndpoints(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.json()["tts_enabled"], "true")
 
+    def test_storage_inspect_and_setup(self):
+        # 1. Inspect valid path
+        r = self.client.post("/api/setup/inspect-path", json={"path": "."})
+        self.assertEqual(r.status_code, 200)
+        data = r.json()
+        self.assertTrue(data.get("valid"))
+        self.assertGreater(data.get("free_gb", 0), 0)
+
+        # 2. Setup page renders with default directories
+        r = self.client.get("/setup")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("Storage & Media Library", r.text)
+
 if __name__ == "__main__":
     unittest.main()

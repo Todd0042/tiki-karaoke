@@ -16,7 +16,9 @@ import qrcode
 from config import (
     STATIC_DIR, TEMPLATES_DIR, TRACKS_DIR, HOST_TOKEN, HOST_PIN,
     PORT, DEFAULT_INTERMISSION_SECONDS, PUBLIC_HOST,
-    load_config, save_config, is_configured
+    load_config, save_config, is_configured,
+    get_library_dir, get_tracks_dir, get_playlists_dir, get_data_dir,
+    get_db_path, get_path_info, ensure_storage_dirs
 )
 from database import (
     init_db, get_or_create_singer, get_singer_by_token,
@@ -26,7 +28,8 @@ from database import (
     reorder_queue, get_singer_history, get_party_wrapped_stats,
     get_setting, set_setting, get_all_settings,
     get_singers_with_queue, remove_all_songs_by_singer,
-    get_taken_avatars_for_name, purge_all_singers
+    get_taken_avatars_for_name, purge_all_singers,
+    migrate_storage_paths
 )
 from search import tiered_search
 from downloader import (
@@ -177,12 +180,58 @@ def is_host_request(request: Request) -> bool:
 async def setup_page(request: Request):
     cfg = load_config()
     return templates.TemplateResponse(request=request, name="setup.html", context={
-        "config": cfg
+        "config": cfg,
+        "default_library_dir": str(get_library_dir()),
+        "default_data_dir": str(get_data_dir())
     })
+
+@app.post("/api/setup/inspect-path")
+async def api_inspect_storage_path(payload: Dict[str, Any]):
+    path_str = payload.get("path", "").strip()
+    if not path_str:
+        return {"valid": False, "error": "Path cannot be empty"}
+    return get_path_info(path_str)
 
 @app.post("/api/setup")
 async def api_save_setup(payload: Dict[str, Any]):
+    import shutil
+    old_tracks = get_tracks_dir()
+    old_db = get_db_path()
+
+    # Normalize storage paths if supplied
+    new_lib = payload.get("library_dir", "").strip()
+    if new_lib:
+        new_lib_path = Path(new_lib).expanduser().resolve()
+        payload["library_dir"] = str(new_lib_path)
+        new_tracks = new_lib_path / "tracks"
+
+        # Auto-migrate existing tracks if path changed and old library has files
+        if old_tracks.exists() and old_tracks.resolve() != new_tracks.resolve():
+            existing_tracks = list(old_tracks.glob("*/*.mp4"))
+            if existing_tracks and payload.get("migrate_files", True):
+                new_tracks.mkdir(parents=True, exist_ok=True)
+                for artist_dir in old_tracks.iterdir():
+                    if artist_dir.is_dir() and artist_dir.name != "tracks":
+                        target_artist = new_tracks / artist_dir.name
+                        target_artist.mkdir(parents=True, exist_ok=True)
+                        for f in artist_dir.iterdir():
+                            dest_f = target_artist / f.name
+                            if not dest_f.exists():
+                                shutil.move(str(f), str(dest_f))
+                migrate_storage_paths(str(old_tracks), str(new_tracks))
+
+    new_data = payload.get("data_dir", "").strip()
+    if new_data:
+        new_data_path = Path(new_data).expanduser().resolve()
+        payload["data_dir"] = str(new_data_path)
+        new_db = new_data_path / "karaoke.db"
+        if old_db.exists() and old_db.resolve() != new_db.resolve() and not new_db.exists():
+            new_data_path.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(str(old_db), str(new_db))
+
     cfg = save_config(payload)
+    init_db()
+
     if "bar_name" in payload:
         set_setting("bar_name", str(payload["bar_name"]))
     if "intermission_seconds" in payload:

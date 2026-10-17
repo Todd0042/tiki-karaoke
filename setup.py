@@ -14,9 +14,11 @@ BASE_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(BASE_DIR))
 
 from config import (
-    CONFIG_FILE, load_config, save_config, is_configured, DEFAULT_CONFIG
+    CONFIG_FILE, load_config, save_config, is_configured, DEFAULT_CONFIG,
+    get_library_dir, get_tracks_dir, get_playlists_dir, get_data_dir, get_db_path,
+    get_path_info, ensure_storage_dirs
 )
-from database import init_db, set_setting
+from database import init_db, set_setting, migrate_storage_paths
 
 TIKI_SETUP_BANNER = r"""
   ______ _            _     _         _______ _    _ 
@@ -138,6 +140,60 @@ def run_setup():
     tts_choice = prompt("Enable Virtual DJ TTS Voice Announcer? [y/N]", "n")
     tts_enabled = tts_choice.lower().startswith("y")
 
+    print("\n💾 4. STORAGE & MEDIA DIRECTORIES")
+    print("Choose where downloaded karaoke video files, playlists, and database are saved.")
+    print("Ideal for secondary high-speed NVMe SSDs or dedicated storage drives (e.g. /home/todd/storage/karaoke).")
+    
+    current_lib = current.get("library_dir") or str(get_library_dir())
+    current_data = current.get("data_dir") or str(get_data_dir())
+
+    lib_input = prompt("Video Media Library Path (for MP4s & Playlists)", current_lib)
+    lib_path = Path(lib_input).expanduser().resolve()
+    info_lib = get_path_info(str(lib_path))
+    if info_lib.get("valid"):
+        print(f"  ✅ Drive verified: \033[1;32m{info_lib['free_gb']} GB\033[0m free on {info_lib['path']}")
+    else:
+        print(f"  ⚠️ Warning on library path: {info_lib.get('error', 'Unverified')}")
+
+    data_input = prompt("Database & Runtime Data Path (for karaoke.db)", current_data)
+    data_path = Path(data_input).expanduser().resolve()
+    info_data = get_path_info(str(data_path))
+    if info_data.get("valid"):
+        print(f"  ✅ Drive verified: \033[1;32m{info_data['free_gb']} GB\033[0m free on {info_data['path']}")
+    else:
+        print(f"  ⚠️ Warning on data path: {info_data.get('error', 'Unverified')}")
+
+    # Check for migration of existing library tracks if path changed
+    old_tracks = get_tracks_dir()
+    new_tracks = lib_path / "tracks"
+    if old_tracks.exists() and old_tracks.resolve() != new_tracks.resolve():
+        existing_tracks = list(old_tracks.glob("*/*.mp4"))
+        if existing_tracks:
+            print(f"\n📦 Detected {len(existing_tracks)} downloaded video files in previous library location ({old_tracks}).")
+            do_migrate = prompt("Migrate existing video files to new location? [Y/n]", "y")
+            if do_migrate.lower().startswith("y"):
+                print("  ⏳ Moving video files...")
+                new_tracks.mkdir(parents=True, exist_ok=True)
+                for artist_dir in old_tracks.iterdir():
+                    if artist_dir.is_dir() and artist_dir.name != "tracks":
+                        target_artist = new_tracks / artist_dir.name
+                        target_artist.mkdir(parents=True, exist_ok=True)
+                        for f in artist_dir.iterdir():
+                            dest_f = target_artist / f.name
+                            if not dest_f.exists():
+                                shutil.move(str(f), str(dest_f))
+                # Update sqlite records
+                updated_count = migrate_storage_paths(str(old_tracks), str(new_tracks))
+                print(f"  ✅ {len(existing_tracks)} files moved and {updated_count} database paths updated!")
+
+    # Check for migration of existing database if data_dir changed
+    old_db = get_db_path()
+    new_db = data_path / "karaoke.db"
+    if old_db.exists() and old_db.resolve() != new_db.resolve() and not new_db.exists():
+        data_path.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(str(old_db), str(new_db))
+        print("  ✅ Copied existing karaoke.db to new data directory!")
+
     # Build updated config
     config_data = {
         "configured": True,
@@ -153,7 +209,9 @@ def run_setup():
         "bgm_enabled": bgm_enabled,
         "bgm_volume": 0.25,
         "google_client_id": current.get("google_client_id", ""),
-        "google_client_secret": current.get("google_client_secret", "")
+        "google_client_secret": current.get("google_client_secret", ""),
+        "library_dir": str(lib_path),
+        "data_dir": str(data_path)
     }
 
     print("\n💾 Writing configuration to config.json...")
@@ -170,6 +228,8 @@ def run_setup():
     print("\033[1;32m✨ SETUP COMPLETE! Your Karaoke Lounge is ready to rock. ✨\033[0m")
     print(f"🍹 Bar Name:        {bar_name}")
     print(f"🔑 Host 4-Digit PIN: {host_pin}")
+    print(f"📁 Video Library:   {lib_path}")
+    print(f"📂 Database & Data: {data_path}")
     print(f"🌐 Remote Mode:     {remote_mode.upper()}")
     if remote_mode == "bore":
         print(f"👉 Permanent URL:   http://bore.pub:{remote_port}")

@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Optional, Callable
 import yt_dlp
 
-from config import TRACKS_DIR, PLAYLISTS_DIR, TARGET_LUFS
+from config import get_tracks_dir, get_playlists_dir, TRACKS_DIR, PLAYLISTS_DIR, TARGET_LUFS
 from database import get_track_by_id, update_track_download_status
 
 download_queue: asyncio.Queue = asyncio.Queue()
@@ -50,7 +50,7 @@ def download_and_normalize_track(track_id: int) -> Optional[str]:
 
     artist_clean = sanitize_filename(track["artist"])
     title_clean = sanitize_filename(track["title"])
-    artist_dir = TRACKS_DIR / artist_clean
+    artist_dir = get_tracks_dir() / artist_clean
     artist_dir.mkdir(parents=True, exist_ok=True)
 
     temp_path = artist_dir / f"temp_{video_id}.mp4"
@@ -99,7 +99,7 @@ def download_and_normalize_track(track_id: int) -> Optional[str]:
 
 def update_singer_m3u_playlist(singer_name: str, local_path: str, title: str, artist: str):
     clean_name = sanitize_filename(singer_name)
-    m3u_path = PLAYLISTS_DIR / f"{clean_name}.m3u8"
+    m3u_path = get_playlists_dir() / f"{clean_name}.m3u8"
     
     is_new = not m3u_path.exists()
     with open(m3u_path, "a", encoding="utf-8") as f:

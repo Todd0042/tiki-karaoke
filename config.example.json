@@ -12,5 +12,7 @@
   "bgm_enabled": true,
   "bgm_volume": 0.25,
   "google_client_id": "",
-  "google_client_secret": ""
+  "google_client_secret": "",
+  "library_dir": "",
+  "data_dir": ""
 }
