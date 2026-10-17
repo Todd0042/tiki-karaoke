@@ -178,6 +178,13 @@ def start_permanent_tunnel(port: int, remote_port: int = 38480):
         print("[Remote] bore binary not found in bin/")
         return None, None
 
+    # Kill any stale local bore processes to free up remote static port
+    try:
+        subprocess.run(["pkill", "-9", "-f", "bore local"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        time.sleep(0.4)
+    except Exception:
+        pass
+
     print(f"[Remote] Establishing permanent static tunnel on bore.pub:{remote_port}...")
     proc = subprocess.Popen(
         [str(bin_path), "local", str(port), "--to", "bore.pub", "--port", str(remote_port)],
@@ -189,14 +196,35 @@ def start_permanent_tunnel(port: int, remote_port: int = 38480):
     )
     active_tunnel_proc = proc
 
-    # Read output in background to prevent pipe buffer from filling up
+    # Read output in background to monitor tunnel health
     def _drain(pipe):
         for line in iter(pipe.readline, ''):
-            if "error" in line.lower():
+            if "listening at" in line:
+                print(f"[Remote] ✅ {line.strip()}")
+            elif "error" in line.lower():
                 print(f"[Remote Error] {line.strip()}")
     threading.Thread(target=_drain, args=(proc.stdout,), daemon=True).start()
 
     time.sleep(1.2)
+    if proc.poll() is not None:
+        print("[Remote Warning] bore process exited early. Retrying once...")
+        try:
+            subprocess.run(["pkill", "-9", "-f", "bore local"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            time.sleep(1.0)
+            proc = subprocess.Popen(
+                [str(bin_path), "local", str(port), "--to", "bore.pub", "--port", str(remote_port)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                preexec_fn=os.setsid
+            )
+            active_tunnel_proc = proc
+            threading.Thread(target=_drain, args=(proc.stdout,), daemon=True).start()
+            time.sleep(1.2)
+        except Exception as e:
+            print(f"[Remote Error] Retry failed: {e}")
+
     url = f"http://bore.pub:{remote_port}"
     os.environ["TIKI_PUBLIC_HOST"] = f"bore.pub:{remote_port}"
     return url, proc
