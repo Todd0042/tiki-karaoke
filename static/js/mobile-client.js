@@ -340,11 +340,28 @@ function setupNavigation() {
 // Tiered Search & Queue
 function setupSearch() {
     const input = document.getElementById("searchInput");
+    const clearBtn = document.getElementById("searchClearBtn");
+    if (!input) return;
+
+    const updateClearBtn = () => {
+        if (clearBtn) {
+            clearBtn.style.display = input.value.length > 0 ? "flex" : "none";
+        }
+    };
+
     input.addEventListener("input", () => {
+        updateClearBtn();
         clearTimeout(searchDebounceTimer);
         const query = input.value.trim();
         if (query.length < 2) {
-            document.getElementById("searchResults").innerHTML = "";
+            const resultsContainer = document.getElementById("searchResults");
+            if (resultsContainer) {
+                resultsContainer.innerHTML = `
+                    <div style="text-align: center; padding: 40px 20px; color: var(--text-muted);">
+                        <div style="font-size: 2.5rem; margin-bottom: 8px;">🎤</div>
+                        <p>Type a song or artist above to search our instant local library and YouTube!</p>
+                    </div>`;
+            }
             return;
         }
 
@@ -352,6 +369,31 @@ function setupSearch() {
             performSearch(query);
         }, 320);
     });
+
+    input.addEventListener("keyup", updateClearBtn);
+    input.addEventListener("change", updateClearBtn);
+    updateClearBtn();
+}
+
+function clearSearchInput() {
+    const input = document.getElementById("searchInput");
+    const clearBtn = document.getElementById("searchClearBtn");
+    if (input) {
+        input.value = "";
+        input.focus();
+    }
+    if (clearBtn) {
+        clearBtn.style.display = "none";
+    }
+    clearTimeout(searchDebounceTimer);
+    const resultsContainer = document.getElementById("searchResults");
+    if (resultsContainer) {
+        resultsContainer.innerHTML = `
+            <div style="text-align: center; padding: 40px 20px; color: var(--text-muted);">
+                <div style="font-size: 2.5rem; margin-bottom: 8px;">🎤</div>
+                <p>Type a song or artist above to search our instant local library and YouTube!</p>
+            </div>`;
+    }
 }
 
 function performSearch(query, forceOnline = false) {
@@ -1018,13 +1060,33 @@ function setLibrarySort(sort) {
 }
 
 function onLibrarySearchInput() {
+    const input = document.getElementById("libSearchInput");
+    const clearBtn = document.getElementById("libSearchClearBtn");
+    if (clearBtn && input) {
+        clearBtn.style.display = input.value.length > 0 ? "flex" : "none";
+    }
     clearTimeout(libSearchDebounceTimer);
     libSearchDebounceTimer = setTimeout(() => {
-        const input = document.getElementById("libSearchInput");
         currentLibSearch = input ? input.value.trim() : "";
         currentLibPage = 1;
         loadLibraryTracks();
     }, 280);
+}
+
+function clearLibrarySearchInput() {
+    const input = document.getElementById("libSearchInput");
+    const clearBtn = document.getElementById("libSearchClearBtn");
+    if (input) {
+        input.value = "";
+        input.focus();
+    }
+    if (clearBtn) {
+        clearBtn.style.display = "none";
+    }
+    clearTimeout(libSearchDebounceTimer);
+    currentLibSearch = "";
+    currentLibPage = 1;
+    loadLibraryTracks();
 }
 
 function onLibraryArtistChange() {

@@ -109,6 +109,34 @@
             color: var(--neon-cyan);
             box-shadow: 0 0 10px rgba(0, 240, 255, 0.35);
         }
+
+        .search-clear-btn {
+            position: absolute;
+            right: 12px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.14);
+            border: none;
+            color: #cbd5e1;
+            font-size: 13px;
+            font-weight: 700;
+            cursor: pointer;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            line-height: 1;
+            transition: all 0.2s ease;
+            z-index: 2;
+        }
+
+        .search-clear-btn:hover, .search-clear-btn:active {
+            background: rgba(255, 42, 133, 0.4);
+            color: #fff;
+            box-shadow: 0 0 8px rgba(255, 42, 133, 0.6);
+        }
     </style>
 </head>
 <body>
@@ -125,9 +153,12 @@
     <main style="padding: 16px;">
         <!-- TAB 1: Search & Request -->
         <section id="searchTab" class="tab-view">
-            <div style="margin-bottom: 16px;">
+            <div style="position: relative; margin-bottom: 16px;">
                 <input type="text" id="searchInput" placeholder="🔍 Search song title or artist..." 
-                       style="width: 100%; padding: 14px 18px; border-radius: 14px; background: rgba(16, 28, 45, 0.9); border: 1px solid var(--border-neon); color: #fff; font-size: 1rem; outline: none; box-shadow: 0 0 15px rgba(0, 240, 255, 0.15);">
+                       style="width: 100%; padding: 14px 44px 14px 18px; border-radius: 14px; background: rgba(16, 28, 45, 0.9); border: 1px solid var(--border-neon); color: #fff; font-size: 1rem; outline: none; box-shadow: 0 0 15px rgba(0, 240, 255, 0.15);">
+                <button id="searchClearBtn" type="button" class="search-clear-btn" aria-label="Clear search" onclick="clearSearchInput()">
+                    ✕
+                </button>
             </div>
 
             <div id="searchResults">
@@ -150,8 +181,13 @@
 
             <!-- Search & Artist Filter -->
             <div style="display: flex; gap: 8px; margin-bottom: 12px;">
-                <input type="text" id="libSearchInput" placeholder="Filter title or artist..." oninput="onLibrarySearchInput()"
-                       style="flex: 2; padding: 10px 14px; border-radius: 12px; background: rgba(16, 28, 45, 0.9); border: 1px solid var(--border-neon); color: #fff; font-size: 0.9rem; outline: none;">
+                <div style="flex: 2; position: relative;">
+                    <input type="text" id="libSearchInput" placeholder="Filter title or artist..." oninput="onLibrarySearchInput()"
+                           style="width: 100%; padding: 10px 36px 10px 14px; border-radius: 12px; background: rgba(16, 28, 45, 0.9); border: 1px solid var(--border-neon); color: #fff; font-size: 0.9rem; outline: none;">
+                    <button id="libSearchClearBtn" type="button" class="search-clear-btn" aria-label="Clear library search" onclick="clearLibrarySearchInput()" style="right: 8px; width: 24px; height: 24px; font-size: 11px;">
+                        ✕
+                    </button>
+                </div>
                 <select id="libArtistFilter" onchange="onLibraryArtistChange()"
                         style="flex: 1.4; padding: 10px; border-radius: 12px; background: rgba(16, 28, 45, 0.9); border: 1px solid var(--border-neon); color: #fff; font-size: 0.82rem; outline: none;">
                     <option value="">All Artists</option>
@@ -510,6 +546,6 @@
             }
         }
     </script>
-    <script src="/static/js/mobile-client.js?v=8"></script>
+    <script src="/static/js/mobile-client.js?v=9"></script>
 </body>
 </html>
