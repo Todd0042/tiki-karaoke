@@ -18,7 +18,7 @@ from config import (
     PORT, DEFAULT_INTERMISSION_SECONDS, PUBLIC_HOST,
     load_config, save_config, is_configured,
     get_library_dir, get_tracks_dir, get_playlists_dir, get_data_dir,
-    get_db_path, get_path_info, ensure_storage_dirs
+    get_db_path, get_path_info, ensure_storage_dirs, get_storage_status
 )
 from database import (
     init_db, get_or_create_singer, get_singer_by_token,
@@ -29,7 +29,9 @@ from database import (
     get_setting, set_setting, get_all_settings,
     get_singers_with_queue, remove_all_songs_by_singer,
     get_taken_avatars_for_name, purge_all_singers,
-    migrate_storage_paths
+    migrate_storage_paths, get_browsable_tracks,
+    get_unique_downloaded_artists, get_cleanup_candidates,
+    prune_local_track
 )
 from search import tiered_search
 from downloader import (
@@ -164,6 +166,9 @@ class QueueSongRequest(BaseModel):
     singer_token: str
     duet_partner: str = ""
     pitch_shift: int = 0
+
+class PruneTracksRequest(BaseModel):
+    track_ids: List[int]
 
 # Host Auth Helper
 def is_host_request(request: Request) -> bool:
@@ -329,6 +334,51 @@ async def stream_local_video(track_id: int):
 @app.get("/api/search")
 async def api_search(q: str = "", force_online: bool = False):
     return tiered_search(q, force_online=force_online)
+
+# Library Browsing API
+@app.get("/api/library")
+async def api_get_library(
+    page: int = 1,
+    limit: int = 25,
+    sort: str = "popularity",
+    artist: str = "",
+    q: str = ""
+):
+    data = get_browsable_tracks(page=page, limit=limit, sort=sort, artist=artist, search=q)
+    data["artists"] = get_unique_downloaded_artists()
+    return data
+
+# Storage Management API
+@app.get("/api/storage/status")
+async def api_get_storage_status():
+    return get_storage_status()
+
+@app.get("/api/storage/cleanup-candidates")
+async def api_get_cleanup_candidates(sort_by: str = "oldest_played", limit: int = 50):
+    return {
+        "status": get_storage_status(),
+        "candidates": get_cleanup_candidates(sort_by=sort_by, limit=limit)
+    }
+
+@app.post("/api/storage/prune")
+async def api_prune_tracks(req: PruneTracksRequest, request: Request):
+    if not is_host_request(request):
+        raise HTTPException(status_code=403, detail="Host authentication required to prune files.")
+    
+    pruned_count = 0
+    for tid in req.track_ids:
+        if prune_local_track(tid):
+            pruned_count += 1
+    
+    await manager.broadcast({
+        "type": "library_updated",
+        "queue": get_queue()
+    })
+    return {
+        "status": "ok",
+        "pruned_count": pruned_count,
+        "storage": get_storage_status()
+    }
 
 # Singer API
 @app.post("/api/singer/register")

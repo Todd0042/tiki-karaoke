@@ -10,7 +10,8 @@ from database import (
     init_db, get_or_create_singer, get_singer_by_token,
     save_track, get_track_by_id, search_local_tracks,
     enqueue_song, get_queue, set_queue_status, remove_from_queue,
-    get_singer_history, get_party_wrapped_stats, get_setting, set_setting
+    get_singer_history, get_party_wrapped_stats, get_setting, set_setting,
+    get_browsable_tracks, get_unique_downloaded_artists, get_cleanup_candidates, prune_local_track
 )
 from search import normalize_title_artist, extract_attributes, deduplicate_and_group, tiered_search
 from downloader import sanitize_filename, normalize_audio_loudness, update_singer_m3u_playlist
@@ -139,5 +140,80 @@ class TestTikiKaraoke(unittest.TestCase):
         set_setting("tts_enabled", "false")
         self.assertEqual(get_setting("tts_enabled"), "false")
 
+    def test_09_play_counts_and_browsable_tracks(self):
+        from database import update_track_download_status, get_db
+        # Insert test tracks with distinct play counts and last_played
+        t1 = save_track("v_gem", "Old Gem", "Queen", "Queen - Old Gem")
+        t2 = save_track("v_pop", "Super Hit", "Queen", "Queen - Super Hit")
+        t3 = save_track("v_new", "Fresh Track", "Beatles", "Beatles - Fresh Track")
+
+        update_track_download_status(t1, "ready", local_path="/dummy/gem.mp4")
+        update_track_download_status(t2, "ready", local_path="/dummy/pop.mp4")
+        update_track_download_status(t3, "ready", local_path="/dummy/new.mp4")
+
+        # Manually set play_count & last_played for testing algorithms
+        conn = get_db()
+        with conn:
+            conn.execute("UPDATE tracks SET play_count = 6, last_played = '2026-01-01 12:00:00' WHERE id = ?", (t1,))
+            conn.execute("UPDATE tracks SET play_count = 10, last_played = '2026-10-15 12:00:00' WHERE id = ?", (t2,))
+            conn.execute("UPDATE tracks SET play_count = 0, last_played = NULL WHERE id = ?", (t3,))
+        conn.close()
+
+        # Test Popularity sort
+        pop_res = get_browsable_tracks(page=1, limit=10, sort="popularity")
+        self.assertGreaterEqual(pop_res["total"], 3)
+        track_ids = [t["id"] for t in pop_res["tracks"]]
+        # Super Hit (10 plays) should come before Old Gem (6 plays)
+        self.assertIn(t2, track_ids)
+        self.assertIn(t1, track_ids)
+        self.assertLess(track_ids.index(t2), track_ids.index(t1))
+
+        # Test Bring It Back (5+ plays, sorted by oldest last_played)
+        bring_res = get_browsable_tracks(page=1, limit=10, sort="bring_back")
+        bring_ids = [t["id"] for t in bring_res["tracks"]]
+        self.assertIn(t1, bring_ids)
+        # Old Gem played back in Jan 2026 should come before Super Hit played in Oct 2026
+        if t2 in bring_ids:
+            self.assertLess(bring_ids.index(t1), bring_ids.index(t2))
+
+        # Test Artist Filter & Unique Artists
+        artists = get_unique_downloaded_artists()
+        self.assertIn("Queen", artists)
+        self.assertIn("Beatles", artists)
+
+        queen_res = get_browsable_tracks(page=1, limit=10, artist="Queen")
+        for trk in queen_res["tracks"]:
+            self.assertEqual(trk["artist"], "Queen")
+
+    def test_10_cleanup_and_storage_pruning(self):
+        from database import update_track_download_status, get_track_by_id
+        # Create a real dummy file in TRACKS_DIR
+        dummy_file = TRACKS_DIR / "cleanup_test.mp4"
+        dummy_file.write_text("dummy video content for storage test")
+
+        t_clean = save_track("v_clean", "Delete Me", "Temp Artist", "Temp Artist - Delete Me")
+        update_track_download_status(t_clean, "ready", local_path=str(dummy_file))
+
+        # Verify candidate is listed
+        candidates = get_cleanup_candidates(sort_by="oldest_played", limit=10)
+        c_ids = [c["id"] for c in candidates]
+        self.assertIn(t_clean, c_ids)
+
+        candidate = next(c for c in candidates if c["id"] == t_clean)
+        self.assertGreater(candidate["size_bytes"], 0)
+
+        # Prune local track
+        success = prune_local_track(t_clean)
+        self.assertTrue(success)
+        self.assertFalse(dummy_file.exists())
+
+        # Verify database record preserved metadata, but marked is_downloaded = 0
+        track = get_track_by_id(t_clean)
+        self.assertIsNotNone(track)
+        self.assertEqual(track["is_downloaded"], 0)
+        self.assertEqual(track["local_path"], "")
+        self.assertEqual(track["title"], "Delete Me")
+
 if __name__ == "__main__":
     unittest.main()
+

@@ -54,6 +54,7 @@ function checkIdentity() {
                 document.getElementById("hostNavTab").style.display = "flex";
                 loadHostSettings();
                 loadHostDisplays();
+                loadHostStorageStatus();
             }
         });
 }
@@ -297,6 +298,11 @@ function initWebSocket() {
                 if (isHost) {
                     loadHostDisplays();
                 }
+            } else if (data.type === "library_updated") {
+                loadLibraryTracks();
+                if (isHost) {
+                    loadHostStorageStatus();
+                }
             }
         } catch (e) {
             console.error("[WS] Error:", e);
@@ -319,11 +325,13 @@ function setupNavigation() {
             const target = btn.dataset.tab;
             document.getElementById(target).style.display = "block";
 
+            if (target === "libraryTab") loadLibraryTracks();
             if (target === "queueTab") loadLiveQueue();
             if (target === "historyTab") loadHistory();
             if (target === "hostTab") {
                 loadHostSingerRoster();
                 loadHostDisplays();
+                loadHostStorageStatus();
             }
         });
     });
@@ -969,4 +977,443 @@ function hostSetDisplayAudio(displayId, action) {
         alert("Error updating display audio: " + err.message);
     });
 }
+
+// ==========================================
+// 🌴 Local Library Browsing & Smart Sorting
+// ==========================================
+
+let currentLibPage = 1;
+let currentLibSort = "popularity";
+let currentLibArtist = "";
+let currentLibSearch = "";
+let libSearchDebounceTimer = null;
+let cachedLibraryArtists = [];
+
+function formatRelativeTime(timestamp) {
+    if (!timestamp) return "Never played";
+    const date = new Date(timestamp.replace(" ", "T") + "Z");
+    if (isNaN(date.getTime())) return "Recently";
+    const diffSec = Math.floor((new Date() - date) / 1000);
+    if (diffSec < 60) return "Just now";
+    if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`;
+    if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h ago`;
+    const days = Math.floor(diffSec / 86400);
+    if (days === 1) return "Yesterday";
+    if (days < 30) return `${days}d ago`;
+    const months = Math.floor(days / 30);
+    return `${months}mo ago`;
+}
+
+function setLibrarySort(sort) {
+    currentLibSort = sort;
+    currentLibPage = 1;
+    document.querySelectorAll(".lib-sort-btn").forEach(btn => {
+        if (btn.dataset.sort === sort) {
+            btn.classList.add("active");
+        } else {
+            btn.classList.remove("active");
+        }
+    });
+    loadLibraryTracks();
+}
+
+function onLibrarySearchInput() {
+    clearTimeout(libSearchDebounceTimer);
+    libSearchDebounceTimer = setTimeout(() => {
+        const input = document.getElementById("libSearchInput");
+        currentLibSearch = input ? input.value.trim() : "";
+        currentLibPage = 1;
+        loadLibraryTracks();
+    }, 280);
+}
+
+function onLibraryArtistChange() {
+    const sel = document.getElementById("libArtistFilter");
+    currentLibArtist = sel ? sel.value : "";
+    currentLibPage = 1;
+    loadLibraryTracks();
+}
+
+function changeLibraryPage(delta) {
+    currentLibPage += delta;
+    if (currentLibPage < 1) currentLibPage = 1;
+    loadLibraryTracks();
+}
+
+function loadLibraryTracks() {
+    const container = document.getElementById("libraryListContainer");
+    if (!container) return;
+
+    const url = `/api/library?page=${currentLibPage}&limit=25&sort=${encodeURIComponent(currentLibSort)}&artist=${encodeURIComponent(currentLibArtist)}&q=${encodeURIComponent(currentLibSearch)}`;
+
+    fetch(url)
+        .then(res => res.json())
+        .then(data => {
+            const tracks = Array.isArray(data.tracks) ? data.tracks : [];
+            const total = data.total || 0;
+            const totalPages = data.total_pages || 1;
+            currentLibPage = data.page || 1;
+
+            // Update badge
+            const badge = document.getElementById("libraryTotalBadge");
+            if (badge) badge.innerText = `${total} songs`;
+
+            // Populate artist dropdown if changed
+            if (Array.isArray(data.artists) && JSON.stringify(data.artists) !== JSON.stringify(cachedLibraryArtists)) {
+                cachedLibraryArtists = data.artists;
+                const sel = document.getElementById("libArtistFilter");
+                if (sel) {
+                    const currentVal = sel.value;
+                    sel.innerHTML = '<option value="">All Artists</option>';
+                    data.artists.forEach(a => {
+                        const opt = document.createElement("option");
+                        opt.value = a;
+                        opt.innerText = a;
+                        if (a === currentVal) opt.selected = true;
+                        sel.appendChild(opt);
+                    });
+                }
+            }
+
+            container.innerHTML = "";
+
+            if (tracks.length === 0) {
+                container.innerHTML = `
+                    <div style="text-align: center; padding: 40px 20px; color: var(--text-muted);">
+                        <div style="font-size: 2.2rem; margin-bottom: 8px;">🌴</div>
+                        <p style="font-size: 0.95rem; font-weight: 600; color: #fff;">No downloaded songs found</p>
+                        <p style="font-size: 0.82rem;">Search YouTube above to download and add new tracks to this library!</p>
+                    </div>
+                `;
+                const pag = document.getElementById("libraryPaginationBar");
+                if (pag) pag.style.display = "none";
+                return;
+            }
+
+            tracks.forEach(track => {
+                const card = document.createElement("div");
+                card.className = "tiki-card";
+                card.style.padding = "14px";
+                card.style.marginBottom = "10px";
+                card.style.display = "flex";
+                card.style.justifyContent = "space-between";
+                card.style.alignItems = "center";
+                card.style.gap = "10px";
+
+                const plays = track.play_count || 0;
+                let playBadgeText = plays === 1 ? "🎤 1 play" : `🎤 ${plays} plays`;
+                let playBadgeColor = "rgba(0, 240, 255, 0.15)";
+                let playTextColor = "var(--neon-cyan)";
+
+                if (plays >= 5) {
+                    playBadgeText = `🔥 ${plays} plays`;
+                    playBadgeColor = "rgba(255, 42, 133, 0.2)";
+                    playTextColor = "var(--neon-pink)";
+                } else if (plays === 0) {
+                    playBadgeText = "🆕 Unplayed";
+                    playBadgeColor = "rgba(255, 255, 255, 0.08)";
+                    playTextColor = "var(--text-muted)";
+                }
+
+                const lastPlayedText = formatRelativeTime(track.last_played);
+
+                card.innerHTML = `
+                    <div style="flex: 1; min-width: 0;">
+                        <div style="font-weight: 700; font-size: 1.05rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                            ${escapeHtml(track.title)}
+                        </div>
+                        <div style="color: var(--text-muted); font-size: 0.85rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px;">
+                            ${escapeHtml(track.artist)}
+                        </div>
+                        <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; font-size: 0.75rem;">
+                            <span style="background: ${playBadgeColor}; color: ${playTextColor}; padding: 2px 7px; border-radius: 6px; font-weight: 700;">
+                                ${playBadgeText}
+                            </span>
+                            <span style="color: var(--neon-gold);">
+                                🕒 ${lastPlayedText}
+                            </span>
+                            <span style="color: var(--text-muted);">
+                                • ${formatDuration(track.duration)}
+                            </span>
+                        </div>
+                    </div>
+                    <button onclick="openQueueModal(${track.id}, '${escapeHtml(track.title).replace(/'/g, "\\'")}', '${escapeHtml(track.artist).replace(/'/g, "\\'")}', '${track.video_id}')" 
+                            class="btn-neon-pink" style="padding: 9px 14px; font-size: 0.85rem; white-space: nowrap; flex-shrink: 0;">
+                        + Queue
+                    </button>
+                `;
+                container.appendChild(card);
+            });
+
+            // Pagination Controls
+            const pag = document.getElementById("libraryPaginationBar");
+            const prevBtn = document.getElementById("libPrevBtn");
+            const nextBtn = document.getElementById("libNextBtn");
+            const pageInfo = document.getElementById("libPageInfo");
+
+            if (pag) {
+                if (totalPages > 1) {
+                    pag.style.display = "flex";
+                    if (pageInfo) pageInfo.innerText = `Page ${currentLibPage} of ${totalPages} (${total} total)`;
+                    if (prevBtn) prevBtn.disabled = currentLibPage <= 1;
+                    if (nextBtn) nextBtn.disabled = currentLibPage >= totalPages;
+                } else {
+                    pag.style.display = "none";
+                }
+            }
+        })
+        .catch(err => {
+            console.error("[Library] Error loading tracks:", err);
+            container.innerHTML = `<div style="text-align: center; color: #ff5555; padding: 20px;">Failed to load library: ${err.message}</div>`;
+        });
+}
+
+// ==========================================
+// 💾 Host Storage Monitoring & Pruning
+// ==========================================
+
+let currentCleanupSort = "oldest_played";
+let selectedCleanupTrackIds = new Set();
+let cleanupCandidatesList = [];
+
+function loadHostStorageStatus() {
+    const banner = document.getElementById("hostStorageBanner");
+    const badge = document.getElementById("storageBadge");
+    const pBar = document.getElementById("storageProgressBar");
+    const details = document.getElementById("storageDetails");
+    if (!banner || !badge) return;
+
+    fetch("/api/storage/status")
+        .then(res => res.json())
+        .then(data => {
+            const usedPct = data.used_percent || 0;
+            const freeGb = data.free_gb || 0;
+            const totalGb = data.total_gb || 0;
+            const libGb = data.library_gb || 0;
+            const tracks = data.downloaded_track_count || 0;
+
+            // Thresholds: green default, orange at >= 75%, red at >= 90%
+            let colorHex = "var(--neon-lime)";
+            let badgeBg = "rgba(0, 255, 100, 0.15)";
+            let badgeText = `${usedPct}% Full`;
+
+            if (usedPct >= 90.0) {
+                colorHex = "#ff3366";
+                badgeBg = "rgba(255, 51, 102, 0.25)";
+                badgeText = `🚨 ${usedPct}% Full (Critical)`;
+            } else if (usedPct >= 75.0) {
+                colorHex = "#ff9f1c";
+                badgeBg = "rgba(255, 159, 28, 0.22)";
+                badgeText = `⚠️ ${usedPct}% Full`;
+            }
+
+            badge.innerText = badgeText;
+            badge.style.color = colorHex;
+            badge.style.background = badgeBg;
+
+            if (pBar) {
+                pBar.style.width = `${Math.min(100, usedPct)}%`;
+                pBar.style.background = colorHex;
+            }
+
+            banner.style.borderLeftColor = colorHex;
+
+            if (details) {
+                details.innerText = `${freeGb} GB Free of ${totalGb} GB (${libGb} GB Karaoke Library • ${tracks} songs)`;
+            }
+        })
+        .catch(err => {
+            console.error("[Storage] Failed to load status:", err);
+        });
+}
+
+function openCleanupModal() {
+    const modal = document.getElementById("cleanupModal");
+    if (modal) modal.style.display = "flex";
+    selectedCleanupTrackIds.clear();
+    loadCleanupCandidates();
+}
+
+function closeCleanupModal() {
+    const modal = document.getElementById("cleanupModal");
+    if (modal) modal.style.display = "none";
+}
+
+function setCleanupSort(sort) {
+    currentCleanupSort = sort;
+    const btnOldest = document.getElementById("cleanSortOldest");
+    const btnLeast = document.getElementById("cleanSortLeast");
+
+    if (sort === "oldest_played") {
+        if (btnOldest) {
+            btnOldest.style.borderColor = "var(--neon-cyan)";
+            btnOldest.style.color = "var(--neon-cyan)";
+        }
+        if (btnLeast) {
+            btnLeast.style.borderColor = "rgba(255,255,255,0.2)";
+            btnLeast.style.color = "#fff";
+        }
+    } else {
+        if (btnLeast) {
+            btnLeast.style.borderColor = "var(--neon-cyan)";
+            btnLeast.style.color = "var(--neon-cyan)";
+        }
+        if (btnOldest) {
+            btnOldest.style.borderColor = "rgba(255,255,255,0.2)";
+            btnOldest.style.color = "#fff";
+        }
+    }
+    loadCleanupCandidates();
+}
+
+function loadCleanupCandidates() {
+    const list = document.getElementById("cleanupCandidateList");
+    if (!list) return;
+    list.innerHTML = `<div style="text-align: center; color: var(--text-muted); padding: 20px;">Scanning library files...</div>`;
+
+    fetch(`/api/storage/cleanup-candidates?sort_by=${encodeURIComponent(currentCleanupSort)}&limit=60`)
+        .then(res => res.json())
+        .then(data => {
+            cleanupCandidatesList = Array.isArray(data.candidates) ? data.candidates : [];
+            list.innerHTML = "";
+
+            if (cleanupCandidatesList.length === 0) {
+                list.innerHTML = `<div style="text-align: center; color: var(--text-muted); padding: 20px;">No downloaded video files found to prune.</div>`;
+                updateCleanupStats();
+                return;
+            }
+
+            cleanupCandidatesList.forEach(item => {
+                const row = document.createElement("label");
+                row.style.display = "flex";
+                row.style.alignItems = "center";
+                row.style.gap = "10px";
+                row.style.padding = "10px 12px";
+                row.style.background = "rgba(8, 14, 24, 0.8)";
+                row.style.border = "1px solid rgba(255,255,255,0.1)";
+                row.style.borderRadius = "10px";
+                row.style.cursor = "pointer";
+
+                const isChecked = selectedCleanupTrackIds.has(item.id);
+
+                row.innerHTML = `
+                    <input type="checkbox" value="${item.id}" ${isChecked ? 'checked' : ''} onchange="toggleCleanupTrack(${item.id}, this.checked)" style="transform: scale(1.3); cursor: pointer;">
+                    <div style="flex: 1; min-width: 0;">
+                        <div style="font-weight: 700; font-size: 0.9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #fff;">
+                            ${escapeHtml(item.title)}
+                        </div>
+                        <div style="color: var(--text-muted); font-size: 0.78rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                            ${escapeHtml(item.artist)}
+                        </div>
+                    </div>
+                    <div style="text-align: right; flex-shrink: 0; font-size: 0.75rem;">
+                        <div style="color: var(--neon-gold); font-weight: 700;">${item.size_mb} MB</div>
+                        <div style="color: var(--text-muted);">🎤 ${item.play_count} • ${formatRelativeTime(item.last_played)}</div>
+                    </div>
+                `;
+                list.appendChild(row);
+            });
+
+            updateCleanupStats();
+        })
+        .catch(err => {
+            list.innerHTML = `<div style="color: #ff5555; text-align: center; padding: 20px;">Failed to scan files: ${err.message}</div>`;
+        });
+}
+
+function toggleCleanupTrack(trackId, isChecked) {
+    if (isChecked) {
+        selectedCleanupTrackIds.add(trackId);
+    } else {
+        selectedCleanupTrackIds.delete(trackId);
+    }
+    updateCleanupStats();
+}
+
+function selectTopNCleanup(n) {
+    cleanupCandidatesList.slice(0, n).forEach(item => {
+        selectedCleanupTrackIds.add(item.id);
+    });
+    // Check checkboxes
+    document.querySelectorAll('#cleanupCandidateList input[type="checkbox"]').forEach(cb => {
+        if (selectedCleanupTrackIds.has(parseInt(cb.value))) {
+            cb.checked = true;
+        }
+    });
+    updateCleanupStats();
+}
+
+function toggleAllCleanup() {
+    if (selectedCleanupTrackIds.size === cleanupCandidatesList.length) {
+        selectedCleanupTrackIds.clear();
+    } else {
+        cleanupCandidatesList.forEach(item => selectedCleanupTrackIds.add(item.id));
+    }
+    document.querySelectorAll('#cleanupCandidateList input[type="checkbox"]').forEach(cb => {
+        cb.checked = selectedCleanupTrackIds.has(parseInt(cb.value));
+    });
+    updateCleanupStats();
+}
+
+function updateCleanupStats() {
+    const statsEl = document.getElementById("cleanupSelectedStats");
+    const btn = document.getElementById("pruneExecuteBtn");
+
+    let totalMb = 0;
+    cleanupCandidatesList.forEach(item => {
+        if (selectedCleanupTrackIds.has(item.id)) {
+            totalMb += item.size_mb || 0;
+        }
+    });
+    totalMb = Math.round(totalMb * 10) / 10;
+
+    const count = selectedCleanupTrackIds.size;
+    if (statsEl) {
+        statsEl.innerText = `Selected: ${count} songs (${totalMb} MB)`;
+    }
+
+    if (btn) {
+        btn.disabled = count === 0;
+        btn.innerText = count > 0 ? `🗑️ Prune ${count} Files (${totalMb} MB)` : `🗑️ Prune Selected Files`;
+    }
+}
+
+function executePrune() {
+    if (selectedCleanupTrackIds.size === 0) return;
+    const count = selectedCleanupTrackIds.size;
+    if (!confirm(`Are you sure you want to delete ${count} video files from disk? History and songs can be re-downloaded anytime.`)) {
+        return;
+    }
+
+    const btn = document.getElementById("pruneExecuteBtn");
+    if (btn) {
+        btn.disabled = true;
+        btn.innerText = "⏳ Deleting video files...";
+    }
+
+    fetch("/api/storage/prune", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ track_ids: Array.from(selectedCleanupTrackIds) })
+    })
+    .then(res => {
+        if (!res.ok) throw new Error("Unauthorized or server error");
+        return res.json();
+    })
+    .then(data => {
+        showToast(`✅ Successfully pruned ${data.pruned_count} video files!`);
+        selectedCleanupTrackIds.clear();
+        closeCleanupModal();
+        loadHostStorageStatus();
+        loadLibraryTracks();
+    })
+    .catch(err => {
+        alert("Error pruning files: " + err.message);
+        if (btn) {
+            btn.disabled = false;
+            updateCleanupStats();
+        }
+    });
+}
+
 

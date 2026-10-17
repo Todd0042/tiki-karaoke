@@ -174,6 +174,63 @@ def get_path_info(path_str: str) -> Dict[str, Any]:
             "error": str(e)
         }
 
+def get_storage_status() -> Dict[str, Any]:
+    """Returns disk usage, percentage, status color (green/orange/red), and local library stats."""
+    import shutil
+    tracks_dir = get_tracks_dir()
+    probe = tracks_dir
+    while not probe.exists() and probe.parent != probe:
+        probe = probe.parent
+
+    usage = shutil.disk_usage(probe)
+    total_gb = round(usage.total / (1024**3), 1)
+    used_gb = round(usage.used / (1024**3), 1)
+    free_gb = round(usage.free / (1024**3), 1)
+    used_pct = round((usage.used / usage.total) * 100, 1)
+
+    lib_bytes = 0
+    track_count = 0
+    if tracks_dir.exists():
+        for f in tracks_dir.glob("**/*"):
+            if f.is_file():
+                try:
+                    lib_bytes += f.stat().st_size
+                    if f.suffix.lower() == ".mp4":
+                        track_count += 1
+                except Exception:
+                    pass
+    lib_mb = round(lib_bytes / (1024**2), 1)
+    lib_gb = round(lib_bytes / (1024**3), 2)
+
+    # Color thresholds: green default, orange at >= 75%, red at >= 90%
+    if used_pct >= 90.0:
+        status_color = "red"
+        status_level = "critical"
+        message = f"🚨 Storage Critical: {used_pct}% Full ({free_gb} GB remaining). Pruning recommended!"
+    elif used_pct >= 75.0:
+        status_color = "orange"
+        status_level = "warning"
+        message = f"⚠️ Storage Warning: {used_pct}% Full ({free_gb} GB remaining)."
+    else:
+        status_color = "green"
+        status_level = "normal"
+        message = f"🌴 Storage Healthy: {used_pct}% Full ({free_gb} GB remaining)."
+
+    return {
+        "partition_path": str(probe),
+        "total_gb": total_gb,
+        "used_gb": used_gb,
+        "free_gb": free_gb,
+        "used_percent": used_pct,
+        "status_color": status_color,
+        "status_level": status_level,
+        "message": message,
+        "library_bytes": lib_bytes,
+        "library_mb": lib_mb,
+        "library_gb": lib_gb,
+        "downloaded_track_count": track_count
+    }
+
 # Initial export of globals
 DATA_DIR = get_data_dir()
 LIBRARY_DIR = get_library_dir()

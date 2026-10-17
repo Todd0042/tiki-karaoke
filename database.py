@@ -38,7 +38,9 @@ def init_db():
             local_path TEXT DEFAULT '',
             normalized_lufs REAL DEFAULT -16.0,
             download_status TEXT DEFAULT 'idle', -- 'idle', 'downloading', 'ready', 'failed'
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            play_count INTEGER DEFAULT 0,
+            last_played TIMESTAMP
         );
 
         CREATE VIRTUAL TABLE IF NOT EXISTS tracks_fts USING fts5(
@@ -102,6 +104,24 @@ def init_db():
         INSERT OR IGNORE INTO settings (key, value) VALUES ('bgm_volume', '0.25');
         INSERT OR IGNORE INTO settings (key, value) VALUES ('bar_name', 'The Tiki Hut Karaoke Lounge');
         """)
+
+        # Ensure play_count and last_played exist on existing databases
+        cols = [r["name"] for r in conn.execute("PRAGMA table_info(tracks)").fetchall()]
+        if "play_count" not in cols:
+            conn.execute("ALTER TABLE tracks ADD COLUMN play_count INTEGER DEFAULT 0")
+        if "last_played" not in cols:
+            conn.execute("ALTER TABLE tracks ADD COLUMN last_played TIMESTAMP")
+
+        # Backfill play counts and last_played from history if present
+        conn.execute("""
+            UPDATE tracks
+            SET play_count = (SELECT COUNT(*) FROM history WHERE history.track_id = tracks.id),
+                last_played = (SELECT MAX(played_at) FROM history WHERE history.track_id = tracks.id)
+            WHERE EXISTS (SELECT 1 FROM history WHERE history.track_id = tracks.id)
+              AND (play_count = 0 OR play_count IS NULL);
+        """)
+
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_tracks_library ON tracks(is_downloaded, play_count, last_played)")
     conn.close()
 
 # Singer Operations
@@ -445,6 +465,19 @@ def set_queue_status(queue_id: int, status: str):
     conn = get_db()
     with conn:
         if status == 'playing':
+            # Complete currently playing track and record history
+            playing_rows = conn.execute("SELECT id, track_id, singer_id, duet_partner, pitch_shift FROM queue WHERE status = 'playing'").fetchall()
+            for p in playing_rows:
+                conn.execute("""
+                    INSERT INTO history (track_id, singer_id, duet_partner, pitch_shift)
+                    VALUES (?, ?, ?, ?)
+                """, (p["track_id"], p["singer_id"], p["duet_partner"], p["pitch_shift"]))
+                conn.execute("""
+                    UPDATE tracks 
+                    SET play_count = coalesce(play_count, 0) + 1,
+                        last_played = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                """, (p["track_id"],))
             conn.execute("UPDATE queue SET status = 'completed' WHERE status = 'playing'")
             conn.execute("UPDATE queue SET status = 'playing', played_at = CURRENT_TIMESTAMP WHERE id = ?", (queue_id,))
         elif status == 'completed':
@@ -455,6 +488,12 @@ def set_queue_status(queue_id: int, status: str):
                     INSERT INTO history (track_id, singer_id, duet_partner, pitch_shift)
                     VALUES (?, ?, ?, ?)
                 """, (q_row["track_id"], q_row["singer_id"], q_row["duet_partner"], q_row["pitch_shift"]))
+                conn.execute("""
+                    UPDATE tracks 
+                    SET play_count = coalesce(play_count, 0) + 1,
+                        last_played = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                """, (q_row["track_id"],))
             conn.execute("UPDATE queue SET status = 'completed' WHERE id = ?", (queue_id,))
         elif status == 'skipped':
             conn.execute("UPDATE queue SET status = 'skipped' WHERE id = ?", (queue_id,))
@@ -565,4 +604,145 @@ def migrate_storage_paths(old_base_dir: str, new_base_dir: str) -> int:
         count = cursor.rowcount
     conn.close()
     return count
+
+# Library Browsing & Storage Management
+def get_browsable_tracks(
+    page: int = 1,
+    limit: int = 25,
+    sort: str = "popularity",
+    artist: str = "",
+    search: str = ""
+) -> Dict[str, Any]:
+    """Returns paginated downloaded tracks with custom sorting: popularity, bring_back, recent, least_played, alpha."""
+    conn = get_db()
+    conditions = ["is_downloaded = 1"]
+    params: List[Any] = []
+
+    if artist.strip():
+        conditions.append("artist = ?")
+        params.append(artist.strip())
+
+    if search.strip():
+        s = f"%{search.strip()}%"
+        conditions.append("(title LIKE ? OR artist LIKE ?)")
+        params.extend([s, s])
+
+    # Bring It Back algorithm: songs with at least 5 plays sorted by longest time since played
+    # If the database has fewer total plays (e.g. party just started), fallback to play_count >= 1
+    if sort == "bring_back":
+        cnt_5 = conn.execute("SELECT COUNT(*) as c FROM tracks WHERE is_downloaded = 1 AND play_count >= 5").fetchone()["c"]
+        if cnt_5 > 0:
+            conditions.append("play_count >= 5")
+            order_clause = "ORDER BY last_played ASC, play_count DESC, title ASC"
+        else:
+            conditions.append("play_count >= 1")
+            order_clause = "ORDER BY last_played ASC, play_count DESC, title ASC"
+    elif sort == "popularity":
+        order_clause = "ORDER BY play_count DESC, last_played DESC, title ASC"
+    elif sort == "recent":
+        order_clause = "ORDER BY last_played DESC, play_count DESC"
+    elif sort == "least_played":
+        order_clause = "ORDER BY play_count ASC, coalesce(last_played, created_at) ASC"
+    elif sort == "alpha":
+        order_clause = "ORDER BY artist COLLATE NOCASE ASC, title COLLATE NOCASE ASC"
+    else:
+        order_clause = "ORDER BY play_count DESC, title ASC"
+
+    where_clause = " WHERE " + " AND ".join(conditions)
+
+    count_query = f"SELECT COUNT(*) as total FROM tracks {where_clause}"
+    total = conn.execute(count_query, params).fetchone()["total"]
+
+    offset = max(0, (page - 1) * limit)
+    data_query = f"""
+        SELECT id, video_id, title, artist, original_title, channel, duration,
+               is_downloaded, local_path, normalized_lufs, download_status,
+               created_at, coalesce(play_count, 0) as play_count, last_played
+        FROM tracks
+        {where_clause}
+        {order_clause}
+        LIMIT ? OFFSET ?
+    """
+    rows = conn.execute(data_query, params + [limit, offset]).fetchall()
+    conn.close()
+
+    total_pages = max(1, (total + limit - 1) // limit) if total > 0 else 1
+    return {
+        "tracks": [dict(r) for r in rows],
+        "total": total,
+        "page": page,
+        "limit": limit,
+        "total_pages": total_pages,
+        "sort": sort,
+        "artist": artist,
+        "search": search
+    }
+
+def get_unique_downloaded_artists() -> List[str]:
+    """Returns distinct artists who have downloaded tracks in the library."""
+    conn = get_db()
+    rows = conn.execute("""
+        SELECT DISTINCT artist 
+        FROM tracks 
+        WHERE is_downloaded = 1 AND artist != ''
+        ORDER BY artist COLLATE NOCASE ASC
+    """).fetchall()
+    conn.close()
+    return [r["artist"] for r in rows]
+
+def get_cleanup_candidates(sort_by: str = "oldest_played", limit: int = 50) -> List[Dict[str, Any]]:
+    """Returns candidate tracks for pruning storage sorted by longest unplayed or least played."""
+    conn = get_db()
+    if sort_by == "least_played":
+        order_clause = "ORDER BY play_count ASC, coalesce(last_played, created_at) ASC"
+    else: # oldest_played
+        order_clause = "ORDER BY coalesce(last_played, '1970-01-01') ASC, play_count ASC"
+
+    query = f"""
+        SELECT id, video_id, title, artist, duration, local_path,
+               coalesce(play_count, 0) as play_count, last_played, created_at
+        FROM tracks
+        WHERE is_downloaded = 1 AND local_path != ''
+        {order_clause}
+        LIMIT ?
+    """
+    rows = conn.execute(query, (limit,)).fetchall()
+    conn.close()
+
+    results = []
+    for r in rows:
+        d = dict(r)
+        p = Path(d["local_path"])
+        size_bytes = p.stat().st_size if p.exists() else 0
+        d["size_bytes"] = size_bytes
+        d["size_mb"] = round(size_bytes / (1024 * 1024), 1)
+        results.append(d)
+    return results
+
+def prune_local_track(track_id: int) -> bool:
+    """Removes the downloaded video file on disk while keeping track metadata & history intact."""
+    conn = get_db()
+    track = conn.execute("SELECT local_path FROM tracks WHERE id = ?", (track_id,)).fetchone()
+    if not track:
+        conn.close()
+        return False
+    local_path = track["local_path"]
+    if local_path:
+        p = Path(local_path)
+        if p.exists():
+            try:
+                p.unlink()
+            except Exception as e:
+                print(f"[Storage Prune] Error removing file {p}: {e}")
+    with conn:
+        conn.execute("""
+            UPDATE tracks
+            SET is_downloaded = 0,
+                local_path = '',
+                download_status = 'idle'
+            WHERE id = ?
+        """, (track_id,))
+    conn.close()
+    return True
+
 

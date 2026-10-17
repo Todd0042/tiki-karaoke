@@ -108,5 +108,44 @@ class TestAPIEndpoints(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertIn("Storage & Media Library", r.text)
 
+    def test_library_browsing_and_storage_management(self):
+        from config import HOST_TOKEN
+        # 1. Test Library browsing endpoint
+        r = self.client.get("/api/library?sort=popularity")
+        self.assertEqual(r.status_code, 200)
+        data = r.json()
+        self.assertIn("tracks", data)
+        self.assertIn("artists", data)
+        self.assertIn("total", data)
+        self.assertIn("page", data)
+
+        # 2. Test Bring It Back sort
+        r = self.client.get("/api/library?sort=bring_back")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("tracks", r.json())
+
+        # 3. Test Storage status
+        r = self.client.get("/api/storage/status")
+        self.assertEqual(r.status_code, 200)
+        status = r.json()
+        self.assertIn("free_gb", status)
+        self.assertIn("used_percent", status)
+        self.assertIn(status["status_color"], ["green", "orange", "red"])
+
+        # 4. Test Cleanup candidates
+        r = self.client.get("/api/storage/cleanup-candidates?sort_by=oldest_played")
+        self.assertEqual(r.status_code, 200)
+        clean = r.json()
+        self.assertIn("candidates", clean)
+
+        # 5. Test Storage prune (Unauthorized without host token)
+        r = self.client.post("/api/storage/prune", json={"track_ids": [999999]})
+        self.assertEqual(r.status_code, 403)
+
+        # 6. Test Storage prune with host header
+        r = self.client.post("/api/storage/prune", json={"track_ids": [999999]}, headers={"X-Host-Token": HOST_TOKEN})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["status"], "ok")
+
 if __name__ == "__main__":
     unittest.main()
