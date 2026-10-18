@@ -86,6 +86,10 @@ function checkRole() {
             if (hostTab) {
                 hostTab.style.display = isHost ? "flex" : "none";
             }
+            const hostRow = document.getElementById("hostNavRow");
+            if (hostRow) {
+                hostRow.style.display = isHost ? "flex" : "none";
+            }
             if (isHost) {
                 loadHostSettings();
                 loadHostDisplays();
@@ -417,6 +421,14 @@ function initWebSocket() {
                 if (isHost) {
                     loadHostStorageStatus();
                 }
+            } else if (data.type === "filler_tracks_updated" || data.type === "filler_track_updated") {
+                if (isHost) {
+                    loadFillerTracks();
+                }
+            } else if (data.type === "filler_settings_updated") {
+                if (isHost) {
+                    loadFillerSettings(data.settings);
+                }
             }
         } catch (e) {
             console.error("[WS] Error:", e);
@@ -459,6 +471,13 @@ function setupNavigation() {
                 loadHostSingerRoster();
                 loadHostDisplays();
                 loadHostStorageStatus();
+            }
+            if (target === "fillerCrateTab") {
+                loadFillerTracks();
+            }
+            if (target === "fillerSearchTab") {
+                const fInput = document.getElementById("fillerSearchInput");
+                if (fInput) fInput.focus();
             }
         });
     });
@@ -1971,6 +1990,389 @@ function executePrune() {
             btn.disabled = false;
             updateCleanupStats();
         }
+    });
+}
+
+// =============================================================================
+// BGM FILLER & MUSIC VIDEOS MANAGEMENT (HOST DJ)
+// =============================================================================
+
+let fillerSearchDebounceTimer = null;
+let currentStagedFillerIds = new Set();
+
+function onFillerSearchInput(val) {
+    const clearBtn = document.getElementById("fillerSearchClearBtn");
+    if (clearBtn) clearBtn.style.display = val.trim() ? "flex" : "none";
+
+    clearTimeout(fillerSearchDebounceTimer);
+    if (!val || val.trim().length < 2) {
+        const resultsEl = document.getElementById("fillerSearchResults");
+        if (resultsEl) resultsEl.innerHTML = "";
+        return;
+    }
+
+    const loader = document.getElementById("fillerSearchLoading");
+    if (loader) loader.style.display = "block";
+
+    fillerSearchDebounceTimer = setTimeout(() => {
+        fetch(`/api/host/search-filler?q=${encodeURIComponent(val.trim())}`)
+            .then(res => res.json())
+            .then(results => {
+                if (loader) loader.style.display = "none";
+                renderFillerSearchResults(results || []);
+            })
+            .catch(err => {
+                if (loader) loader.style.display = "none";
+                console.error("[Filler Search] Error:", err);
+            });
+    }, 400);
+}
+
+function clearFillerSearch() {
+    const input = document.getElementById("fillerSearchInput");
+    if (input) input.value = "";
+    const clearBtn = document.getElementById("fillerSearchClearBtn");
+    if (clearBtn) clearBtn.style.display = "none";
+    const resultsEl = document.getElementById("fillerSearchResults");
+    if (resultsEl) resultsEl.innerHTML = "";
+}
+
+function renderFillerSearchResults(items) {
+    const container = document.getElementById("fillerSearchResults");
+    if (!container) return;
+
+    if (!items || items.length === 0) {
+        container.innerHTML = `
+            <div style="text-align: center; padding: 24px 16px; color: var(--text-muted); font-size: 0.9rem;">
+                No music videos found. Try searching by artist or exact song name!
+            </div>
+        `;
+        return;
+    }
+
+    let html = "";
+    items.forEach(item => {
+        const durMin = Math.floor(item.duration / 60);
+        const durSec = (item.duration % 60).toString().padStart(2, "0");
+        const durStr = item.duration ? `${durMin}:${durSec}` : "";
+        const isStaged = currentStagedFillerIds.has(item.video_id);
+
+        const safeTitle = escapeHtml(item.title);
+        const safeArtist = escapeHtml(item.artist);
+
+        html += `
+            <div class="tiki-card" style="display: flex; gap: 12px; align-items: center; padding: 10px 12px;">
+                <img src="${item.thumbnail || '/static/images/tiki_default.png'}" 
+                     alt="thumb" 
+                     style="width: 80px; height: 50px; object-fit: cover; border-radius: 8px; flex-shrink: 0; background: #000;"
+                     onerror="this.style.display='none'">
+                <div style="flex: 1; min-width: 0;">
+                    <div style="font-weight: 700; font-size: 0.92rem; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                        ${safeTitle}
+                    </div>
+                    <div style="font-size: 0.8rem; color: var(--neon-cyan); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                        ${safeArtist}
+                    </div>
+                    <div style="font-size: 0.72rem; color: var(--text-muted); margin-top: 2px;">
+                        ${durStr ? `⏱️ ${durStr}` : ""} ${item.channel ? `• ${escapeHtml(item.channel)}` : ""}
+                    </div>
+                </div>
+                <button type="button" 
+                        id="stageBtn_${item.video_id}"
+                        onclick='stageFillerVideo(${JSON.stringify(item)})'
+                        class="${isStaged ? 'btn-ghost' : 'btn-neon-pink'}" 
+                        style="padding: 8px 12px; font-size: 0.8rem; flex-shrink: 0;">
+                    ${isStaged ? "✓ Staged" : "+ Stage"}
+                </button>
+            </div>
+        `;
+    });
+
+    container.innerHTML = html;
+}
+
+function stageFillerVideo(video) {
+    if (!video || !video.video_id) return;
+    const btn = document.getElementById(`stageBtn_${video.video_id}`);
+    if (btn) {
+        btn.disabled = true;
+        btn.innerText = "Staging...";
+    }
+
+    fetch("/api/host/filler-tracks/stage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            video_id: video.video_id,
+            title: video.title,
+            artist: video.artist,
+            original_title: video.original_title || video.title,
+            duration: video.duration || 0
+        })
+    })
+    .then(res => {
+        if (!res.ok) throw new Error("Failed to stage video");
+        return res.json();
+    })
+    .then(data => {
+        currentStagedFillerIds.add(video.video_id);
+        if (btn) {
+            btn.className = "btn-ghost";
+            btn.innerText = "✓ Staged";
+            btn.disabled = false;
+        }
+        showToast("🎬 Added to BGM Crate!");
+        loadFillerTracks();
+    })
+    .catch(err => {
+        alert("Error staging video: " + err.message);
+        if (btn) btn.disabled = false;
+    });
+}
+
+function loadFillerTracks() {
+    // 1. Load Settings
+    fetch("/api/host/filler-settings")
+        .then(res => res.ok ? res.json() : null)
+        .then(settings => {
+            if (settings) loadFillerSettings(settings);
+        })
+        .catch(() => {});
+
+    // 2. Load Tracks
+    fetch("/api/host/filler-tracks")
+        .then(res => res.ok ? res.json() : [])
+        .then(tracks => {
+            renderFillerCrateView(tracks || []);
+        })
+        .catch(err => {
+            console.error("[Filler] Failed to load tracks:", err);
+        });
+}
+
+function loadFillerSettings(settings) {
+    if (!settings) return;
+    const toggle = document.getElementById("bgmAutopilotToggle");
+    if (toggle) toggle.checked = !!settings.bgm_video_enabled;
+
+    const policy = settings.bgm_transition_policy || "fade";
+    const fadeBtn = document.getElementById("policyFadeBtn");
+    const finishBtn = document.getElementById("policyFinishBtn");
+    if (fadeBtn && finishBtn) {
+        if (policy === "finish") {
+            finishBtn.classList.add("active");
+            fadeBtn.classList.remove("active");
+        } else {
+            fadeBtn.classList.add("active");
+            finishBtn.classList.remove("active");
+        }
+    }
+}
+
+function renderFillerCrateView(tracks) {
+    currentStagedFillerIds.clear();
+    tracks.forEach(t => currentStagedFillerIds.add(t.video_id));
+
+    const staged = tracks.filter(t => !t.is_downloaded || t.download_status !== "ready");
+    const ready = tracks.filter(t => t.is_downloaded || t.download_status === "ready");
+
+    const batchBanner = document.getElementById("fillerBatchBanner");
+    const stagedSection = document.getElementById("stagedSection");
+    const stagedList = document.getElementById("stagedList");
+    const stagedCountText = document.getElementById("stagedCountText");
+    const batchBtn = document.getElementById("batchDownloadBtn");
+
+    const pendingDownloadCount = staged.filter(t => t.download_status !== "downloading" && t.download_status !== "fetching_metadata" && t.download_status !== "normalizing").length;
+
+    if (staged.length > 0) {
+        if (batchBanner) {
+            batchBanner.style.display = "flex";
+            if (stagedCountText) stagedCountText.innerText = `${staged.length} video(s) staged in crate`;
+            if (batchBtn) {
+                batchBtn.disabled = pendingDownloadCount === 0;
+                batchBtn.innerText = pendingDownloadCount > 0 ? `📥 Download Batch (${pendingDownloadCount})` : "⏳ Downloading...";
+            }
+        }
+        if (stagedSection) stagedSection.style.display = "block";
+        if (stagedList) {
+            let stagedHtml = "";
+            staged.forEach(t => {
+                let badgeStyle = "background: rgba(255,183,3,0.18); color: var(--neon-gold); border: 1px solid var(--neon-gold);";
+                let badgeText = "⏳ Staged";
+
+                if (t.download_status === "fetching_metadata") {
+                    badgeStyle = "background: rgba(0,240,255,0.18); color: var(--neon-cyan); border: 1px solid var(--neon-cyan);";
+                    badgeText = "🔍 Metadata";
+                } else if (t.download_status === "downloading") {
+                    badgeStyle = "background: rgba(0,240,255,0.25); color: var(--neon-cyan); border: 1px solid var(--neon-cyan);";
+                    badgeText = "📥 Downloading";
+                } else if (t.download_status === "normalizing") {
+                    badgeStyle = "background: rgba(255,42,133,0.2); color: var(--neon-pink); border: 1px solid var(--neon-pink);";
+                    badgeText = "🎚️ Normalizing LUFS";
+                } else if (t.download_status === "failed") {
+                    badgeStyle = "background: rgba(255,85,85,0.2); color: #ff5555; border: 1px solid #ff5555;";
+                    badgeText = "⚠️ Failed";
+                }
+
+                stagedHtml += `
+                    <div class="tiki-card" style="display: flex; justify-content: space-between; align-items: center; padding: 10px 12px;">
+                        <div style="flex: 1; min-width: 0; padding-right: 8px;">
+                            <div style="font-weight: 700; font-size: 0.88rem; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                                ${escapeHtml(t.title)}
+                            </div>
+                            <div style="font-size: 0.78rem; color: var(--neon-cyan); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                                ${escapeHtml(t.artist)}
+                            </div>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 8px; flex-shrink: 0;">
+                            <span style="font-size: 0.72rem; font-weight: 700; padding: 3px 8px; border-radius: 8px; ${badgeStyle}">
+                                ${badgeText}
+                            </span>
+                            <button type="button" onclick="deleteFillerTrack(${t.id})" class="btn-ghost" style="padding: 2px 8px; font-size: 0.75rem; color: #ff5555;">
+                                ✕
+                            </button>
+                        </div>
+                    </div>
+                `;
+            });
+            stagedList.innerHTML = stagedHtml;
+        }
+    } else {
+        if (batchBanner) batchBanner.style.display = "none";
+        if (stagedSection) stagedSection.style.display = "none";
+    }
+
+    // Ready Crate Section
+    const readyCountEl = document.getElementById("readyCrateCount");
+    const readyListEl = document.getElementById("readyCrateList");
+    const emptyNotice = document.getElementById("emptyCrateNotice");
+
+    if (readyCountEl) readyCountEl.innerText = `${ready.length} ready`;
+    if (emptyNotice) emptyNotice.style.display = ready.length === 0 ? "block" : "none";
+
+    if (readyListEl) {
+        let readyHtml = "";
+        ready.forEach(t => {
+            const genreTag = t.genre ? `${t.genre}` : "Pop";
+            const yearTag = t.release_year ? ` • ${t.release_year}` : "";
+            const playsTag = t.play_count > 0 ? `Played ${t.play_count}x` : "Unplayed";
+
+            readyHtml += `
+                <div class="tiki-card" style="display: flex; justify-content: space-between; align-items: center; padding: 12px 14px;">
+                    <div style="flex: 1; min-width: 0; padding-right: 10px;">
+                        <div style="font-weight: 700; font-size: 0.92rem; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                            ${escapeHtml(t.title)}
+                        </div>
+                        <div style="font-size: 0.8rem; color: var(--neon-cyan); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                            ${escapeHtml(t.artist)}
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 6px; margin-top: 4px;">
+                            <span style="font-size: 0.7rem; font-weight: 700; padding: 1px 7px; border-radius: 6px; background: rgba(0,255,100,0.15); color: var(--neon-lime); border: 1px solid var(--neon-lime);">
+                                🎸 ${escapeHtml(genreTag)}${yearTag}
+                            </span>
+                            <span style="font-size: 0.7rem; color: var(--text-muted);">
+                                ${playsTag}
+                            </span>
+                        </div>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 6px; flex-shrink: 0;">
+                        <button type="button" onclick="forcePlayFillerTrack(${t.id})" class="btn-ghost" style="padding: 6px 10px; font-size: 0.78rem; border-color: var(--neon-gold); color: var(--neon-gold);" title="Play this video on stage right now">
+                            ▶ Play Now
+                        </button>
+                        <button type="button" onclick="deleteFillerTrack(${t.id})" class="btn-ghost" style="padding: 6px 8px; font-size: 0.78rem; color: #ff5555;" title="Remove track">
+                            🗑️
+                        </button>
+                    </div>
+                </div>
+            `;
+        });
+        readyListEl.innerHTML = readyHtml;
+    }
+}
+
+function downloadFillerBatch() {
+    const btn = document.getElementById("batchDownloadBtn");
+    if (btn) {
+        btn.disabled = true;
+        btn.innerText = "⏳ Enqueueing...";
+    }
+
+    fetch("/api/host/filler-tracks/download-batch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" }
+    })
+    .then(res => res.json())
+    .then(data => {
+        showToast(`📥 Started background download for ${data.enqueued_count} tracks!`);
+        loadFillerTracks();
+    })
+    .catch(err => {
+        alert("Error starting batch download: " + err.message);
+        if (btn) btn.disabled = false;
+    });
+}
+
+function deleteFillerTrack(id) {
+    if (!confirm("Are you sure you want to remove this track from your BGM crate?")) return;
+
+    fetch(`/api/host/filler-tracks/${id}`, {
+        method: "DELETE"
+    })
+    .then(res => res.json())
+    .then(() => {
+        showToast("Track removed from crate");
+        loadFillerTracks();
+    })
+    .catch(err => alert("Error deleting track: " + err.message));
+}
+
+function forcePlayFillerTrack(id) {
+    fetch(`/api/host/filler-tracks/${id}/play`, {
+        method: "POST"
+    })
+    .then(res => {
+        if (!res.ok) throw new Error("Could not play track");
+        return res.json();
+    })
+    .then(data => {
+        showToast(`▶️ Now playing on stage: ${data.playing.title}!`);
+    })
+    .catch(err => alert("Error: " + err.message));
+}
+
+function toggleBgmVideoAutopilot(checked) {
+    fetch("/api/host/filler-settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bgm_video_enabled: checked })
+    })
+    .then(res => res.json())
+    .then(() => {
+        showToast(checked ? "▶️ BGM Autopilot ON: Plays when queue empty" : "⏸️ BGM Autopilot OFF");
+    });
+}
+
+function setBgmTransitionPolicy(policy) {
+    const fadeBtn = document.getElementById("policyFadeBtn");
+    const finishBtn = document.getElementById("policyFinishBtn");
+    if (fadeBtn && finishBtn) {
+        if (policy === "finish") {
+            finishBtn.classList.add("active");
+            fadeBtn.classList.remove("active");
+        } else {
+            fadeBtn.classList.add("active");
+            finishBtn.classList.remove("active");
+        }
+    }
+
+    fetch("/api/host/filler-settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bgm_transition_policy: policy })
+    })
+    .then(res => res.json())
+    .then(() => {
+        showToast(policy === "finish" ? "⏳ Policy: Let current video finish" : "⚡ Policy: 3s soft fade when singer queues");
     });
 }
 

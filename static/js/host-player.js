@@ -182,6 +182,21 @@ function handleSocketMessage(data) {
         case "start_intermission":
             triggerIntermission(data.next_track, data.duration || 20);
             break;
+        case "start_filler_buffer":
+            triggerFillerBuffer(data.duration || 15);
+            break;
+        case "play_filler_track":
+            startFillerPlayback(data.track);
+            break;
+        case "stop_filler":
+            stopFillerPlayback();
+            break;
+        case "filler_transition_fade":
+            handleFillerTransitionFade(data);
+            break;
+        case "filler_transition_finish":
+            handleFillerTransitionFinish(data);
+            break;
         case "soundboard_play":
             playSoundEffect(data.sound);
             break;
@@ -222,7 +237,13 @@ function initYouTubeAPI() {
 
 function onYouTubeStateChange(event) {
     if (event.data === YT.PlayerState.ENDED) {
-        onSongFinished();
+        if (isFillerPlaying) {
+            if (!isMutedViewer) {
+                fetch("/api/host/filler-tracks/finished", { method: "POST" }).catch(() => {});
+            }
+        } else {
+            onSongFinished();
+        }
     }
 }
 
@@ -230,6 +251,7 @@ function startTrackPlayback(track) {
     if (!track) return;
     currentTrack = track;
     stopIntermission();
+    stopFillerPlayback();
     fadeOutBGM();
 
     document.getElementById("nowPlayingBar").style.display = "flex";
@@ -635,14 +657,23 @@ function fetchCurrentState() {
         .then(res => res.json())
         .then(data => {
             if (data.playing) {
+                stopFillerPlayback();
                 startTrackPlayback(data.playing);
+            } else if (data.filler && data.filler.active) {
+                if (data.filler.state === "buffer_15s") {
+                    triggerFillerBuffer(data.filler.buffer_remaining || 15);
+                } else if (data.filler.current_track) {
+                    startFillerPlayback(data.filler.current_track);
+                }
             } else if (data.next) {
+                stopFillerPlayback();
                 if (data.intermission_seconds && data.intermission_seconds > 0) {
                     triggerIntermission(data.next, data.intermission_seconds);
                 } else {
                     stopCurrentTrack(data.next);
                 }
             } else {
+                stopFillerPlayback();
                 triggerIntermission(null, 0);
             }
             if (data.queue) updateNextTicker(data.queue);
@@ -793,5 +824,177 @@ function showTestDisplayFlash(badge) {
         overlay.style.opacity = "0";
         setTimeout(() => { overlay.style.display = "none"; }, 400);
     }, 4000);
+}
+
+// =============================================================================
+// BGM FILLER & MUSIC VIDEOS ENGINE
+// =============================================================================
+
+let currentFillerTrack = null;
+let fillerBufferTimer = null;
+let isFillerPlaying = false;
+
+function triggerFillerBuffer(durationSeconds) {
+    stopCurrentTrack(null);
+    stopFillerPlayback();
+    isFillerPlaying = false;
+
+    const overlay = document.getElementById("fillerBufferOverlay");
+    if (!overlay) return;
+    overlay.style.display = "flex";
+
+    const intermission = document.getElementById("intermissionOverlay");
+    if (intermission) intermission.style.display = "none";
+
+    let remaining = durationSeconds || 15;
+    const numEl = document.getElementById("fillerCountdownNumber");
+    if (numEl) numEl.innerText = remaining;
+
+    if (fillerBufferTimer) clearInterval(fillerBufferTimer);
+    fillerBufferTimer = setInterval(() => {
+        remaining--;
+        if (numEl) numEl.innerText = Math.max(0, remaining);
+        if (remaining <= 0) {
+            clearInterval(fillerBufferTimer);
+            fillerBufferTimer = null;
+        }
+    }, 1000);
+
+    fadeInBGM();
+}
+
+function startFillerPlayback(track) {
+    if (!track) return;
+    currentFillerTrack = track;
+    isFillerPlaying = true;
+
+    if (fillerBufferTimer) {
+        clearInterval(fillerBufferTimer);
+        fillerBufferTimer = null;
+    }
+    const bufferOverlay = document.getElementById("fillerBufferOverlay");
+    if (bufferOverlay) bufferOverlay.style.display = "none";
+
+    const intermission = document.getElementById("intermissionOverlay");
+    if (intermission) intermission.style.display = "none";
+
+    const nowBar = document.getElementById("nowPlayingBar");
+    if (nowBar) nowBar.style.display = "none";
+
+    fadeOutBGM();
+
+    const qrCard = document.getElementById("fillerQRCard");
+    if (qrCard) qrCard.style.display = "flex";
+
+    const tickerBar = document.getElementById("fillerTickerBar");
+    if (tickerBar) tickerBar.style.display = "flex";
+
+    const tickerText = document.getElementById("fillerTickerText");
+    if (tickerText) {
+        tickerText.innerText = `🌴 DJ LOUNGE MUSIC: ${track.artist} - ${track.title} • 🌺 OPEN MIC: Scan the QR code to queue your favorite song!`;
+    }
+
+    const fillerVideo = document.getElementById("fillerVideo");
+    const localVideo = document.getElementById("localVideo");
+    const ytContainer = document.getElementById("youtubeContainer");
+
+    if (track.is_downloaded && track.local_path) {
+        if (localVideo) {
+            localVideo.style.display = "none";
+            localVideo.pause();
+        }
+        if (ytContainer) ytContainer.style.display = "none";
+        if (ytPlayer && ytPlayer.stopVideo) ytPlayer.stopVideo();
+
+        if (fillerVideo) {
+            fillerVideo.style.display = "block";
+            fillerVideo.src = `/stream/filler/${track.id}`;
+            fillerVideo.volume = 1.0;
+            if (isMutedViewer) {
+                fillerVideo.muted = true;
+            } else {
+                fillerVideo.muted = false;
+                if (configuredAudioSink && typeof fillerVideo.setSinkId === "function") {
+                    fillerVideo.setSinkId(configuredAudioSink).catch(() => {});
+                }
+            }
+            fillerVideo.onended = () => {
+                if (!isMutedViewer) {
+                    fetch("/api/host/filler-tracks/finished", { method: "POST" }).catch(() => {});
+                }
+            };
+            fillerVideo.play().catch(e => {
+                console.log("[Filler] Playback blocked:", e);
+                const unmuteOverlay = document.getElementById("unmuteOverlay");
+                if (unmuteOverlay) unmuteOverlay.style.display = "flex";
+            });
+        }
+    } else {
+        if (localVideo) localVideo.style.display = "none";
+        if (fillerVideo) fillerVideo.style.display = "none";
+        if (ytContainer) ytContainer.style.display = "block";
+
+        if (ytPlayer && ytPlayer.loadVideoById) {
+            ytPlayer.loadVideoById({ videoId: track.video_id });
+            if (isMutedViewer && ytPlayer.mute) ytPlayer.mute();
+            ytPlayer.playVideo();
+        }
+    }
+}
+
+function handleFillerTransitionFade(data) {
+    const tickerText = document.getElementById("fillerTickerText");
+    if (tickerText) {
+        tickerText.innerText = `🎤 STAGE RE-OPENING: ${data.next_singer} is up next with "${data.next_title}"! Fading in 3... 2... 1... ⚡`;
+    }
+
+    const fillerVideo = document.getElementById("fillerVideo");
+    if (fillerVideo && fillerVideo.style.display !== "none") {
+        let vol = fillerVideo.volume;
+        const fadeInterval = setInterval(() => {
+            vol -= 0.1;
+            if (vol <= 0.05) {
+                fillerVideo.volume = 0;
+                fillerVideo.pause();
+                clearInterval(fadeInterval);
+            } else {
+                fillerVideo.volume = Math.max(0, vol);
+            }
+        }, 300);
+    }
+}
+
+function handleFillerTransitionFinish(data) {
+    const tickerText = document.getElementById("fillerTickerText");
+    if (tickerText) {
+        tickerText.innerText = `🎤 UP NEXT: ${data.next_singer} is up next with "${data.next_title}" by ${data.next_artist} right after this video! Get ready! 🎶`;
+    }
+}
+
+function stopFillerPlayback() {
+    isFillerPlaying = false;
+    currentFillerTrack = null;
+
+    if (fillerBufferTimer) {
+        clearInterval(fillerBufferTimer);
+        fillerBufferTimer = null;
+    }
+
+    const bufferOverlay = document.getElementById("fillerBufferOverlay");
+    if (bufferOverlay) bufferOverlay.style.display = "none";
+
+    const qrCard = document.getElementById("fillerQRCard");
+    if (qrCard) qrCard.style.display = "none";
+
+    const tickerBar = document.getElementById("fillerTickerBar");
+    if (tickerBar) tickerBar.style.display = "none";
+
+    const fillerVideo = document.getElementById("fillerVideo");
+    if (fillerVideo) {
+        fillerVideo.pause();
+        fillerVideo.style.display = "none";
+        fillerVideo.removeAttribute("src");
+        fillerVideo.volume = 1.0;
+    }
 }
 

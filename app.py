@@ -35,12 +35,18 @@ from database import (
     get_unique_downloaded_artists, get_cleanup_candidates,
     prune_local_track, check_song_queue_duplicate, add_duet_partner,
     remove_duet_partner, clear_queue_on_startup, get_singer_songbook,
-    get_pending_queue_count_for_singer
+    get_pending_queue_count_for_singer,
+    add_filler_track, get_filler_tracks, get_filler_track_by_id,
+    get_filler_track_by_video_id, update_filler_track_status,
+    update_filler_track_metadata, delete_filler_track,
+    record_filler_play, get_next_vibe_filler_track
 )
-from search import tiered_search
+from search import tiered_search, query_youtube_music_videos
 from downloader import (
-    downloader_worker, enqueue_download, register_download_callback
+    downloader_worker, enqueue_download, register_download_callback,
+    filler_downloader_worker, enqueue_filler_download, register_filler_callback
 )
+from metadata import fetch_track_metadata
 from playlist_sync import (
     is_authenticated as is_yt_authenticated,
     get_auth_url, exchange_code, sync_played_song_to_youtube
@@ -149,7 +155,15 @@ class ConnectionManager:
 manager = ConnectionManager()
 current_intermission_end: Optional[float] = None
 
-# Background download completion notification
+# BGM Filler Video State
+filler_active: bool = False
+filler_current_track: Optional[Dict[str, Any]] = None
+filler_buffer_end: Optional[float] = None
+filler_transition_state: str = "idle"  # 'idle', 'buffer_15s', 'playing', 'fading_out', 'finishing'
+filler_buffer_task: Optional[asyncio.Task] = None
+last_karaoke_track: Optional[Dict[str, Any]] = None
+
+# Background download completion notifications
 async def on_download_finished(track_id: int, local_path: Optional[str]):
     queue = get_queue()
     await manager.broadcast({
@@ -161,11 +175,108 @@ async def on_download_finished(track_id: int, local_path: Optional[str]):
 
 register_download_callback(on_download_finished)
 
+async def on_filler_download_finished(filler_id: int, local_path: Optional[str]):
+    track = get_filler_track_by_id(filler_id)
+    await manager.broadcast({
+        "type": "filler_track_updated",
+        "track": track,
+        "filler_id": filler_id,
+        "ready": bool(local_path)
+    })
+
+register_filler_callback(on_filler_download_finished)
+
+async def trigger_filler_sequence(last_artist: str = "", last_genre: str = ""):
+    global filler_active, filler_transition_state, filler_buffer_end, filler_buffer_task, filler_current_track
+    if get_setting("bgm_video_enabled", "true") != "true":
+        return
+
+    next_track = get_next_vibe_filler_track(last_artist, last_genre)
+    if not next_track:
+        return
+
+    buffer_seconds = int(get_setting("bgm_buffer_seconds", "15"))
+    filler_active = True
+    filler_transition_state = "buffer_15s"
+    filler_buffer_end = time.time() + buffer_seconds
+    filler_current_track = None
+
+    await manager.broadcast({
+        "type": "start_filler_buffer",
+        "duration": buffer_seconds,
+        "message": "OPEN MIC! Scan to take the stage!"
+    })
+
+    async def _wait_and_play():
+        global filler_active, filler_transition_state, filler_buffer_end, filler_current_track
+        try:
+            await asyncio.sleep(buffer_seconds)
+            if filler_active and filler_transition_state == "buffer_15s":
+                queue = get_queue()
+                if not queue:
+                    pick = get_next_vibe_filler_track(last_artist, last_genre)
+                    if pick:
+                        filler_current_track = pick
+                        filler_transition_state = "playing"
+                        filler_buffer_end = None
+                        record_filler_play(pick["id"])
+                        await manager.broadcast({
+                            "type": "play_filler_track",
+                            "track": pick
+                        })
+                else:
+                    filler_active = False
+                    filler_transition_state = "idle"
+                    filler_buffer_end = None
+        except asyncio.CancelledError:
+            pass
+
+    if filler_buffer_task and not filler_buffer_task.done():
+        filler_buffer_task.cancel()
+    filler_buffer_task = asyncio.create_task(_wait_and_play())
+
+async def on_filler_track_ended():
+    global filler_active, filler_transition_state, filler_current_track, current_intermission_end
+    queue = get_queue()
+    pending = [q for q in queue if q["status"] == "pending"]
+
+    if pending:
+        filler_active = False
+        filler_transition_state = "idle"
+        filler_current_track = None
+        
+        dur = int(get_setting("intermission_seconds", str(DEFAULT_INTERMISSION_SECONDS)))
+        current_intermission_end = time.time() + dur
+        await manager.broadcast({"type": "stop_filler"})
+        await manager.broadcast({
+            "type": "start_intermission",
+            "next_track": pending[0],
+            "duration": dur
+        })
+    else:
+        last_artist = filler_current_track.get("artist", "") if filler_current_track else ""
+        last_genre = filler_current_track.get("genre", "") if filler_current_track else ""
+        next_track = get_next_vibe_filler_track(last_artist, last_genre)
+        if next_track:
+            filler_current_track = next_track
+            filler_transition_state = "playing"
+            record_filler_play(next_track["id"])
+            await manager.broadcast({
+                "type": "play_filler_track",
+                "track": next_track
+            })
+        else:
+            filler_active = False
+            filler_transition_state = "idle"
+            filler_current_track = None
+            await manager.broadcast({"type": "stop_filler"})
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
     clear_queue_on_startup()
     worker_task = asyncio.create_task(downloader_worker())
+    filler_worker_task = asyncio.create_task(filler_downloader_worker())
     print("=" * 60)
     print("🌴 FLORIDA TIKI KARAOKE LOUNGE 🌴")
     print(f"👉 TV Main Stage Display: {get_base_url()}/stage")
@@ -175,6 +286,7 @@ async def lifespan(app: FastAPI):
     print("=" * 60)
     yield
     worker_task.cancel()
+    filler_worker_task.cancel()
 
 app = FastAPI(title="Tiki Karaoke", lifespan=lifespan)
 
@@ -454,6 +566,18 @@ async def stream_local_video(track_id: int):
     file_path = track["local_path"]
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="File missing on disk")
+
+    return FileResponse(file_path, media_type="video/mp4")
+
+@app.get("/stream/filler/{filler_id}")
+async def stream_filler_video(filler_id: int):
+    track = get_filler_track_by_id(filler_id)
+    if not track or not track["is_downloaded"] or not track["local_path"]:
+        raise HTTPException(status_code=404, detail="Filler video not available locally")
+    
+    file_path = track["local_path"]
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="Filler video file missing on disk")
 
     return FileResponse(file_path, media_type="video/mp4")
 
@@ -743,7 +867,56 @@ async def api_enqueue_song(req: QueueSongRequest, request: Request):
 
     # If nothing is currently playing and a stage display is connected, trigger intermission countdown!
     if not current_playing:
-        global current_intermission_end
+        global current_intermission_end, filler_active, filler_transition_state, filler_buffer_task
+        if filler_active:
+            if filler_transition_state == "buffer_15s":
+                if filler_buffer_task and not filler_buffer_task.done():
+                    filler_buffer_task.cancel()
+                filler_active = False
+                filler_transition_state = "idle"
+                # Proceed directly to stage intermission
+            elif filler_transition_state == "playing":
+                policy = get_setting("bgm_transition_policy", "fade")
+                next_song_item = queue[0] if queue else None
+                if policy == "fade":
+                    filler_transition_state = "fading_out"
+                    await manager.broadcast({
+                        "type": "filler_transition_fade",
+                        "fade_duration": 3,
+                        "next_singer": next_song_item["singer_name"] if next_song_item else "",
+                        "next_title": next_song_item["title"] if next_song_item else "",
+                        "next_artist": next_song_item["artist"] if next_song_item else ""
+                    })
+
+                    async def _delayed_fade_to_intermission(target_track):
+                        global filler_active, filler_transition_state, current_intermission_end
+                        try:
+                            await asyncio.sleep(3)
+                            filler_active = False
+                            filler_transition_state = "idle"
+                            dur = int(get_setting("intermission_seconds", str(DEFAULT_INTERMISSION_SECONDS)))
+                            current_intermission_end = time.time() + dur
+                            await manager.broadcast({"type": "stop_filler"})
+                            await manager.broadcast({
+                                "type": "start_intermission",
+                                "next_track": target_track,
+                                "duration": dur
+                            })
+                        except asyncio.CancelledError:
+                            pass
+
+                    asyncio.create_task(_delayed_fade_to_intermission(next_song_item))
+                    return {"status": "ok", "queue_id": queue_id}
+                else:  # 'finish' mode
+                    filler_transition_state = "finishing"
+                    await manager.broadcast({
+                        "type": "filler_transition_finish",
+                        "next_singer": next_song_item["singer_name"] if next_song_item else "",
+                        "next_title": next_song_item["title"] if next_song_item else "",
+                        "next_artist": next_song_item["artist"] if next_song_item else ""
+                    })
+                    return {"status": "ok", "queue_id": queue_id}
+
         stage_displays = manager.get_stage_displays()
         if stage_displays:
             dur = int(get_setting("intermission_seconds", str(DEFAULT_INTERMISSION_SECONDS)))
@@ -832,6 +1005,16 @@ async def api_complete_queue_item(queue_id: int, request: Request):
             "next_track": None,
             "duration": 0
         })
+        last_artist = item.get("artist", "") if item else ""
+        last_title = item.get("title", "") if item else ""
+        last_genre = ""
+        if last_artist and last_title:
+            try:
+                meta = fetch_track_metadata(last_artist, last_title)
+                last_genre = meta.get("genre", "")
+            except Exception:
+                pass
+        await trigger_filler_sequence(last_artist=last_artist, last_genre=last_genre)
 
     return {"status": "completed"}
 
@@ -855,7 +1038,15 @@ async def api_get_state():
         "queue": queue,
         "intermission_seconds": intermission_remaining,
         "has_stage_display": len(stage_displays) > 0,
-        "waiting_for_display": (not current and next_up is not None and len(stage_displays) == 0)
+        "waiting_for_display": (not current and next_up is not None and len(stage_displays) == 0),
+        "filler": {
+            "active": filler_active,
+            "state": filler_transition_state,
+            "current_track": filler_current_track,
+            "buffer_remaining": max(0, int(filler_buffer_end - time.time())) if filler_buffer_end else 0,
+            "transition_policy": get_setting("bgm_transition_policy", "fade"),
+            "bgm_video_enabled": get_setting("bgm_video_enabled", "true") == "true"
+        }
     }
 
 # Host Controls & Settings
@@ -936,6 +1127,164 @@ async def host_stop_action(request: Request):
         "next_track": next_track
     })
     await manager.broadcast({"type": "queue_updated", "queue": queue})
+
+    if get_setting("bgm_video_enabled", "true") == "true":
+        await trigger_filler_sequence()
+
+    return {"status": "ok"}
+
+# ==============================================================================
+# BGM FILLER & MUSIC VIDEOS API
+# ==============================================================================
+
+@app.get("/api/host/search-filler")
+async def api_search_filler(request: Request, q: str = ""):
+    if not is_host_request(request):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
+    return query_youtube_music_videos(q)
+
+@app.get("/api/host/filler-tracks")
+async def api_get_filler_tracks(request: Request):
+    if not is_host_request(request):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
+    return get_filler_tracks()
+
+@app.post("/api/host/filler-tracks/stage")
+async def api_stage_filler_tracks(request: Request):
+    if not is_host_request(request):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
+    data = await request.json()
+    videos = data.get("videos", [])
+    if not videos and "video_id" in data:
+        videos = [data]
+
+    staged_ids = []
+    for v in videos:
+        vid = v.get("video_id")
+        if not vid:
+            continue
+        tid = add_filler_track(
+            video_id=vid,
+            title=v.get("title", ""),
+            artist=v.get("artist", ""),
+            original_title=v.get("original_title", v.get("title", "")),
+            duration=v.get("duration", 0),
+            genre=v.get("genre", ""),
+            release_year=v.get("release_year", 0)
+        )
+        staged_ids.append(tid)
+
+    await manager.broadcast({
+        "type": "filler_tracks_updated",
+        "tracks": get_filler_tracks()
+    })
+    return {"status": "ok", "staged_ids": staged_ids}
+
+@app.post("/api/host/filler-tracks/download-batch")
+async def api_download_filler_batch(request: Request):
+    if not is_host_request(request):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
+    data = {}
+    try:
+        data = await request.json()
+    except Exception:
+        pass
+
+    track_ids = data.get("ids", [])
+    all_tracks = get_filler_tracks()
+
+    if not track_ids:
+        to_download = [t for t in all_tracks if not t["is_downloaded"] and t["download_status"] != "downloading"]
+    else:
+        to_download = [t for t in all_tracks if t["id"] in track_ids and not t["is_downloaded"]]
+
+    for t in to_download:
+        update_filler_track_status(t["id"], "pending")
+        enqueue_filler_download(t["id"])
+
+    await manager.broadcast({
+        "type": "filler_tracks_updated",
+        "tracks": get_filler_tracks()
+    })
+    return {"status": "ok", "enqueued_count": len(to_download)}
+
+@app.delete("/api/host/filler-tracks/{filler_id}")
+async def api_delete_filler_track(filler_id: int, request: Request):
+    if not is_host_request(request):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
+    local_path = delete_filler_track(filler_id)
+    if local_path and os.path.exists(local_path):
+        try:
+            os.unlink(local_path)
+        except Exception as e:
+            print(f"[Filler Delete] Could not remove {local_path}: {e}")
+
+    await manager.broadcast({
+        "type": "filler_tracks_updated",
+        "tracks": get_filler_tracks()
+    })
+    return {"status": "ok", "deleted": True}
+
+@app.post("/api/host/filler-tracks/{filler_id}/play")
+async def api_force_play_filler(filler_id: int, request: Request):
+    if not is_host_request(request):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
+    track = get_filler_track_by_id(filler_id)
+    if not track:
+        raise HTTPException(status_code=404, detail="Filler track not found")
+
+    global filler_active, filler_transition_state, filler_current_track, filler_buffer_end
+    filler_active = True
+    filler_transition_state = "playing"
+    filler_current_track = track
+    filler_buffer_end = None
+    record_filler_play(filler_id)
+
+    await manager.broadcast({
+        "type": "play_filler_track",
+        "track": track
+    })
+    return {"status": "ok", "playing": track}
+
+@app.post("/api/host/filler-tracks/finished")
+async def api_filler_finished(request: Request):
+    await on_filler_track_ended()
+    return {"status": "ok"}
+
+@app.get("/api/host/filler-settings")
+async def api_get_filler_settings(request: Request):
+    if not is_host_request(request):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
+    return {
+        "bgm_transition_policy": get_setting("bgm_transition_policy", "fade"),
+        "bgm_video_enabled": get_setting("bgm_video_enabled", "true") == "true",
+        "bgm_mode": get_setting("bgm_mode", "vibe"),
+        "bgm_buffer_seconds": int(get_setting("bgm_buffer_seconds", "15"))
+    }
+
+@app.post("/api/host/filler-settings")
+async def api_update_filler_settings(request: Request):
+    if not is_host_request(request):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
+    payload = await request.json()
+    if "bgm_transition_policy" in payload:
+        set_setting("bgm_transition_policy", str(payload["bgm_transition_policy"]))
+    if "bgm_video_enabled" in payload:
+        set_setting("bgm_video_enabled", "true" if payload["bgm_video_enabled"] else "false")
+    if "bgm_mode" in payload:
+        set_setting("bgm_mode", str(payload["bgm_mode"]))
+    if "bgm_buffer_seconds" in payload:
+        set_setting("bgm_buffer_seconds", str(payload["bgm_buffer_seconds"]))
+
+    await manager.broadcast({
+        "type": "filler_settings_updated",
+        "settings": {
+            "bgm_transition_policy": get_setting("bgm_transition_policy", "fade"),
+            "bgm_video_enabled": get_setting("bgm_video_enabled", "true") == "true",
+            "bgm_mode": get_setting("bgm_mode", "vibe"),
+            "bgm_buffer_seconds": int(get_setting("bgm_buffer_seconds", "15"))
+        }
+    })
     return {"status": "ok"}
 
 @app.post("/api/host/toggle-pause")

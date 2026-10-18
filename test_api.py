@@ -608,6 +608,109 @@ class TestAPIEndpoints(unittest.TestCase):
         r_host_search = self.client.get("/api/search?q=queen", headers={"X-Host-Token": HOST_TOKEN})
         self.assertEqual(r_host_search.status_code, 200)
 
+    def test_bgm_filler_and_vibe_engine(self):
+        """Test BGM filler track staging, settings, and vibe matching engine."""
+        from database import add_filler_track, get_next_vibe_filler_track, update_filler_track_status
+        from metadata import canonicalize_genre
+        from config import HOST_TOKEN
+
+        # 1. Test canonicalize_genre
+        self.assertEqual(canonicalize_genre("Classic Rock"), "Rock")
+        self.assertEqual(canonicalize_genre("Dance Pop"), "Dance")
+        self.assertEqual(canonicalize_genre("Country Road"), "Country")
+        self.assertEqual(canonicalize_genre("hip hop"), "Hip-Hop")
+
+        # 2. Test Staging Filler Track via API (Requires Host Auth)
+        r_unauth = self.client.post("/api/host/filler-tracks/stage", json={
+            "video_id": "vid_rock_1",
+            "title": "Bohemian Rhapsody",
+            "artist": "Queen",
+            "genre": "Rock",
+            "release_year": 1975
+        })
+        self.assertEqual(r_unauth.status_code, 403)
+
+        r_stage = self.client.post("/api/host/filler-tracks/stage", json={
+            "video_id": "vid_rock_1",
+            "title": "Bohemian Rhapsody",
+            "artist": "Queen",
+            "genre": "Rock",
+            "release_year": 1975
+        }, headers={"X-Host-Token": HOST_TOKEN})
+        self.assertEqual(r_stage.status_code, 200)
+
+        # Stage second track (same artist)
+        r_stage2 = self.client.post("/api/host/filler-tracks/stage", json={
+            "video_id": "vid_rock_2",
+            "title": "We Will Rock You",
+            "artist": "Queen",
+            "genre": "Rock",
+            "release_year": 1977
+        }, headers={"X-Host-Token": HOST_TOKEN})
+        self.assertEqual(r_stage2.status_code, 200)
+
+        # Stage third track (different artist, same genre)
+        r_stage3 = self.client.post("/api/host/filler-tracks/stage", json={
+            "video_id": "vid_rock_3",
+            "title": "Sweet Child O Mine",
+            "artist": "Guns N Roses",
+            "genre": "Rock",
+            "release_year": 1987
+        }, headers={"X-Host-Token": HOST_TOKEN})
+        self.assertEqual(r_stage3.status_code, 200)
+
+        # Stage fourth track (different genre)
+        r_stage4 = self.client.post("/api/host/filler-tracks/stage", json={
+            "video_id": "vid_pop_1",
+            "title": "Levitating",
+            "artist": "Dua Lipa",
+            "genre": "Pop",
+            "release_year": 2020
+        }, headers={"X-Host-Token": HOST_TOKEN})
+        self.assertEqual(r_stage4.status_code, 200)
+
+        # Verify tracks listed
+        r_list = self.client.get("/api/host/filler-tracks", headers={"X-Host-Token": HOST_TOKEN})
+        self.assertEqual(r_list.status_code, 200)
+        tracks = r_list.json()
+        self.assertGreaterEqual(len(tracks), 4)
+
+        # Mark them ready for vibe engine test
+        for t in tracks:
+            update_filler_track_status(t["id"], "ready", is_downloaded=1)
+
+        # 3. Test Vibe Matching Engine:
+        # If last played was Queen, vibe engine MUST avoid Queen and pick another Rock track (Guns N Roses)!
+        vibe_pick = get_next_vibe_filler_track(last_track_artist="Queen", last_track_genre="Rock")
+        self.assertIsNotNone(vibe_pick)
+        self.assertNotEqual(vibe_pick["artist"].lower(), "queen")
+        self.assertEqual(vibe_pick["artist"], "Guns N Roses")
+
+        # If last played was Pop, pick Pop track
+        vibe_pop = get_next_vibe_filler_track(last_track_artist="Taylor Swift", last_track_genre="Pop")
+        self.assertIsNotNone(vibe_pop)
+        self.assertEqual(vibe_pop["artist"], "Dua Lipa")
+
+        # 4. Test Filler Settings API
+        r_settings = self.client.get("/api/host/filler-settings", headers={"X-Host-Token": HOST_TOKEN})
+        self.assertEqual(r_settings.status_code, 200)
+        self.assertIn("bgm_transition_policy", r_settings.json())
+
+        # Update transition policy to 'finish'
+        r_update = self.client.post("/api/host/filler-settings", json={
+            "bgm_transition_policy": "finish"
+        }, headers={"X-Host-Token": HOST_TOKEN})
+        self.assertEqual(r_update.status_code, 200)
+
+        r_check = self.client.get("/api/host/filler-settings", headers={"X-Host-Token": HOST_TOKEN})
+        self.assertEqual(r_check.json()["bgm_transition_policy"], "finish")
+
+        # 5. Test State API includes filler info
+        r_state = self.client.get("/api/state")
+        self.assertEqual(r_state.status_code, 200)
+        self.assertIn("filler", r_state.json())
+        self.assertEqual(r_state.json()["filler"]["transition_policy"], "finish")
+
 if __name__ == "__main__":
     unittest.main()
 

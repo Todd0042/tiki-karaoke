@@ -263,3 +263,81 @@ def tiered_search(query: str, force_online: bool = False) -> Dict[str, Any]:
         "local_results": local_matches,
         "youtube_results": yt_results
     }
+
+def query_youtube_music_videos(query: str, max_results: int = 15) -> List[Dict[str, Any]]:
+    """
+    Searches YouTube specifically for official music videos and party tracks
+    to use as BGM filler during slow times.
+    """
+    query_str = query.strip()
+    if not query_str:
+        return []
+
+    ydl_opts = {
+        "quiet": True,
+        "skip_download": True,
+        "extract_flat": True,
+        "no_warnings": True,
+    }
+
+    # If query does not specify 'video' or 'official', append 'official music video'
+    lower_q = query_str.lower()
+    if not any(k in lower_q for k in ["video", "official", "audio", "mv"]):
+        search_q = f"ytsearch{max_results * 2}:{query_str} official music video"
+    else:
+        search_q = f"ytsearch{max_results * 2}:{query_str}"
+
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        try:
+            info = ydl.extract_info(search_q, download=False)
+            raw_entries = info.get("entries", [])
+        except Exception as e:
+            print(f"[Search Music Videos] YouTube query error: {e}")
+            raw_entries = []
+
+    junk_patterns = [
+        r"\breaction\b", r"\breacts\b", r"\bvocal\s+coach\b",
+        r"\bhow\s+to\s+play\b", r"\blesson\b", r"\btutorial\b",
+        r"\bguitar\s+tab\b", r"\bbass\s+tab\b", r"\b10\s*hours?\b",
+        r"\b1\s*hour\b", r"\bfull\s+album\b", r"\bdiscography\b",
+        r"\bteaser\b", r"\btrailer\b"
+    ]
+
+    valid_entries = []
+    seen_ids = set()
+
+    for e in raw_entries:
+        if not e or not e.get("id"):
+            continue
+        vid = e.get("id")
+        if vid in seen_ids:
+            continue
+        seen_ids.add(vid)
+
+        duration = e.get("duration") or 0
+        if duration > 600 or (duration > 0 and duration < 45):
+            continue
+
+        raw_title = e.get("title", "")
+        uploader = e.get("uploader", "") or e.get("channel", "")
+        t_lower = raw_title.lower()
+
+        if any(re.search(pat, t_lower) for pat in junk_patterns):
+            continue
+
+        artist, title = normalize_title_artist(raw_title, uploader)
+        valid_entries.append({
+            "video_id": vid,
+            "title": title if title else raw_title,
+            "artist": artist if artist else uploader,
+            "original_title": raw_title,
+            "channel": uploader,
+            "duration": duration,
+            "thumbnail": e.get("thumbnail") or f"https://img.youtube.com/vi/{vid}/hqdefault.jpg"
+        })
+
+        if len(valid_entries) >= max_results:
+            break
+
+    return valid_entries
+

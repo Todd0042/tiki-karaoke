@@ -6,14 +6,24 @@ from pathlib import Path
 from typing import Optional, Callable
 import yt_dlp
 
-from config import get_tracks_dir, get_playlists_dir, TRACKS_DIR, PLAYLISTS_DIR, TARGET_LUFS
-from database import get_track_by_id, update_track_download_status
+from config import get_tracks_dir, get_playlists_dir, get_filler_dir, TRACKS_DIR, PLAYLISTS_DIR, TARGET_LUFS
+from database import (
+    get_track_by_id, update_track_download_status,
+    get_filler_track_by_id, update_filler_track_status, update_filler_track_metadata
+)
+from metadata import fetch_track_metadata
 
 download_queue: asyncio.Queue = asyncio.Queue()
 download_callbacks = []
 
+filler_download_queue: asyncio.Queue = asyncio.Queue()
+filler_callbacks = []
+
 def register_download_callback(cb: Callable):
     download_callbacks.append(cb)
+
+def register_filler_callback(cb: Callable):
+    filler_callbacks.append(cb)
 
 def sanitize_filename(name: str) -> str:
     cleaned = re.sub(r'[\\/*?:"<>|]', "", name)
@@ -145,3 +155,107 @@ def enqueue_download(track_id: int, singer_name: str = "", title: str = "", arti
         "title": title,
         "artist": artist
     })
+
+def download_and_normalize_filler_track(filler_id: int) -> Optional[str]:
+    track = get_filler_track_by_id(filler_id)
+    if not track:
+        return None
+
+    video_id = track["video_id"]
+    if track["is_downloaded"] and track["local_path"] and Path(track["local_path"]).exists():
+        return track["local_path"]
+
+    # 1. Fetch metadata if genre or release_year missing
+    if not track.get("genre") or not track.get("release_year"):
+        update_filler_track_status(filler_id, "fetching_metadata")
+        try:
+            meta = fetch_track_metadata(track["artist"], track["title"])
+            if meta:
+                update_filler_track_metadata(
+                    filler_id,
+                    genre=meta.get("genre", "Pop"),
+                    release_year=meta.get("release_year", 0),
+                    artist=meta.get("artist") or track["artist"],
+                    title=meta.get("title") or track["title"]
+                )
+                track = get_filler_track_by_id(filler_id) or track
+        except Exception as e:
+            print(f"[Filler Downloader] Metadata fetch error: {e}")
+
+    # Check duration limit (10 minutes)
+    if track.get("duration") and track["duration"] > 600:
+        print(f"[Filler Downloader] Filler {video_id} duration {track['duration']}s exceeds 600s limit.")
+        update_filler_track_status(filler_id, "failed", error_message="Exceeds 10 minute limit")
+        return None
+
+    update_filler_track_status(filler_id, "downloading")
+
+    filler_dir = get_filler_dir()
+    filler_dir.mkdir(parents=True, exist_ok=True)
+
+    title_clean = sanitize_filename(track["title"])
+    artist_clean = sanitize_filename(track["artist"])
+    temp_path = filler_dir / f"temp_{video_id}.mp4"
+    final_path = filler_dir / f"{artist_clean} - {title_clean} [{video_id}].mp4"
+
+    ydl_opts = {
+        "format": "bestvideo[height<=1080][vcodec^=avc1]+bestaudio[ext=m4a]/bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+        "outtmpl": str(temp_path),
+        "quiet": True,
+        "no_warnings": True,
+        "merge_output_format": "mp4",
+        "match_filter": yt_dlp.utils.match_filter_func("duration <= 600")
+    }
+
+    url = f"https://www.youtube.com/watch?v={video_id}"
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([url])
+
+        if not temp_path.exists():
+            update_filler_track_status(filler_id, "failed", error_message="Download produced no file")
+            return None
+
+        update_filler_track_status(filler_id, "normalizing")
+        # Apply FFmpeg Loudness Normalization (-16 LUFS)
+        success = normalize_audio_loudness(temp_path, final_path)
+        if success and final_path.exists():
+            if temp_path.exists():
+                temp_path.unlink()
+            local_file = str(final_path)
+        else:
+            temp_path.rename(final_path)
+            local_file = str(final_path)
+
+        update_filler_track_status(filler_id, "ready", local_path=local_file, is_downloaded=1)
+        return local_file
+
+    except Exception as e:
+        print(f"[Filler Downloader] Error downloading video {video_id}: {e}")
+        update_filler_track_status(filler_id, "failed", error_message=str(e))
+        if temp_path.exists():
+            try:
+                temp_path.unlink()
+            except Exception:
+                pass
+        return None
+
+def enqueue_filler_download(filler_id: int):
+    filler_download_queue.put_nowait(filler_id)
+
+async def filler_downloader_worker():
+    while True:
+        filler_id = await filler_download_queue.get()
+        try:
+            loop = asyncio.get_event_loop()
+            local_path = await loop.run_in_executor(None, download_and_normalize_filler_track, filler_id)
+            for cb in filler_callbacks:
+                try:
+                    await cb(filler_id, local_path)
+                except Exception as e:
+                    print(f"[Filler Downloader] Callback error: {e}")
+        except Exception as e:
+            print(f"[Filler Downloader] Worker error: {e}")
+        finally:
+            filler_download_queue.task_done()
+

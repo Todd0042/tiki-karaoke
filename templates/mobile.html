@@ -414,34 +414,136 @@
                 </div>
             </div>
         </section>
+
+        <!-- TAB 5: BGM Video Crate (Host Only) -->
+        <section id="fillerCrateTab" class="tab-view" style="display: none;">
+            <div class="tiki-card-pink" style="padding: 16px; margin-bottom: 16px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                    <div>
+                        <h2 class="font-tiki neon-gold" style="font-size: 1.3rem; margin: 0 0 4px 0;">🎬 BGM Video Crate & Autopilot</h2>
+                        <div style="font-size: 0.8rem; color: var(--text-muted);">Plays official music videos when nobody is in the karaoke queue</div>
+                    </div>
+                    <button onclick="loadFillerTracks()" class="btn-ghost" style="padding: 4px 10px; font-size: 0.78rem;">↻ Refresh</button>
+                </div>
+
+                <!-- Autopilot & Transition Settings Card -->
+                <div class="tiki-card" style="padding: 12px 14px; margin-bottom: 14px; border-left: 4px solid var(--neon-cyan);">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                        <span style="font-size: 0.88rem; font-weight: 700; color: #fff;">▶️ Auto-Play When Queue Empty:</span>
+                        <input type="checkbox" id="bgmAutopilotToggle" onchange="toggleBgmVideoAutopilot(this.checked)" style="transform: scale(1.4);">
+                    </div>
+
+                    <!-- Transition Policy Pills -->
+                    <div style="margin-top: 10px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 10px;">
+                        <div style="font-size: 0.8rem; font-weight: 700; color: var(--neon-gold); margin-bottom: 6px;">WHEN SINGER QUEUES DURING BGM:</div>
+                        <div style="display: flex; gap: 8px;">
+                            <button type="button" id="policyFadeBtn" onclick="setBgmTransitionPolicy('fade')" class="lib-sort-btn active" style="flex: 1; font-size: 0.78rem;">
+                                ⚡ 3s Soft Fade
+                            </button>
+                            <button type="button" id="policyFinishBtn" onclick="setBgmTransitionPolicy('finish')" class="lib-sort-btn" style="flex: 1; font-size: 0.78rem;">
+                                ⏳ Let Video Finish
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Batch Actions Banner -->
+                <div id="fillerBatchBanner" style="display: none; margin-bottom: 14px; background: rgba(0, 240, 255, 0.12); border: 1px solid var(--neon-cyan); padding: 12px 14px; border-radius: 12px; justify-content: space-between; align-items: center;">
+                    <div>
+                        <div id="stagedCountText" style="font-weight: 700; font-size: 0.88rem; color: #fff;">0 videos staged</div>
+                        <div style="font-size: 0.75rem; color: var(--text-muted);">Fetch genre & year, download, and normalize audio</div>
+                    </div>
+                    <button id="batchDownloadBtn" type="button" onclick="downloadFillerBatch()" class="btn-neon-cyan" style="padding: 8px 14px; font-size: 0.82rem;">
+                        📥 Download Batch
+                    </button>
+                </div>
+
+                <!-- Staged Videos Section -->
+                <div id="stagedSection" style="display: none; margin-bottom: 16px;">
+                    <div style="font-size: 0.82rem; font-weight: 700; color: var(--neon-pink); margin-bottom: 8px; letter-spacing: 0.5px;">STAGED / DOWNLOADING (IN PROGRESS)</div>
+                    <div id="stagedList" style="display: flex; flex-direction: column; gap: 8px;"></div>
+                </div>
+
+                <!-- Ready Crate Section -->
+                <div>
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                        <span style="font-size: 0.82rem; font-weight: 700; color: var(--neon-lime); letter-spacing: 0.5px;">READY IN BGM CRATE</span>
+                        <span id="readyCrateCount" style="font-size: 0.78rem; color: var(--text-muted);">0 tracks</span>
+                    </div>
+                    <div id="readyCrateList" style="display: flex; flex-direction: column; gap: 8px;"></div>
+                    <div id="emptyCrateNotice" style="text-align: center; padding: 24px 16px; color: var(--text-muted); font-size: 0.9rem;">
+                        No filler music videos in crate yet.<br>
+                        Tap <strong>"Find Videos"</strong> below to search and stage tracks! 🌺
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- TAB 6: Find Music Videos (Host Only) -->
+        <section id="fillerSearchTab" class="tab-view" style="display: none;">
+            <div style="position: relative; margin-bottom: 16px;">
+                <input type="text" id="fillerSearchInput" placeholder="🔍 Search YouTube for Music Videos / BGM (e.g. Queen, Bruno Mars)..." 
+                       style="width: 100%; padding: 14px 44px 14px 18px; border-radius: 14px; background: rgba(16, 28, 45, 0.9); border: 1px solid var(--border-neon); color: #fff; font-size: 1rem; outline: none; box-shadow: 0 0 15px rgba(0, 240, 255, 0.15);"
+                       oninput="onFillerSearchInput(this.value)">
+                <button id="fillerSearchClearBtn" type="button" class="search-clear-btn" aria-label="Clear search" onclick="clearFillerSearch()">
+                    ✕
+                </button>
+            </div>
+
+            <div id="fillerSearchLoading" style="display: none; text-align: center; padding: 20px;">
+                <div class="spinner" style="margin: 0 auto 10px;"></div>
+                <div style="color: var(--neon-cyan); font-size: 0.9rem;">Searching official music videos...</div>
+            </div>
+
+            <div id="fillerSearchResults" style="display: flex; flex-direction: column; gap: 8px;"></div>
+        </section>
     </main>
 
-    <!-- Bottom Navigation Bar -->
-    <nav class="mobile-bottom-nav">
-        <button class="nav-tab-btn active" data-tab="searchTab">
-            <span style="font-size: 1.3rem;">🔍</span>
-            <span>Search</span>
-        </button>
-        <button class="nav-tab-btn" data-tab="libraryTab" onclick="loadLibraryTracks()">
-            <span style="font-size: 1.3rem;">🌴</span>
-            <span>Library</span>
-        </button>
-        <button class="nav-tab-btn" data-tab="queueTab">
-            <span style="font-size: 1.3rem;">📜</span>
-            <span>Queue</span>
-        </button>
-        <button class="nav-tab-btn" data-tab="historyTab">
-            <span style="font-size: 1.3rem;">⭐</span>
-            <span>My Songs</span>
-        </button>
-        <button class="nav-tab-btn" onclick="openStageTab(event)" style="color: var(--neon-cyan);" title="Open Live TV Stage in new tab">
-            <span style="font-size: 1.3rem;">📺</span>
-            <span>Stage TV</span>
-        </button>
-        <button id="hostNavTab" class="nav-tab-btn" data-tab="hostTab" style="display: none; color: var(--neon-pink);">
-            <span style="font-size: 1.3rem;">👑</span>
-            <span>Host DJ</span>
-        </button>
+    <!-- Bottom Navigation Bar with Two-Row Host Layout -->
+    <nav class="mobile-bottom-nav" id="mobileBottomNav" style="display: flex; flex-direction: column; padding: 0;">
+        <!-- Row 1: Singer Navigation -->
+        <div style="display: flex; justify-content: space-around; width: 100%; padding: 6px 6px 4px;">
+            <button class="nav-tab-btn active" data-tab="searchTab">
+                <span style="font-size: 1.25rem;">🔍</span>
+                <span>Search</span>
+            </button>
+            <button class="nav-tab-btn" data-tab="libraryTab" onclick="loadLibraryTracks()">
+                <span style="font-size: 1.25rem;">🌴</span>
+                <span>Library</span>
+            </button>
+            <button class="nav-tab-btn" data-tab="queueTab">
+                <span style="font-size: 1.25rem;">📜</span>
+                <span>Queue</span>
+            </button>
+            <button class="nav-tab-btn" data-tab="historyTab">
+                <span style="font-size: 1.25rem;">⭐</span>
+                <span>My Songs</span>
+            </button>
+            <button class="nav-tab-btn" onclick="openStageTab(event)" style="color: var(--neon-cyan);" title="Open Live TV Stage in new tab">
+                <span style="font-size: 1.25rem;">📺</span>
+                <span>Stage TV</span>
+            </button>
+        </div>
+
+        <!-- Row 2: Host DJ Navigation (Visible only when host authenticated) -->
+        <div id="hostNavRow" style="display: none; justify-content: space-around; width: 100%; padding: 4px 6px 8px; border-top: 1px solid rgba(255, 42, 133, 0.35); background: rgba(14, 20, 32, 0.98);">
+            <button class="nav-tab-btn host-tab-btn" data-tab="hostTab" style="color: var(--neon-pink);">
+                <span style="font-size: 1.2rem;">👑</span>
+                <span>Host Desk</span>
+            </button>
+            <button class="nav-tab-btn host-tab-btn" data-tab="fillerCrateTab" onclick="loadFillerTracks()" style="color: var(--neon-gold);">
+                <span style="font-size: 1.2rem;">🎬</span>
+                <span>BGM Crate</span>
+            </button>
+            <button class="nav-tab-btn host-tab-btn" data-tab="fillerSearchTab" style="color: var(--neon-cyan);">
+                <span style="font-size: 1.2rem;">🔎</span>
+                <span>Find Videos</span>
+            </button>
+            <button class="nav-tab-btn host-tab-btn" onclick="openCleanupModal()" style="color: var(--neon-lime);">
+                <span style="font-size: 1.2rem;">🧹</span>
+                <span>Storage</span>
+            </button>
+        </div>
     </nav>
 
     <!-- Queue & Pitch Selector Modal -->

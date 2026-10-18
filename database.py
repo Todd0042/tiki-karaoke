@@ -109,12 +109,37 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_singer_song_log_singer ON singer_song_log(singer_id, track_id);
         CREATE INDEX IF NOT EXISTS idx_singer_song_log_time ON singer_song_log(singer_id, created_at);
 
+        CREATE TABLE IF NOT EXISTS filler_tracks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            video_id TEXT UNIQUE NOT NULL,
+            title TEXT NOT NULL,
+            artist TEXT NOT NULL,
+            original_title TEXT NOT NULL,
+            genre TEXT DEFAULT '',
+            release_year INTEGER DEFAULT 0,
+            duration INTEGER DEFAULT 0,
+            is_downloaded INTEGER DEFAULT 0,
+            local_path TEXT DEFAULT '',
+            normalized_lufs REAL DEFAULT -16.0,
+            download_status TEXT DEFAULT 'pending', -- 'pending', 'fetching_metadata', 'downloading', 'normalizing', 'ready', 'failed'
+            download_progress INTEGER DEFAULT 0,
+            error_message TEXT DEFAULT '',
+            play_count INTEGER DEFAULT 0,
+            last_played TIMESTAMP,
+            sort_order REAL DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
         -- Default settings
         INSERT OR IGNORE INTO settings (key, value) VALUES ('tts_enabled', 'false');
         INSERT OR IGNORE INTO settings (key, value) VALUES ('intermission_seconds', '20');
         INSERT OR IGNORE INTO settings (key, value) VALUES ('bgm_enabled', 'true');
         INSERT OR IGNORE INTO settings (key, value) VALUES ('bgm_volume', '0.25');
         INSERT OR IGNORE INTO settings (key, value) VALUES ('bar_name', 'The Tiki Hut Karaoke Lounge');
+        INSERT OR IGNORE INTO settings (key, value) VALUES ('bgm_transition_policy', 'fade');
+        INSERT OR IGNORE INTO settings (key, value) VALUES ('bgm_video_enabled', 'true');
+        INSERT OR IGNORE INTO settings (key, value) VALUES ('bgm_mode', 'vibe');
+        INSERT OR IGNORE INTO settings (key, value) VALUES ('bgm_buffer_seconds', '15');
         """)
 
         # Ensure play_count and last_played exist on existing databases
@@ -1195,5 +1220,180 @@ def prune_local_track(track_id: int) -> bool:
         """, (track_id,))
     conn.close()
     return True
+
+
+# ==============================================================================
+# BGM FILLER TRACKS & VIBE ENGINE
+# ==============================================================================
+
+def add_filler_track(
+    video_id: str,
+    title: str,
+    artist: str,
+    original_title: str,
+    duration: int = 0,
+    genre: str = "",
+    release_year: int = 0,
+    is_downloaded: int = 0,
+    local_path: str = ""
+) -> int:
+    conn = get_db()
+    with conn:
+        cursor = conn.execute("""
+            INSERT INTO filler_tracks (
+                video_id, title, artist, original_title, duration,
+                genre, release_year, is_downloaded, local_path, download_status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(video_id) DO UPDATE SET
+                title = excluded.title,
+                artist = excluded.artist,
+                original_title = excluded.original_title,
+                duration = CASE WHEN excluded.duration > 0 THEN excluded.duration ELSE filler_tracks.duration END,
+                genre = CASE WHEN excluded.genre != '' THEN excluded.genre ELSE filler_tracks.genre END,
+                release_year = CASE WHEN excluded.release_year > 0 THEN excluded.release_year ELSE filler_tracks.release_year END
+        """, (
+            video_id, title, artist, original_title, duration,
+            genre, release_year, is_downloaded, local_path,
+            "ready" if is_downloaded else "pending"
+        ))
+        track_id = cursor.lastrowid
+        if not track_id:
+            row = conn.execute("SELECT id FROM filler_tracks WHERE video_id = ?", (video_id,)).fetchone()
+            track_id = row["id"] if row else 0
+    conn.close()
+    return track_id
+
+def get_filler_tracks() -> List[Dict[str, Any]]:
+    conn = get_db()
+    rows = conn.execute("""
+        SELECT * FROM filler_tracks
+        ORDER BY created_at DESC
+    """).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+def get_filler_track_by_id(filler_id: int) -> Optional[Dict[str, Any]]:
+    conn = get_db()
+    row = conn.execute("SELECT * FROM filler_tracks WHERE id = ?", (filler_id,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def get_filler_track_by_video_id(video_id: str) -> Optional[Dict[str, Any]]:
+    conn = get_db()
+    row = conn.execute("SELECT * FROM filler_tracks WHERE video_id = ?", (video_id,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def update_filler_track_status(
+    filler_id: int,
+    status: str,
+    progress: int = 0,
+    error_message: str = "",
+    local_path: str = "",
+    is_downloaded: int = 0
+):
+    conn = get_db()
+    updates = ["download_status = ?", "download_progress = ?", "error_message = ?"]
+    params: List[Any] = [status, progress, error_message]
+
+    if local_path:
+        updates.append("local_path = ?")
+        params.append(local_path)
+    if is_downloaded is not None:
+        updates.append("is_downloaded = ?")
+        params.append(is_downloaded)
+
+    params.append(filler_id)
+    with conn:
+        conn.execute(f"UPDATE filler_tracks SET {', '.join(updates)} WHERE id = ?", params)
+    conn.close()
+
+def update_filler_track_metadata(
+    filler_id: int,
+    genre: str = "",
+    release_year: int = 0,
+    title: str = "",
+    artist: str = ""
+):
+    conn = get_db()
+    updates = []
+    params: List[Any] = []
+    if genre:
+        updates.append("genre = ?")
+        params.append(genre)
+    if release_year > 0:
+        updates.append("release_year = ?")
+        params.append(release_year)
+    if title:
+        updates.append("title = ?")
+        params.append(title)
+    if artist:
+        updates.append("artist = ?")
+        params.append(artist)
+
+    if updates:
+        params.append(filler_id)
+        with conn:
+            conn.execute(f"UPDATE filler_tracks SET {', '.join(updates)} WHERE id = ?", params)
+    conn.close()
+
+def delete_filler_track(filler_id: int) -> Optional[str]:
+    conn = get_db()
+    row = conn.execute("SELECT local_path FROM filler_tracks WHERE id = ?", (filler_id,)).fetchone()
+    local_path = row["local_path"] if row else None
+    with conn:
+        conn.execute("DELETE FROM filler_tracks WHERE id = ?", (filler_id,))
+    conn.close()
+    return local_path
+
+def record_filler_play(filler_id: int):
+    conn = get_db()
+    with conn:
+        conn.execute("""
+            UPDATE filler_tracks
+            SET play_count = play_count + 1,
+                last_played = CURRENT_TIMESTAMP
+            WHERE id = ?
+        """, (filler_id,))
+    conn.close()
+
+def get_next_vibe_filler_track(last_track_artist: str = "", last_track_genre: str = "") -> Optional[Dict[str, Any]]:
+    """
+    Selects the next ready BGM filler track matching the vibe of the last song.
+    1. Avoid tracks by the same artist as last_track_artist (if other artists exist).
+    2. If last_track_genre is provided, prioritize tracks whose genre matches (or shares keywords with) last_track_genre.
+    3. Rotate based on play_count ASC, coalesce(last_played, '1970-01-01') ASC, id ASC.
+    4. Only returns tracks that are ready (download_status = 'ready' or is_downloaded = 1).
+    """
+    conn = get_db()
+    tracks = [dict(r) for r in conn.execute("""
+        SELECT * FROM filler_tracks
+        WHERE download_status = 'ready' OR is_downloaded = 1
+        ORDER BY play_count ASC, coalesce(last_played, '1970-01-01') ASC, id ASC
+    """).fetchall()]
+    conn.close()
+
+    if not tracks:
+        return None
+
+    # Filter out same artist if possible
+    diff_artist_tracks = [t for t in tracks if t["artist"].strip().lower() != last_track_artist.strip().lower()]
+    candidate_pool = diff_artist_tracks if diff_artist_tracks else tracks
+
+    # If genre provided, look for matching genre in candidate pool
+    if last_track_genre:
+        target_g = last_track_genre.strip().lower()
+        genre_matches = [
+            t for t in candidate_pool
+            if t["genre"] and (
+                t["genre"].strip().lower() in target_g or target_g in t["genre"].strip().lower()
+            )
+        ]
+        if genre_matches:
+            return genre_matches[0]
+
+    # Return least recently played
+    return candidate_pool[0]
+
 
 

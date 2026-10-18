@@ -146,6 +146,9 @@ def get_tracks_dir() -> Path:
 def get_playlists_dir() -> Path:
     return get_library_dir() / "playlists_m3u"
 
+def get_filler_dir() -> Path:
+    return get_library_dir() / "filler"
+
 def get_data_dir() -> Path:
     cfg = load_config()
     p = os.getenv("TIKI_DATA_DIR", "").strip() or cfg.get("data_dir", "").strip()
@@ -164,6 +167,7 @@ def ensure_storage_dirs():
         get_data_dir().mkdir(parents=True, exist_ok=True)
         get_tracks_dir().mkdir(parents=True, exist_ok=True)
         get_playlists_dir().mkdir(parents=True, exist_ok=True)
+        get_filler_dir().mkdir(parents=True, exist_ok=True)
     except Exception as e:
         print(f"[Config] Warning: could not ensure storage directories: {e}")
 
