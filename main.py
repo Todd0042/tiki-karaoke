@@ -319,7 +319,8 @@ def main():
     print_terminal_qr(host_url, "SCAN FOR HOST DJ REMOTE (PRIVATE)")
 
     if not args.no_browser:
-        threading.Thread(target=open_browser_delayed, args=(stage_url,), daemon=True).start()
+        stage_kiosk_url = f"{stage_url}?token={HOST_TOKEN}" if HOST_TOKEN else stage_url
+        threading.Thread(target=open_browser_delayed, args=(stage_kiosk_url,), daemon=True).start()
 
     try:
         import uvicorn

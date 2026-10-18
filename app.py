@@ -86,14 +86,21 @@ class ConnectionManager:
         self.active_connections: List[WebSocket] = []
         self.stage_displays: Dict[str, Dict[str, Any]] = {}
         self.ws_to_display_id: Dict[WebSocket, str] = {}
+        self.host_connections: set = set()
+        self.emoji_times: Dict[WebSocket, List[float]] = {}
 
-    async def connect(self, websocket: WebSocket):
+    async def connect(self, websocket: WebSocket, is_host: bool = False):
         await websocket.accept()
         self.active_connections.append(websocket)
+        if is_host:
+            self.host_connections.add(websocket)
+        self.emoji_times[websocket] = []
 
     def disconnect(self, websocket: WebSocket):
         if websocket in self.active_connections:
             self.active_connections.remove(websocket)
+        self.host_connections.discard(websocket)
+        self.emoji_times.pop(websocket, None)
         disp_id = self.ws_to_display_id.pop(websocket, None)
         if disp_id and disp_id in self.stage_displays:
             del self.stage_displays[disp_id]
@@ -107,6 +114,22 @@ class ConnectionManager:
             "last_seen": time.time()
         }
         self.ws_to_display_id[websocket] = display_id
+
+    def is_display_authorized(self, websocket: WebSocket, display_id: str) -> bool:
+        if websocket in self.host_connections:
+            return True
+        return self.ws_to_display_id.get(websocket) == display_id
+
+    def check_emoji_rate_limit(self, websocket: WebSocket) -> bool:
+        now = time.time()
+        times = self.emoji_times.get(websocket, [])
+        times = [t for t in times if now - t < 1.0]
+        if len(times) >= 5:
+            self.emoji_times[websocket] = times
+            return False
+        times.append(now)
+        self.emoji_times[websocket] = times
+        return True
 
     def set_display_muted(self, display_id: str, is_muted: bool):
         if display_id in self.stage_displays:
@@ -195,17 +218,55 @@ class PruneTracksRequest(BaseModel):
 
 # Host Auth Helper
 def is_host_request(request: Request) -> bool:
+    if not HOST_TOKEN:
+        return False
     cookie_token = request.cookies.get("tiki_host")
     if cookie_token == HOST_TOKEN:
         return True
     auth_header = request.headers.get("X-Host-Token")
     if auth_header == HOST_TOKEN:
         return True
+    query_token = request.query_params.get("token")
+    if query_token == HOST_TOKEN:
+        return True
     return False
+
+class PinAuthRequest(BaseModel):
+    pin: str
+
+failed_pin_attempts: Dict[str, List[float]] = {}
+
+@app.post("/api/auth/pin")
+async def api_auth_pin(req: PinAuthRequest, request: Request):
+    client_ip = request.client.host if request.client else "unknown"
+    now = time.time()
+    attempts = [t for t in failed_pin_attempts.get(client_ip, []) if now - t < 60.0]
+    if len(attempts) >= 5:
+        failed_pin_attempts[client_ip] = attempts
+        raise HTTPException(
+            status_code=429,
+            detail="Too many failed PIN attempts. Please wait 1 minute before trying again."
+        )
+
+    cfg = load_config()
+    expected_pin = str(cfg.get("host_pin", HOST_PIN)).strip()
+    provided_pin = str(req.pin).strip()
+
+    if provided_pin == expected_pin:
+        failed_pin_attempts.pop(client_ip, None)
+        response = JSONResponse({"status": "ok", "is_host": True})
+        response.set_cookie("tiki_host", HOST_TOKEN, max_age=86400 * 30, httponly=False)
+        return response
+    else:
+        attempts.append(now)
+        failed_pin_attempts[client_ip] = attempts
+        raise HTTPException(status_code=401, detail="Invalid Host PIN. Please check the TV display.")
 
 # Page Routes
 @app.get("/setup", response_class=HTMLResponse)
 async def setup_page(request: Request):
+    if is_configured() and not is_host_request(request):
+        return RedirectResponse(url="/", status_code=303)
     cfg = load_config()
     return templates.TemplateResponse(request=request, name="setup.html", context={
         "config": cfg,
@@ -216,15 +277,21 @@ async def setup_page(request: Request):
     })
 
 @app.get("/api/setup/displays")
-async def api_get_setup_displays():
+async def api_get_setup_displays(request: Request):
+    if is_configured() and not is_host_request(request):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
     return get_available_displays()
 
 @app.get("/api/setup/audio-devices")
-async def api_get_setup_audio_devices():
+async def api_get_setup_audio_devices(request: Request):
+    if is_configured() and not is_host_request(request):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
     return get_available_audio_sinks()
 
 @app.post("/api/setup/test-display")
-async def api_test_display(payload: Dict[str, Any]):
+async def api_test_display(payload: Dict[str, Any], request: Request):
+    if is_configured() and not is_host_request(request):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
     badge = payload.get("badge", "📺 MAIN STAGE DISPLAY")
     await manager.broadcast({
         "type": "test_display",
@@ -233,14 +300,18 @@ async def api_test_display(payload: Dict[str, Any]):
     return {"status": "ok"}
 
 @app.post("/api/setup/inspect-path")
-async def api_inspect_storage_path(payload: Dict[str, Any]):
+async def api_inspect_storage_path(payload: Dict[str, Any], request: Request):
+    if is_configured() and not is_host_request(request):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
     path_str = payload.get("path", "").strip()
     if not path_str:
         return {"valid": False, "error": "Path cannot be empty"}
     return get_path_info(path_str)
 
 @app.post("/api/setup")
-async def api_save_setup(payload: Dict[str, Any]):
+async def api_save_setup(payload: Dict[str, Any], request: Request):
+    if is_configured() and not is_host_request(request):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
     import shutil
     old_tracks = get_tracks_dir()
     old_db = get_db_path()
@@ -324,23 +395,28 @@ async def join_page(request: Request):
     })
 
 @app.get("/stage", response_class=HTMLResponse)
-async def stage_page(request: Request):
+async def stage_page(request: Request, token: str = ""):
     if not is_configured():
         return RedirectResponse(url="/setup")
     pub_h = get_public_host()
-    return templates.TemplateResponse(request=request, name="host.html", context={
+    cfg = load_config()
+    pin = str(cfg.get("host_pin", HOST_PIN))
+    response = templates.TemplateResponse(request=request, name="host.html", context={
         "bar_name": get_setting("bar_name", "The Tiki Hut Karaoke Lounge"),
         "local_ip": LOCAL_IP,
         "public_ip": PUBLIC_IP,
         "base_url": get_base_url(),
         "display_ip": pub_h if pub_h else f"{PUBLIC_IP}:{PORT}",
         "port": PORT,
-        "host_pin": HOST_PIN
+        "host_pin": pin
     })
+    if (token and token == HOST_TOKEN) or is_host_request(request):
+        response.set_cookie("tiki_host", HOST_TOKEN, max_age=86400 * 30, httponly=False)
+    return response
 
 @app.get("/host")
 async def host_pair_route(request: Request, token: str = ""):
-    if token == HOST_TOKEN:
+    if token and token == HOST_TOKEN:
         response = RedirectResponse(url="/")
         response.set_cookie("tiki_host", HOST_TOKEN, max_age=86400 * 7, httponly=False)
         return response
@@ -357,7 +433,9 @@ async def public_qr():
     return StreamingResponse(buf, media_type="image/png")
 
 @app.get("/qr/host")
-async def host_qr():
+async def host_qr(request: Request):
+    if not is_host_request(request):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required to view host QR code.")
     url = f"{get_base_url()}/host?token={HOST_TOKEN}"
     img = qrcode.make(url)
     buf = io.BytesIO()
@@ -642,7 +720,9 @@ async def api_remove_queue(queue_id: int, request: Request, token: str = ""):
     return {"deleted": deleted}
 
 @app.post("/api/queue/{queue_id}/play")
-async def api_play_queue_item(queue_id: int):
+async def api_play_queue_item(queue_id: int, request: Request):
+    if not is_host_request(request):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
     global current_intermission_end
     current_intermission_end = None
     set_queue_status(queue_id, "playing")
@@ -658,7 +738,9 @@ async def api_play_queue_item(queue_id: int):
     return {"status": "ok", "playing": current}
 
 @app.post("/api/queue/{queue_id}/complete")
-async def api_complete_queue_item(queue_id: int):
+async def api_complete_queue_item(queue_id: int, request: Request):
+    if not is_host_request(request):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
     global current_intermission_end
     queue_list = get_queue()
     item = next((q for q in queue_list if q["queue_id"] == queue_id), None)
@@ -734,7 +816,9 @@ async def api_get_settings():
     return get_all_settings()
 
 @app.post("/api/settings")
-async def api_update_settings(settings: Dict[str, str]):
+async def api_update_settings(settings: Dict[str, str], request: Request):
+    if not is_host_request(request):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
     for k, v in settings.items():
         set_setting(k, str(v))
     return {"status": "ok"}
@@ -749,6 +833,8 @@ async def api_get_bgm_tracks():
 
 @app.post("/api/host/skip")
 async def host_skip_action(request: Request):
+    if not is_host_request(request):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
     global current_intermission_end
     current = get_current_playing()
     if current:
@@ -780,6 +866,8 @@ async def host_skip_action(request: Request):
 
 @app.post("/api/host/stop")
 async def host_stop_action(request: Request):
+    if not is_host_request(request):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
     global current_intermission_end
     current_intermission_end = None
 
@@ -800,27 +888,33 @@ async def host_stop_action(request: Request):
 
 @app.post("/api/host/toggle-pause")
 async def host_pause_action(request: Request):
+    if not is_host_request(request):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
     current = get_current_playing()
     if not current:
         queue = get_queue()
         pending = [q for q in queue if q["status"] == "pending"]
         if pending:
-            await api_play_queue_item(pending[0]["queue_id"])
+            await api_play_queue_item(pending[0]["queue_id"], request)
             return {"status": "ok", "action": "started"}
     await manager.broadcast({"type": "pause_track"})
     return {"status": "ok"}
 
 @app.post("/api/host/start-now")
 async def host_start_now_action(request: Request):
+    if not is_host_request(request):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
     queue = get_queue()
     pending = [q for q in queue if q["status"] == "pending"]
     if pending:
         next_track = pending[0]
-        await api_play_queue_item(next_track["queue_id"])
+        await api_play_queue_item(next_track["queue_id"], request)
     return {"status": "ok"}
 
 @app.post("/api/host/add-time")
 async def host_add_time_action(request: Request):
+    if not is_host_request(request):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
     queue = get_queue()
     pending = [q for q in queue if q["status"] == "pending"]
     await manager.broadcast({
@@ -936,7 +1030,17 @@ async def auth_callback(code: str = ""):
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     global current_intermission_end
-    await manager.connect(websocket)
+    is_host = False
+    if HOST_TOKEN:
+        cookie_token = websocket.cookies.get("tiki_host")
+        if cookie_token == HOST_TOKEN:
+            is_host = True
+        elif websocket.headers.get("x-host-token") == HOST_TOKEN:
+            is_host = True
+        elif websocket.query_params.get("token") == HOST_TOKEN:
+            is_host = True
+
+    await manager.connect(websocket, is_host=is_host)
     try:
         while True:
             data = await websocket.receive_json()
@@ -967,32 +1071,36 @@ async def websocket_endpoint(websocket: WebSocket):
                     })
             elif msg_type == "stage_audio_state":
                 disp_id = data.get("display_id")
-                if disp_id:
+                if disp_id and manager.is_display_authorized(websocket, disp_id):
                     manager.set_display_muted(disp_id, bool(data.get("is_muted", False)))
                     await manager.broadcast({
                         "type": "displays_updated",
                         "displays": manager.get_stage_displays()
                     })
             elif msg_type == "emoji_reaction":
-                await manager.broadcast({
-                    "type": "emoji_reaction",
-                    "emoji": data.get("emoji", "🌺")
-                })
+                if manager.check_emoji_rate_limit(websocket):
+                    await manager.broadcast({
+                        "type": "emoji_reaction",
+                        "emoji": data.get("emoji", "🌺")
+                    })
             elif msg_type == "soundboard_play":
-                await manager.broadcast({
-                    "type": "soundboard_play",
-                    "sound": data.get("sound", "applause")
-                })
+                if websocket in manager.host_connections:
+                    await manager.broadcast({
+                        "type": "soundboard_play",
+                        "sound": data.get("sound", "applause")
+                    })
             elif msg_type == "volume_change":
-                await manager.broadcast({
-                    "type": "volume_change",
-                    "volume": data.get("volume", 1.0)
-                })
+                if websocket in manager.host_connections:
+                    await manager.broadcast({
+                        "type": "volume_change",
+                        "volume": data.get("volume", 1.0)
+                    })
             elif msg_type == "pitch_change":
-                await manager.broadcast({
-                    "type": "pitch_change",
-                    "pitch": data.get("pitch", 0)
-                })
+                if websocket in manager.host_connections:
+                    await manager.broadcast({
+                        "type": "pitch_change",
+                        "pitch": data.get("pitch", 0)
+                    })
     except WebSocketDisconnect:
         manager.disconnect(websocket)
         await manager.broadcast({

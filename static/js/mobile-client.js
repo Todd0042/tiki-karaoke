@@ -74,17 +74,99 @@ function checkIdentity() {
     }
 
     // Check if host
-    fetch("/api/auth/role")
+    checkRole();
+}
+
+function checkRole() {
+    return fetch("/api/auth/role")
         .then(res => res.json())
         .then(data => {
-            isHost = data.is_host;
+            isHost = !!data.is_host;
+            const hostTab = document.getElementById("hostNavTab");
+            if (hostTab) {
+                hostTab.style.display = isHost ? "flex" : "none";
+            }
             if (isHost) {
-                document.getElementById("hostNavTab").style.display = "flex";
                 loadHostSettings();
                 loadHostDisplays();
                 loadHostStorageStatus();
             }
+            return isHost;
+        })
+        .catch(err => {
+            console.error("[Auth] Role check failed:", err);
+            return false;
         });
+}
+
+function openHostLoginModal() {
+    if (isHost) {
+        showToast("👑 You are already authorized as Host DJ!");
+        switchTab("host");
+        return;
+    }
+    const modal = document.getElementById("hostLoginModal");
+    const pinInput = document.getElementById("hostPinInput");
+    const err = document.getElementById("hostPinErrorMsg");
+    if (err) err.style.display = "none";
+    if (pinInput) pinInput.value = "";
+    if (modal) {
+        modal.style.display = "flex";
+        setTimeout(() => pinInput && pinInput.focus(), 150);
+    }
+}
+
+function closeHostLoginModal() {
+    const modal = document.getElementById("hostLoginModal");
+    if (modal) modal.style.display = "none";
+}
+
+async function submitHostPinLogin() {
+    const pinInput = document.getElementById("hostPinInput");
+    const err = document.getElementById("hostPinErrorMsg");
+    const btn = document.getElementById("hostPinSubmitBtn");
+    const pin = (pinInput ? pinInput.value : "").trim();
+
+    if (!pin) {
+        if (err) {
+            err.innerText = "Please enter the PIN.";
+            err.style.display = "block";
+        }
+        return;
+    }
+
+    if (btn) btn.disabled = true;
+    if (err) err.style.display = "none";
+
+    try {
+        const res = await fetch("/api/auth/pin", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ pin: pin })
+        });
+
+        if (res.ok) {
+            closeHostLoginModal();
+            showToast("👑 Host DJ privileges unlocked!");
+            await checkRole();
+            reconnectWebSocket();
+            switchTab("host");
+        } else {
+            const data = await res.json().catch(() => ({}));
+            const msg = data.detail || (res.status === 429 ? "Too many failed attempts. Please wait 1 minute." : "Invalid Host PIN.");
+            if (err) {
+                err.innerText = msg;
+                err.style.display = "block";
+            }
+        }
+    } catch (e) {
+        if (err) {
+            err.innerText = "Connection error. Please try again.";
+            err.style.display = "block";
+        }
+    } finally {
+        if (btn) btn.disabled = false;
+    }
 }
 
 function registerSingerWithServer() {
@@ -344,6 +426,16 @@ function initWebSocket() {
     ws.onclose = () => {
         setTimeout(initWebSocket, 2000);
     };
+}
+
+function reconnectWebSocket() {
+    if (ws) {
+        try {
+            ws.onclose = null;
+            ws.close();
+        } catch (e) {}
+    }
+    initWebSocket();
 }
 
 // Navigation Tabs

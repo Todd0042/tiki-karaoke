@@ -63,6 +63,10 @@ function initAudio() {
         if (unmuteBtn) {
             unmuteBtn.innerText = "▶️ Tap to Sync Handheld Lyrics";
         }
+        const hostBtn = document.querySelector("button[onclick='toggleHostQRModal()']");
+        if (hostBtn) {
+            hostBtn.style.display = "none";
+        }
     } else {
         audioDSP = new AudioDSPPipeline();
     }
@@ -297,12 +301,14 @@ function startTrackPlayback(track) {
 
 function onPlaybackFailure(reason, failedTrack) {
     console.warn(`[Host Playback] Failure: ${reason}. Auto-skipping to avoid freeze...`);
+    if (isMutedViewer) return;
     fetch("/api/host/skip", { method: "POST" })
         .catch(err => console.error("[Host] Auto-skip call failed:", err));
 }
 
 function onSongFinished() {
     if (!currentTrack) return;
+    if (isMutedViewer) return;
     fetch(`/api/queue/${currentTrack.queue_id}/complete`, { method: "POST" });
     currentTrack = null;
     fadeInBGM();
@@ -423,7 +429,7 @@ function triggerIntermission(nextTrack, duration = 20) {
         updateCountdownDisplay();
         if (intermissionRemaining <= 0) {
             clearInterval(intermissionTimer);
-            if (nextTrack) {
+            if (nextTrack && !isMutedViewer) {
                 fetch(`/api/queue/${nextTrack.queue_id}/play`, { method: "POST" });
             }
         }

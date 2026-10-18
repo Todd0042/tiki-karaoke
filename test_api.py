@@ -25,6 +25,7 @@ class TestAPIEndpoints(unittest.TestCase):
         shutil.rmtree(test_dir, ignore_errors=True)
 
     def setUp(self):
+        self.client.cookies.clear()
         from database import get_db
         conn = get_db()
         with conn:
@@ -44,15 +45,28 @@ class TestAPIEndpoints(unittest.TestCase):
         self.assertIn("Main Stage", r.text)
 
     def test_qr_codes(self):
+        from config import HOST_TOKEN
+        # Public QR is open
         r = self.client.get("/qr/public")
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.headers["content-type"], "image/png")
 
+        # Host QR requires host authorization
         r = self.client.get("/qr/host")
+        self.assertEqual(r.status_code, 403)
+
+        # Authorized via header
+        r = self.client.get("/qr/host", headers={"X-Host-Token": HOST_TOKEN})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.headers["content-type"], "image/png")
+
+        # Authorized via cookie
+        r = self.client.get("/qr/host", cookies={"tiki_host": HOST_TOKEN})
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.headers["content-type"], "image/png")
 
     def test_singer_and_queue_flow(self):
+        from config import HOST_TOKEN
         # 1. Register singer
         r = self.client.post("/api/singer/register", json={
             "token": "test_singer_token",
@@ -92,12 +106,16 @@ class TestAPIEndpoints(unittest.TestCase):
         state = r.json()
         self.assertIn("queue", state)
 
-        # 5. Play item
+        # 5. Play item (unauthorized returns 403, authorized returns 200)
         r = self.client.post(f"/api/queue/{q_data['queue_id']}/play")
+        self.assertEqual(r.status_code, 403)
+        r = self.client.post(f"/api/queue/{q_data['queue_id']}/play", headers={"X-Host-Token": HOST_TOKEN})
         self.assertEqual(r.status_code, 200)
 
-        # 6. Complete item
+        # 6. Complete item (unauthorized returns 403, authorized returns 200)
         r = self.client.post(f"/api/queue/{q_data['queue_id']}/complete")
+        self.assertEqual(r.status_code, 403)
+        r = self.client.post(f"/api/queue/{q_data['queue_id']}/complete", headers={"X-Host-Token": HOST_TOKEN})
         self.assertEqual(r.status_code, 200)
 
         # 7. Check singer history
@@ -107,7 +125,13 @@ class TestAPIEndpoints(unittest.TestCase):
         self.assertGreaterEqual(len(history), 1)
 
     def test_settings_api(self):
+        from config import HOST_TOKEN
+        # Unauthorized update fails
         r = self.client.post("/api/settings", json={"tts_enabled": "true"})
+        self.assertEqual(r.status_code, 403)
+
+        # Authorized update succeeds
+        r = self.client.post("/api/settings", json={"tts_enabled": "true"}, headers={"X-Host-Token": HOST_TOKEN})
         self.assertEqual(r.status_code, 200)
 
         r = self.client.get("/api/settings")
@@ -115,15 +139,20 @@ class TestAPIEndpoints(unittest.TestCase):
         self.assertEqual(r.json()["tts_enabled"], "true")
 
     def test_storage_inspect_and_setup(self):
-        # 1. Inspect valid path
+        from config import HOST_TOKEN
+        # 1. Inspect without host token returns 403 when configured
         r = self.client.post("/api/setup/inspect-path", json={"path": "."})
+        self.assertEqual(r.status_code, 403)
+
+        # Authorized inspect succeeds
+        r = self.client.post("/api/setup/inspect-path", json={"path": "."}, headers={"X-Host-Token": HOST_TOKEN})
         self.assertEqual(r.status_code, 200)
         data = r.json()
         self.assertTrue(data.get("valid"))
         self.assertGreater(data.get("free_gb", 0), 0)
 
-        # 2. Setup page renders with default directories
-        r = self.client.get("/setup")
+        # 2. Setup page renders with host credentials
+        r = self.client.get("/setup", headers={"X-Host-Token": HOST_TOKEN})
         self.assertEqual(r.status_code, 200)
         self.assertIn("Storage & Media Library", r.text)
 
@@ -167,8 +196,11 @@ class TestAPIEndpoints(unittest.TestCase):
         self.assertEqual(r.json()["status"], "ok")
 
     def test_display_and_audio_setup(self):
-        # 1. Test displays discovery API
+        from config import HOST_TOKEN
+        # 1. Test displays discovery API (requires host)
         r = self.client.get("/api/setup/displays")
+        self.assertEqual(r.status_code, 403)
+        r = self.client.get("/api/setup/displays", headers={"X-Host-Token": HOST_TOKEN})
         self.assertEqual(r.status_code, 200)
         displays = r.json()
         self.assertIsInstance(displays, list)
@@ -178,8 +210,10 @@ class TestAPIEndpoints(unittest.TestCase):
         self.assertIn("width", displays[0])
         self.assertIn("height", displays[0])
 
-        # 2. Test audio sinks discovery API
+        # 2. Test audio sinks discovery API (requires host)
         r = self.client.get("/api/setup/audio-devices")
+        self.assertEqual(r.status_code, 403)
+        r = self.client.get("/api/setup/audio-devices", headers={"X-Host-Token": HOST_TOKEN})
         self.assertEqual(r.status_code, 200)
         sinks = r.json()
         self.assertIsInstance(sinks, list)
@@ -187,8 +221,10 @@ class TestAPIEndpoints(unittest.TestCase):
         self.assertIn("id", sinks[0])
         self.assertIn("description", sinks[0])
 
-        # 3. Test test-display broadcast API
+        # 3. Test test-display broadcast API (requires host)
         r = self.client.post("/api/setup/test-display", json={"badge": "📺 MAIN STAGE DISPLAY"})
+        self.assertEqual(r.status_code, 403)
+        r = self.client.post("/api/setup/test-display", json={"badge": "📺 MAIN STAGE DISPLAY"}, headers={"X-Host-Token": HOST_TOKEN})
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.json().get("status"), "ok")
 
@@ -311,6 +347,7 @@ class TestAPIEndpoints(unittest.TestCase):
             self.assertTrue(track.endswith(".mp3"))
 
     def test_host_stop_and_skip_endpoints(self):
+        from config import HOST_TOKEN
         # Queue a song
         r = self.client.post("/api/queue", json={
             "video_id": "v_stop_test",
@@ -321,12 +358,16 @@ class TestAPIEndpoints(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         q_id = r.json()["queue_id"]
 
-        # Play it
-        r = self.client.post(f"/api/queue/{q_id}/play")
+        # Play it with host token
+        r = self.client.post(f"/api/queue/{q_id}/play", headers={"X-Host-Token": HOST_TOKEN})
         self.assertEqual(r.status_code, 200)
 
-        # Stop stage
+        # Stop stage without host token returns 403
         r = self.client.post("/api/host/stop")
+        self.assertEqual(r.status_code, 403)
+
+        # Stop stage with host token succeeds
+        r = self.client.post("/api/host/stop", headers={"X-Host-Token": HOST_TOKEN})
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.json()["status"], "ok")
 
@@ -338,8 +379,12 @@ class TestAPIEndpoints(unittest.TestCase):
         self.assertIsNotNone(state["next"])
         self.assertEqual(state["next"]["queue_id"], q_id)
 
-        # Skip track
+        # Skip track without host token returns 403
         r = self.client.post("/api/host/skip")
+        self.assertEqual(r.status_code, 403)
+
+        # Skip track with host token succeeds
+        r = self.client.post("/api/host/skip", headers={"X-Host-Token": HOST_TOKEN})
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.json()["status"], "ok")
 
@@ -412,6 +457,52 @@ class TestAPIEndpoints(unittest.TestCase):
         self.assertEqual(songs[1]["title"], "Song B")
         self.assertEqual(songs[1]["times_queued"], 1)
         self.assertEqual(songs[1]["preferred_pitch"], -1)
+
+    def test_host_pin_auth(self):
+        from config import HOST_PIN, HOST_TOKEN
+        from app import failed_pin_attempts
+        failed_pin_attempts.clear()
+
+        # 1. Incorrect PIN returns 401
+        r = self.client.post("/api/auth/pin", json={"pin": "9999"})
+        self.assertEqual(r.status_code, 401)
+        self.assertIn("Invalid Host PIN", r.json().get("detail", ""))
+
+        # 2. Rate limiting after 5 failed attempts returns 429
+        for _ in range(4):
+            self.client.post("/api/auth/pin", json={"pin": "0000"})
+        r = self.client.post("/api/auth/pin", json={"pin": "0000"})
+        self.assertEqual(r.status_code, 429)
+        self.assertIn("Too many failed PIN attempts", r.json().get("detail", ""))
+
+        # Clear failed attempts to test success
+        failed_pin_attempts.clear()
+
+        # 3. Correct PIN returns 200, is_host: True, and sets tiki_host cookie
+        r = self.client.post("/api/auth/pin", json={"pin": str(HOST_PIN)})
+        self.assertEqual(r.status_code, 200)
+        self.assertTrue(r.json().get("is_host"))
+        self.assertIn("tiki_host", r.cookies)
+        self.assertEqual(r.cookies["tiki_host"], HOST_TOKEN)
+
+    def test_websocket_security_and_throttling(self):
+        from config import HOST_TOKEN
+
+        # 1. Unauthenticated WebSocket cannot trigger soundboard
+        with self.client.websocket_connect("/ws") as ws:
+            ws.send_json({"type": "soundboard_play", "sound": "airhorn"})
+            # Send an emoji - first 5 are allowed
+            for _ in range(5):
+                ws.send_json({"type": "emoji_reaction", "emoji": "🌺"})
+                msg = ws.receive_json()
+                self.assertEqual(msg.get("type"), "emoji_reaction")
+
+        # 2. Host-authenticated WebSocket can trigger soundboard
+        with self.client.websocket_connect(f"/ws?token={HOST_TOKEN}") as ws_host:
+            ws_host.send_json({"type": "soundboard_play", "sound": "airhorn"})
+            msg = ws_host.receive_json()
+            self.assertEqual(msg.get("type"), "soundboard_play")
+            self.assertEqual(msg.get("sound"), "airhorn")
 
 if __name__ == "__main__":
     unittest.main()
