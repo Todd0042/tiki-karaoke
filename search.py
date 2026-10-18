@@ -220,6 +220,9 @@ def query_youtube_karaoke(query: str, max_results: int = 15) -> List[Dict[str, A
     for e in raw_entries:
         if not e or not e.get("id"):
             continue
+        duration = e.get("duration") or 0
+        if duration > 600:
+            continue
         title = e.get("title", "")
         uploader = e.get("uploader", "") or e.get("channel", "")
         if is_karaoke_track(title, uploader):

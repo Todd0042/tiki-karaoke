@@ -26,11 +26,19 @@ class TestAPIEndpoints(unittest.TestCase):
 
     def setUp(self):
         self.client.cookies.clear()
+        from app import (
+            failed_pin_attempts, search_requests_by_ip,
+            last_queue_time_by_singer
+        )
+        failed_pin_attempts.clear()
+        search_requests_by_ip.clear()
+        last_queue_time_by_singer.clear()
         from database import get_db
         conn = get_db()
         with conn:
             conn.execute("DELETE FROM queue")
             conn.execute("DELETE FROM history")
+            conn.execute("DELETE FROM singer_song_log")
         conn.close()
 
     def test_pages(self):
@@ -410,6 +418,7 @@ class TestAPIEndpoints(unittest.TestCase):
         self.assertEqual(r.json()["name"], "Scott")
         self.assertEqual(r.json()["avatar"], "🌴")
 
+        from config import HOST_TOKEN
         # Queue Song A twice with pitch +2
         self.client.post("/api/queue", json={
             "video_id": "v_song_a",
@@ -418,7 +427,7 @@ class TestAPIEndpoints(unittest.TestCase):
             "singer_token": token,
             "pitch_shift": 2,
             "force": True
-        })
+        }, headers={"X-Host-Token": HOST_TOKEN})
         self.client.post("/api/queue", json={
             "video_id": "v_song_a",
             "title": "Song A",
@@ -426,7 +435,7 @@ class TestAPIEndpoints(unittest.TestCase):
             "singer_token": token,
             "pitch_shift": 2,
             "force": True
-        })
+        }, headers={"X-Host-Token": HOST_TOKEN})
 
         # Queue Song B once with pitch -1
         self.client.post("/api/queue", json={
@@ -436,7 +445,7 @@ class TestAPIEndpoints(unittest.TestCase):
             "singer_token": token,
             "pitch_shift": -1,
             "force": True
-        })
+        }, headers={"X-Host-Token": HOST_TOKEN})
 
         # Fetch Songbook
         r = self.client.get(f"/api/singer/{token}/songbook")
@@ -503,6 +512,101 @@ class TestAPIEndpoints(unittest.TestCase):
             msg = ws_host.receive_json()
             self.assertEqual(msg.get("type"), "soundboard_play")
             self.assertEqual(msg.get("sound"), "airhorn")
+
+    def test_abuse_prevention_quotas_and_cooldown(self):
+        from config import HOST_TOKEN
+        from app import last_queue_time_by_singer, search_requests_by_ip
+        from database import save_track
+
+        singer_token = "tok_quota_test"
+        self.client.post("/api/singer/register", json={
+            "token": singer_token,
+            "name": "QuotaSinger",
+            "avatar": "🎤"
+        })
+
+        # 1. First queue succeeds
+        r1 = self.client.post("/api/queue", json={
+            "video_id": "v_quota_1",
+            "title": "Song 1",
+            "artist": "Artist 1",
+            "singer_token": singer_token
+        })
+        self.assertEqual(r1.status_code, 200)
+
+        # 2. Second queue within 5 seconds triggers 429 cooldown
+        r2 = self.client.post("/api/queue", json={
+            "video_id": "v_quota_2",
+            "title": "Song 2",
+            "artist": "Artist 2",
+            "singer_token": singer_token
+        })
+        self.assertEqual(r2.status_code, 429)
+        self.assertIn("Please wait 5 seconds", r2.json().get("detail", ""))
+
+        # 3. Queue songs 2, 3, 4, 5 by resetting cooldown timer between calls
+        for idx in [2, 3, 4, 5]:
+            last_queue_time_by_singer[singer_token] = 0
+            r = self.client.post("/api/queue", json={
+                "video_id": f"v_quota_{idx}",
+                "title": f"Song {idx}",
+                "artist": "Artist",
+                "singer_token": singer_token
+            })
+            self.assertEqual(r.status_code, 200)
+
+        # 4. 6th pending song triggers 400 quota reached
+        last_queue_time_by_singer[singer_token] = 0
+        r6 = self.client.post("/api/queue", json={
+            "video_id": "v_quota_6",
+            "title": "Song 6",
+            "artist": "Artist",
+            "singer_token": singer_token
+        })
+        self.assertEqual(r6.status_code, 400)
+        self.assertIn("already have 5 songs", r6.json().get("detail", ""))
+
+        # 5. Host DJ can bypass quota and cooldown
+        r_host = self.client.post("/api/queue", json={
+            "video_id": "v_quota_host",
+            "title": "Host Song",
+            "artist": "Artist",
+            "singer_token": singer_token
+        }, headers={"X-Host-Token": HOST_TOKEN})
+        self.assertEqual(r_host.status_code, 200)
+
+        # 6. 10-minute video duration cap
+        long_track_id = save_track(
+            video_id="v_long_track_test",
+            title="Super Long Symphony",
+            artist="Symphony Orchestra",
+            original_title="Super Long Symphony",
+            duration=601
+        )
+        r_long = self.client.post("/api/queue", json={
+            "track_id": long_track_id,
+            "video_id": "v_long_track_test",
+            "title": "Super Long Symphony",
+            "artist": "Symphony Orchestra",
+            "singer_token": "tok_other_singer"
+        })
+        self.assertEqual(r_long.status_code, 400)
+        self.assertIn("over 10 minutes long", r_long.json().get("detail", ""))
+
+        # 7. Search rate limit (20/min per IP)
+        search_requests_by_ip.clear()
+        for _ in range(20):
+            r = self.client.get("/api/search?q=queen")
+            self.assertEqual(r.status_code, 200)
+
+        # 21st search triggers 429
+        r21 = self.client.get("/api/search?q=queen")
+        self.assertEqual(r21.status_code, 429)
+        self.assertIn("Search rate limit reached", r21.json().get("detail", ""))
+
+        # Host bypasses search rate limit
+        r_host_search = self.client.get("/api/search?q=queen", headers={"X-Host-Token": HOST_TOKEN})
+        self.assertEqual(r_host_search.status_code, 200)
 
 if __name__ == "__main__":
     unittest.main()

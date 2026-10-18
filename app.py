@@ -34,7 +34,8 @@ from database import (
     migrate_storage_paths, get_browsable_tracks,
     get_unique_downloaded_artists, get_cleanup_candidates,
     prune_local_track, check_song_queue_duplicate, add_duet_partner,
-    remove_duet_partner, clear_queue_on_startup, get_singer_songbook
+    remove_duet_partner, clear_queue_on_startup, get_singer_songbook,
+    get_pending_queue_count_for_singer
 )
 from search import tiered_search
 from downloader import (
@@ -457,8 +458,23 @@ async def stream_local_video(track_id: int):
     return FileResponse(file_path, media_type="video/mp4")
 
 # Search API
+search_requests_by_ip: Dict[str, List[float]] = {}
+
 @app.get("/api/search")
-async def api_search(q: str = "", force_online: bool = False):
+async def api_search(request: Request, q: str = "", force_online: bool = False):
+    if not is_host_request(request):
+        client_ip = request.client.host if request.client else "unknown"
+        now = time.time()
+        attempts = [t for t in search_requests_by_ip.get(client_ip, []) if now - t < 60.0]
+        if len(attempts) >= 20:
+            search_requests_by_ip[client_ip] = attempts
+            raise HTTPException(
+                status_code=429,
+                detail="Search rate limit reached. Please wait a few seconds before searching again."
+            )
+        attempts.append(now)
+        search_requests_by_ip[client_ip] = attempts
+
     return tiered_search(q, force_online=force_online)
 
 # Library Browsing API
@@ -624,9 +640,14 @@ async def api_leave_duet(queue_id: int, req: LeaveDuetRequest):
     })
     return {"status": "ok", "result": res, "queue": queue}
 
+last_queue_time_by_singer: Dict[str, float] = {}
+last_queue_time_by_ip: Dict[str, float] = {}
+
 @app.post("/api/queue")
 async def api_enqueue_song(req: QueueSongRequest, request: Request):
     client_ip = request.client.host if request.client else ""
+    is_host = is_host_request(request)
+
     singer = get_singer_by_token(req.singer_token)
     if not singer:
         token_suffix = (req.singer_token[-4:] if req.singer_token and len(req.singer_token) >= 4 else secrets.token_hex(2)).upper()
@@ -634,6 +655,33 @@ async def api_enqueue_song(req: QueueSongRequest, request: Request):
             singer = get_or_create_singer(req.singer_token, f"Guest {token_suffix}", ip_address=client_ip)
         except Exception:
             singer = get_or_create_singer(req.singer_token, f"Guest {secrets.token_hex(3).upper()}", ip_address=client_ip)
+
+    # Abuse Prevention: 5s cooldown & 5-song quota (bypassed for Host DJ)
+    singer_key = req.singer_token or client_ip
+    if not is_host:
+        now = time.time()
+        last_t = last_queue_time_by_singer.get(singer_key, 0)
+        if now - last_t < 5.0:
+            raise HTTPException(
+                status_code=429,
+                detail="Please wait 5 seconds before adding another song."
+            )
+
+        pending_count = get_pending_queue_count_for_singer(singer["id"])
+        if pending_count >= 5:
+            raise HTTPException(
+                status_code=400,
+                detail="You already have 5 songs waiting in the queue! Please wait until you sing one before requesting another."
+            )
+
+    # Abuse Prevention: 10-minute video duration cap
+    if req.track_id:
+        existing_t = get_track_by_id(req.track_id)
+        if existing_t and existing_t.get("duration") and existing_t["duration"] > 600:
+            raise HTTPException(
+                status_code=400,
+                detail="This song is over 10 minutes long (maximum allowed is 10:00). Please pick a standard-length version!"
+            )
 
     # Check for duplicates if not forced
     if not req.force:
@@ -670,6 +718,10 @@ async def api_enqueue_song(req: QueueSongRequest, request: Request):
         duet_partner=req.duet_partner,
         pitch_shift=req.pitch_shift
     )
+
+    if not is_host:
+        now = time.time()
+        last_queue_time_by_singer[singer_key] = now
 
     track = get_track_by_id(track_id)
 

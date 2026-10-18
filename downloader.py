@@ -46,6 +46,11 @@ def download_and_normalize_track(track_id: int) -> Optional[str]:
     if track["is_downloaded"] and track["local_path"] and Path(track["local_path"]).exists():
         return track["local_path"]
 
+    if track.get("duration") and track["duration"] > 600:
+        print(f"[Downloader] Track {video_id} duration {track['duration']}s exceeds 600s limit. Aborting download.")
+        update_track_download_status(track_id, "failed")
+        return None
+
     update_track_download_status(track_id, "downloading")
 
     artist_clean = sanitize_filename(track["artist"])
@@ -61,7 +66,8 @@ def download_and_normalize_track(track_id: int) -> Optional[str]:
         "outtmpl": str(temp_path),
         "quiet": True,
         "no_warnings": True,
-        "merge_output_format": "mp4"
+        "merge_output_format": "mp4",
+        "match_filter": yt_dlp.utils.match_filter_func("duration <= 600")
     }
 
     url = f"https://www.youtube.com/watch?v={video_id}"

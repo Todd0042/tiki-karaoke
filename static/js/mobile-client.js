@@ -545,12 +545,21 @@ function performSearch(query, forceOnline = false) {
     resultsContainer.innerHTML = '<div style="text-align: center; padding: 25px; color: var(--neon-cyan);">🍹 Searching Tiki Library & YouTube...</div>';
 
     fetch(`/api/search?q=${encodeURIComponent(query)}&force_online=${forceOnline}`)
-        .then(res => res.json())
+        .then(async res => {
+            if (res.status === 429) {
+                const data = await res.json().catch(() => ({}));
+                throw new Error(data.detail || "Search rate limit reached. Please wait a few seconds.");
+            }
+            if (!res.ok) {
+                throw new Error("Search request failed.");
+            }
+            return res.json();
+        })
         .then(data => {
             renderSearchResults(data, query);
         })
-        .catch(() => {
-            resultsContainer.innerHTML = '<div style="text-align: center; color: #ff5555; padding: 20px;">Search error. Check connection.</div>';
+        .catch(err => {
+            resultsContainer.innerHTML = `<div style="text-align: center; color: #ffb703; padding: 20px;">⏳ ${err.message || "Search error. Check connection."}</div>`;
         });
 }
 

@@ -533,6 +533,16 @@ def enqueue_song(track_id: int, singer_id: int, duet_partner: str = "", pitch_sh
     conn.close()
     return queue_id
 
+def get_pending_queue_count_for_singer(singer_id: int) -> int:
+    conn = get_db()
+    cursor = conn.execute(
+        "SELECT COUNT(*) as count FROM queue WHERE singer_id = ? AND status = 'pending'",
+        (singer_id,)
+    )
+    row = cursor.fetchone()
+    conn.close()
+    return row["count"] if row else 0
+
 def get_queue() -> List[Dict[str, Any]]:
     conn = get_db()
     cursor = conn.execute("""
