@@ -46,4 +46,5 @@ social_post*.md
 .env
 .DS_Store
 Thumbs.db
-
+# User analytics and traffic snapshots
+traffic_stats*.json
