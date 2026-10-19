@@ -39,6 +39,8 @@ _backup*/
 # User runtime configuration
 config.json
 data/
+BETA_ANNOUNCEMENT_POST.md
+social_post*.md
 
 # Environment and OS files
 .env
