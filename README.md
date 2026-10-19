@@ -7,6 +7,43 @@
 
 > A modern, self-hosted, broadcast-grade Karaoke Party Server and Host DJ engine styled after a neon tropical tiki bar. Built specifically for Linux living rooms, party hosts, and audio enthusiasts.
 
+<p align="center">
+  <img src="screenshots/player_window_with_song_playing_clean.png" alt="Tiki Karaoke Stage Display" width="100%">
+</p>
+
+---
+
+## 📸 Interface Showcase
+
+### 📺 Main Stage Display (Connected to TV via HDMI)
+The stage runs borderless in kiosk mode with synchronized lyrics, video playback, automated intermission countdowns, and real-time on-screen audience emoji reactions:
+
+<p align="center">
+  <img src="screenshots/player_window_with_song_playing_clean.png" alt="Stage View" width="90%">
+</p>
+
+### 👑 Host DJ Master Command Desk
+Full dashboard for the party host: real-time pitch controls, venue audio sync calibration, filler background music crate, soundboard effects, PipeWire/PulseAudio multi-display routing, and singer roster management:
+
+<p align="center">
+  <img src="screenshots/host-controls-page_clean.png" alt="Host DJ Controls" width="90%">
+</p>
+
+### 📱 Guest Singer Experience (Zero App Installation)
+Guests simply scan the TV screen's QR code with their phone cameras to search songs, adjust their vocal pitch, and track their position in line:
+
+| 🔍 Instant Search & YouTube | 🎵 Pitch Shift & Duets | 📜 Stage Line-Up & Hype Cheer |
+| :---: | :---: | :---: |
+| <img src="screenshots/mobile_search_clean.png" width="280"> | <img src="screenshots/mobile_pitch_modal_clean.png" width="280"> | <img src="screenshots/mobile_lineup_clean.png" width="280"> |
+| *Instant local cache + YouTube search* | *±3 semitone pitch shift & duet partner* | *Live queue rotation & real-time emoji cheer* |
+
+### ⚙️ Initial Setup Wizard
+Interactive web configuration wizard with hardware multi-monitor detection, audio card selection, and modular SSL tunnel options:
+
+<p align="center">
+  <img src="screenshots/Initial-Setup-Wizard_clean.png" alt="Initial Setup Wizard" width="90%">
+</p>
+
 ---
 
 ## 🍹 Why Tiki Karaoke?
@@ -119,6 +156,12 @@ If `ffmpeg` is not found, YouTube downloads will be paused. Install FFmpeg using
 #### 🔇 Audio playing through laptop instead of TV HDMI
 1. Run `./setup.sh` to launch the interactive configuration wizard.
 2. Under **Stage Audio Output Device**, select your TV's HDMI audio sink from the detected PulseAudio / PipeWire devices.
+
+#### 📱 Mobile devices cannot connect over Local Wi-Fi
+If your Linux host has an active firewall (`ufw`), incoming connections from guest phones on your local Wi-Fi may be rejected. Allow incoming traffic on port 8000:
+```bash
+sudo ufw allow 8000/tcp comment "Tiki Karaoke"
+```
 
 ---
 
