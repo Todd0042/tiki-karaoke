@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Optional, Callable
 import yt_dlp
 
-from config import get_tracks_dir, get_playlists_dir, get_filler_dir, TRACKS_DIR, PLAYLISTS_DIR, TARGET_LUFS
+from config import get_tracks_dir, get_playlists_dir, get_filler_dir, TRACKS_DIR, PLAYLISTS_DIR, TARGET_LUFS, load_config
 from database import (
     get_track_by_id, update_track_download_status,
     get_filler_track_by_id, update_filler_track_status, update_filler_track_metadata
@@ -29,6 +29,15 @@ def sanitize_filename(name: str) -> str:
     cleaned = re.sub(r'[\\/*?:"<>|]', "", name)
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
     return cleaned if cleaned else "unknown"
+
+def get_ydl_video_format() -> str:
+    cfg = load_config()
+    profile = cfg.get("video_quality_profile", "pro")
+    if profile == "inept":
+        # 480p compact format (~70% smaller)
+        return "bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=480]+bestaudio/best[height<=480][ext=mp4]/best[height<=480]/worst[ext=mp4]"
+    # Pro / default: 1080p/720p HD
+    return "bestvideo[height<=1080][vcodec^=avc1]+bestaudio[ext=m4a]/bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"
 
 def normalize_audio_loudness(input_path: Path, output_path: Path, target_lufs: float = TARGET_LUFS) -> bool:
     cmd = [
@@ -72,7 +81,7 @@ def download_and_normalize_track(track_id: int) -> Optional[str]:
     final_path = artist_dir / f"{title_clean} [{video_id}].mp4"
 
     ydl_opts = {
-        "format": "bestvideo[height<=1080][vcodec^=avc1]+bestaudio[ext=m4a]/bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+        "format": get_ydl_video_format(),
         "outtmpl": str(temp_path),
         "quiet": True,
         "no_warnings": True,
@@ -199,7 +208,7 @@ def download_and_normalize_filler_track(filler_id: int) -> Optional[str]:
     final_path = filler_dir / f"{artist_clean} - {title_clean} [{video_id}].mp4"
 
     ydl_opts = {
-        "format": "bestvideo[height<=1080][vcodec^=avc1]+bestaudio[ext=m4a]/bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+        "format": get_ydl_video_format(),
         "outtmpl": str(temp_path),
         "quiet": True,
         "no_warnings": True,

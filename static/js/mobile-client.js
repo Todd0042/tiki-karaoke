@@ -11,6 +11,10 @@ let searchDebounceTimer = null;
 let selectedTrackForQueue = null;
 let selectedPitch = 0;
 let activeDuplicateInfo = null;
+let lastAlertedQueueId = null;
+let currentAvSyncOffset = 0;
+let lastQueuedSongTime = 0;
+let lastQueuedSongId = null;
 
 document.addEventListener("DOMContentLoaded", () => {
     checkIdentity();
@@ -90,10 +94,15 @@ function checkRole() {
             if (hostRow) {
                 hostRow.style.display = isHost ? "flex" : "none";
             }
+            document.body.classList.toggle("host-mode-active", isHost);
             if (isHost) {
                 loadHostSettings();
                 loadHostDisplays();
                 loadHostStorageStatus();
+                checkYtdlpStatus();
+                loadVenueAvSync();
+                checkHostHealth();
+                loadHostNetworkStatus();
             }
             return isHost;
         })
@@ -236,6 +245,11 @@ function showOnboardingModal() {
         checkAvailableAvatarsForName(initialName);
     } else {
         document.querySelectorAll(".avatar-option").forEach(opt => opt.classList.remove("disabled-avatar"));
+    }
+
+    const leaveBtnContainer = document.getElementById("singerLeavePartyContainer");
+    if (leaveBtnContainer) {
+        leaveBtnContainer.style.display = (currentSinger && currentSinger.name) ? "block" : "none";
     }
 
     if (modal) modal.style.display = "flex";
@@ -404,6 +418,11 @@ function initWebSocket() {
     const wsUrl = `${protocol}//${window.location.host}/ws`;
     ws = new WebSocket(wsUrl);
 
+    ws.onopen = () => {
+        const pill = document.getElementById("reconnectingPill");
+        if (pill) pill.style.display = "none";
+    };
+
     ws.onmessage = (event) => {
         try {
             const data = JSON.parse(event.data);
@@ -429,6 +448,8 @@ function initWebSocket() {
                 if (isHost) {
                     loadFillerSettings(data.settings);
                 }
+            } else if (data.type === "singer_on_deck") {
+                handleSingerOnDeckMessage(data);
             }
         } catch (e) {
             console.error("[WS] Error:", e);
@@ -436,7 +457,14 @@ function initWebSocket() {
     };
 
     ws.onclose = () => {
+        const pill = document.getElementById("reconnectingPill");
+        if (pill) pill.style.display = "flex";
         setTimeout(initWebSocket, 2000);
+    };
+
+    ws.onerror = () => {
+        const pill = document.getElementById("reconnectingPill");
+        if (pill) pill.style.display = "flex";
     };
 }
 
@@ -449,6 +477,23 @@ function reconnectWebSocket() {
     }
     initWebSocket();
 }
+
+// Wi-Fi Self-Healing & Tab Wake Synchronization
+window.addEventListener("online", () => {
+    console.log("[Network] Online event detected. Resyncing WebSocket and Queue...");
+    reconnectWebSocket();
+    loadLiveQueue();
+});
+
+document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") {
+        console.log("[App] Tab restored to foreground. Checking connection & Queue...");
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+            reconnectWebSocket();
+        }
+        loadLiveQueue();
+    }
+});
 
 // Navigation Tabs
 function setupNavigation() {
@@ -471,6 +516,8 @@ function setupNavigation() {
                 loadHostSingerRoster();
                 loadHostDisplays();
                 loadHostStorageStatus();
+                checkYtdlpStatus();
+                loadVenueAvSync();
             }
             if (target === "fillerCrateTab") {
                 loadFillerTracks();
@@ -776,9 +823,12 @@ function submitQueue() {
     })
     .then(data => {
         if (!data) return; // duplicate notice displayed in modal
+        lastQueuedSongTime = Date.now();
+        lastQueuedSongId = data.queue_id || null;
         closeQueueModal();
         showToast("🌺 Song Queued! Check Live Queue for your spot.");
         loadLiveQueue();
+        checkNotificationPermissionPrompt();
         // Switch to Queue Tab
         document.querySelector('[data-tab="queueTab"]').click();
     })
@@ -903,6 +953,13 @@ function loadLiveQueue() {
 }
 
 function renderQueue(queue) {
+    const quickstart = document.getElementById("hostQuickstartCard");
+    if (quickstart) {
+        let isDismissed = false;
+        try { isDismissed = !!localStorage.getItem("tiki_hide_quickstart"); } catch (e) {}
+        quickstart.style.display = (queue.length === 0 && !isDismissed && isHost) ? "block" : "none";
+    }
+
     const container = document.getElementById("queueListContainer");
     container.innerHTML = "";
 
@@ -990,6 +1047,108 @@ function renderQueue(queue) {
         `;
         container.appendChild(card);
     });
+
+}
+
+// "You're On Deck (~30s)" Phone Alert Engine (Haptic, Push Notification, Non-blocking Top Banner)
+function handleSingerOnDeckMessage(data) {
+    if (isHost) return; // Never disturb the Host DJ
+    if (!currentSinger || !currentSinger.name) return;
+
+    // Suppress if singer queued this song within the last 15s (they already know)
+    if (lastQueuedSongTime && (Date.now() - lastQueuedSongTime < 15000) && lastQueuedSongId === data.queue_id) {
+        return;
+    }
+
+    const myName = currentSinger.name.trim().toLowerCase();
+    const primaryName = (data.singer_name || "").trim().toLowerCase();
+    const rawPartners = (data.duet_partner || "").trim();
+    const partnerNames = rawPartners 
+        ? rawPartners.replace(/&/g, ",").split(",").map(p => p.trim().toLowerCase()).filter(Boolean)
+        : [];
+    const isPrimary = (data.singer_id === currentSinger.id) || (myName && primaryName === myName);
+    const isPartner = Boolean(myName && partnerNames.includes(myName));
+
+    if (isPrimary || isPartner) {
+        triggerSingerOnDeckAlert(data);
+    }
+}
+
+function triggerSingerOnDeckAlert(track) {
+    // 1. Subtle Haptic Vibration (Android Chrome / Firefox / Samsung Internet)
+    if ("vibrate" in navigator) {
+        try {
+            navigator.vibrate([250, 150, 250]);
+        } catch (e) {
+            console.warn("[Vibrate] Haptic error:", e);
+        }
+    }
+
+    // 2. Web Notification (if permission granted and user switched tabs/screen)
+    if ("Notification" in window && Notification.permission === "granted") {
+        try {
+            new Notification("🎤 You're On Deck (~30s)!", {
+                body: `Get ready to sing "${track.title}"! Head toward the stage microphone.`,
+                icon: "/static/images/tiki-icon.png",
+                vibrate: [250, 150, 250]
+            });
+        } catch (e) {
+            console.warn("[Notification] Push error:", e);
+        }
+    }
+
+    // 3. Sleek Top Slide-Down Banner (Non-Blocking, Auto-Dismisses after 8s)
+    const banner = document.getElementById("singerOnDeckBanner");
+    const titleEl = document.getElementById("onDeckSongTitle");
+    if (titleEl) titleEl.innerText = track.title || "Your Song";
+    if (banner) {
+        banner.style.display = "flex";
+        setTimeout(() => {
+            banner.style.transform = "translateY(0)";
+            banner.style.opacity = "1";
+        }, 10);
+        if (window._onDeckBannerTimer) clearTimeout(window._onDeckBannerTimer);
+        window._onDeckBannerTimer = setTimeout(dismissSingerOnDeckBanner, 8000);
+    }
+}
+
+function dismissSingerOnDeckBanner() {
+    const banner = document.getElementById("singerOnDeckBanner");
+    if (banner) {
+        banner.style.transform = "translateY(-30px)";
+        banner.style.opacity = "0";
+        setTimeout(() => { banner.style.display = "none"; }, 300);
+    }
+}
+
+function checkNotificationPermissionPrompt() {
+    if (!("Notification" in window)) return;
+    if (Notification.permission === "default" && !localStorage.getItem("tiki_dismissed_notif_banner")) {
+        const banner = document.getElementById("notificationPermissionBanner");
+        if (banner) banner.style.display = "flex";
+    }
+}
+
+function requestNotificationPermission() {
+    if (!("Notification" in window)) {
+        showToast("Notifications not supported in this browser.");
+        dismissNotificationBanner();
+        return;
+    }
+    Notification.requestPermission().then(perm => {
+        dismissNotificationBanner();
+        if (perm === "granted") {
+            showToast("🔔 Alerts enabled! We'll buzz you when you're up.");
+        }
+    }).catch(() => {
+        dismissNotificationBanner();
+    });
+}
+
+function dismissNotificationBanner() {
+    const banner = document.getElementById("notificationPermissionBanner");
+    if (banner) banner.style.display = "none";
+    localStorage.setItem("tiki_dismissed_notif_banner", "true");
 }
 
 function joinQueueDuet(queueId) {
@@ -1169,6 +1328,16 @@ function renderSongbookList() {
             pitchHtml = `<span class="badge-key" style="font-size: 0.7rem; padding: 2px 6px;">Key: ${sign}${item.preferred_pitch}</span>`;
         }
 
+        let hostActionsHtml = "";
+        if (isHost) {
+            let saveBtnHtml = "";
+            if (!item.is_downloaded) {
+                saveBtnHtml = `<button class="btn-ghost host-save-lib-btn" style="padding: 6px 10px; font-size: 0.75rem; font-weight: 600; color: var(--neon-lime); border-color: rgba(0,255,100,0.4); white-space: nowrap;">⬇️ Save</button>`;
+            }
+            const bgmBtnHtml = `<button class="btn-ghost host-bgm-import-btn" style="padding: 6px 10px; font-size: 0.75rem; font-weight: 600; color: var(--neon-gold); border-color: rgba(255,183,3,0.4); white-space: nowrap;">🎬 BGM</button>`;
+            hostActionsHtml = `${saveBtnHtml}${bgmBtnHtml}`;
+        }
+
         card.innerHTML = `
             <div style="flex: 1; min-width: 0;">
                 <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px; flex-wrap: wrap;">
@@ -1178,16 +1347,87 @@ function renderSongbookList() {
                 <div style="font-weight: 700; font-size: 0.95rem; color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(item.title)}</div>
                 <div style="color: var(--text-muted); font-size: 0.82rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(item.artist)}</div>
             </div>
-            <button class="btn-ghost history-requeue-btn" style="padding: 7px 14px; font-size: 0.82rem; font-weight: 700; color: var(--neon-cyan); border-color: rgba(0,240,255,0.4); white-space: nowrap;">
-                Sing Again
-            </button>
+            <div style="display: flex; gap: 6px; align-items: center;">
+                ${hostActionsHtml}
+                <button class="btn-ghost history-requeue-btn" style="padding: 7px 14px; font-size: 0.82rem; font-weight: 700; color: var(--neon-cyan); border-color: rgba(0,240,255,0.4); white-space: nowrap;">
+                    Sing Again
+                </button>
+            </div>
         `;
 
         card.querySelector(".history-requeue-btn").onclick = () => {
             openQueueModal(item.track_id, item.title, item.artist, item.video_id, item.preferred_pitch || 0);
         };
+
+        const saveBtn = card.querySelector(".host-save-lib-btn");
+        if (saveBtn) {
+            saveBtn.onclick = (e) => {
+                e.stopPropagation();
+                saveBtn.disabled = true;
+                saveBtn.innerText = "⏳ Saving...";
+                fetch(`/api/host/tracks/${item.track_id}/download`, { method: "POST" })
+                    .then(res => res.json())
+                    .then(d => {
+                        saveBtn.innerText = "✅ Saved";
+                        showCustomToast(d.message || "Downloading track to library!");
+                    })
+                    .catch(() => {
+                        saveBtn.innerText = "❌ Error";
+                    });
+            };
+        }
+
+        const bgmBtn = card.querySelector(".host-bgm-import-btn");
+        if (bgmBtn) {
+            bgmBtn.onclick = (e) => {
+                e.stopPropagation();
+                bgmBtn.disabled = true;
+                bgmBtn.innerText = "🔍 Finding MV...";
+                fetch(`/api/host/filler/import-from-song/${item.track_id}`, { method: "POST" })
+                    .then(res => res.json())
+                    .then(d => {
+                        if (d.status === "ok") {
+                            bgmBtn.innerText = "✅ Added to BGM";
+                            showCustomToast(d.message || "Added music video to BGM!");
+                        } else {
+                            bgmBtn.innerText = "⚠️ In BGM";
+                            showCustomToast(d.message || "Already in BGM crate");
+                        }
+                    })
+                    .catch(() => {
+                        bgmBtn.innerText = "❌ No Video";
+                        showCustomToast("Could not find official music video");
+                    });
+            };
+        }
+
         list.appendChild(card);
     });
+}
+
+function installStarterCrate() {
+    const btn = event ? event.target : null;
+    const oldText = btn ? btn.innerText : "";
+    if (btn) {
+        btn.disabled = true;
+        btn.innerText = "🌴 Installing 15 Classics...";
+    }
+    showCustomToast("🌴 Queueing 15 starter music videos...");
+    fetch("/api/host/filler/install-starter", { method: "POST" })
+        .then(res => res.json())
+        .then(data => {
+            showCustomToast(`🌴 Added ${data.added_count} starter music videos to BGM!`);
+            loadFillerTracks();
+        })
+        .catch(err => {
+            showCustomToast("⚠️ Error installing starter crate: " + err);
+        })
+        .finally(() => {
+            if (btn) {
+                btn.disabled = false;
+                btn.innerText = oldText || "🌴 Install Starter Crate (15 Classics)";
+            }
+        });
 }
 
 function loadHistory() {
@@ -1227,6 +1467,19 @@ function hostAdd15s() {
     fetch("/api/host/add-time", { method: "POST" });
 }
 
+function hostRefreshStage(hard = false) {
+    const url = hard ? "/api/host/stage/refresh?hard=true" : "/api/host/stage/refresh";
+    fetch(url, { method: "POST" })
+        .then(res => res.json())
+        .then(data => {
+            showToast(hard ? "🔄 Reloading all stage display screens..." : "🔄 Stage displays refreshed and resynced!");
+            loadLiveQueue();
+        })
+        .catch(err => {
+            alert("Error refreshing stage: " + err.message);
+        });
+}
+
 function hostPlaySound(sound) {
     if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: "soundboard_play", sound: sound }));
@@ -1254,6 +1507,84 @@ function loadHostSettings() {
             const ttsCheck = document.getElementById("ttsToggle");
             if (ttsCheck) ttsCheck.checked = (settings.tts_enabled === "true");
         });
+}
+
+// Venue A/V Sync (Audio Latency Offset)
+function loadVenueAvSync() {
+    const badge = document.getElementById("avSyncBadge");
+    if (!badge) return;
+
+    fetch("/api/host/av-sync")
+        .then(res => res.json())
+        .then(data => {
+            currentAvSyncOffset = data.offset_ms || 0;
+            updateAvSyncUI();
+        })
+        .catch(err => {
+            console.error("[AVSync] Failed to load sync offset:", err);
+        });
+}
+
+function updateAvSyncUI() {
+    const badge = document.getElementById("avSyncBadge");
+    const desc = document.getElementById("avSyncDesc");
+    if (!badge) return;
+
+    const sign = currentAvSyncOffset > 0 ? "+" : "";
+    badge.innerText = `${sign}${currentAvSyncOffset} ms`;
+
+    if (currentAvSyncOffset === 0) {
+        badge.style.color = "var(--neon-gold)";
+        badge.style.background = "rgba(255, 183, 3, 0.18)";
+        if (desc) desc.innerText = "Direct PA / zero lag. Adjust if TV picture trails behind the speakers.";
+    } else if (currentAvSyncOffset > 0) {
+        badge.style.color = "var(--neon-cyan)";
+        badge.style.background = "rgba(0, 240, 255, 0.18)";
+        if (desc) desc.innerText = `Audio delayed by ${currentAvSyncOffset}ms to match HDMI TV / projector video lag.`;
+    } else {
+        badge.style.color = "#ffaa00";
+        badge.style.background = "rgba(255, 170, 0, 0.18)";
+        if (desc) desc.innerText = `Audio advanced by ${Math.abs(currentAvSyncOffset)}ms for Bluetooth / wireless PA delay.`;
+    }
+
+    // Highlight matching preset button
+    document.querySelectorAll(".av-preset-btn").forEach(btn => {
+        const val = parseInt(btn.dataset.offset, 10);
+        if (val === currentAvSyncOffset) {
+            btn.style.borderColor = "var(--neon-cyan)";
+            btn.style.color = "var(--neon-cyan)";
+            btn.style.background = "rgba(0, 240, 255, 0.15)";
+        } else {
+            btn.style.borderColor = "rgba(255,255,255,0.15)";
+            btn.style.color = "var(--text-main)";
+            btn.style.background = "transparent";
+        }
+    });
+}
+
+function setVenueAvSyncPreset(offsetMs) {
+    currentAvSyncOffset = parseInt(offsetMs, 10) || 0;
+    updateAvSyncUI();
+
+    fetch("/api/host/av-sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ offset_ms: currentAvSyncOffset })
+    })
+    .then(res => res.json())
+    .then(data => {
+        const sign = data.offset_ms > 0 ? "+" : "";
+        showToast(`🎛️ Venue A/V Sync: ${sign}${data.offset_ms} ms`);
+    })
+    .catch(err => {
+        console.error("[AVSync] Failed to set sync offset:", err);
+        showToast("⚠️ Failed to update A/V sync");
+    });
+}
+
+function nudgeVenueAvSync(deltaMs) {
+    const newOffset = Math.max(-300, Math.min(500, currentAvSyncOffset + deltaMs));
+    setVenueAvSyncPreset(newOffset);
 }
 
 // Helpers
@@ -1360,10 +1691,18 @@ function loadHostSingerRoster() {
                 let removeBtnHtml = "";
                 if (pendingSongs.length > 0) {
                     removeBtnHtml = `
-                        <button onclick="hostRemoveAllSingerSongs(${s.singer_id}, '${escapeHtml(s.singer_name)}', ${pendingSongs.length})" 
+                        <button onclick="openHostSingerManageModal(${s.singer_id}, '${escapeHtml(s.singer_name)}', '${s.singer_avatar || '🌺'}', ${pendingSongs.length})" 
                                 class="btn-ghost" 
                                 style="margin-top: 10px; width: 100%; padding: 8px; font-size: 0.8rem; font-weight: 600; color: #ff5555; border-color: rgba(255,85,85,0.35); background: rgba(255,85,85,0.08); border-radius: 8px; cursor: pointer;">
-                            🗑️ Remove All ${pendingSongs.length} Queued Song${pendingSongs.length > 1 ? 's' : ''} for ${escapeHtml(s.singer_name)}
+                            🗑️ Manage / Remove ${pendingSongs.length} Queued Song${pendingSongs.length > 1 ? 's' : ''}
+                        </button>
+                    `;
+                } else {
+                    removeBtnHtml = `
+                        <button onclick="openHostSingerManageModal(${s.singer_id}, '${escapeHtml(s.singer_name)}', '${s.singer_avatar || '🌺'}', 0)" 
+                                class="btn-ghost" 
+                                style="margin-top: 10px; width: 100%; padding: 6px; font-size: 0.75rem; font-weight: 600; color: var(--text-muted); border-color: rgba(255,255,255,0.15); border-radius: 8px; cursor: pointer;">
+                            👋 Check Out Singer (Left Party)
                         </button>
                     `;
                 }
@@ -1389,20 +1728,88 @@ function loadHostSingerRoster() {
         });
 }
 
-function hostRemoveAllSingerSongs(singerId, singerName, count) {
-    if (!confirm(`Are you sure you want to remove all ${count} queued song(s) for ${singerName}?`)) {
+let activeManageSinger = null;
+
+function openHostSingerManageModal(singerId, singerName, singerAvatar, pendingCount) {
+    activeManageSinger = { singerId, singerName, singerAvatar, pendingCount };
+    const modal = document.getElementById("hostSingerManageModal");
+    if (!modal) return;
+
+    const avEl = document.getElementById("manageSingerAvatar");
+    const nameEl = document.getElementById("manageSingerName");
+    const nameTextEl = document.getElementById("manageSingerNameText");
+    const countEl = document.getElementById("manageSingerQueueCount");
+    const clearBtn = document.getElementById("manageClearQueueOnlyBtn");
+
+    if (avEl) avEl.innerText = singerAvatar || "🌺";
+    if (nameEl) nameEl.innerText = singerName;
+    if (nameTextEl) nameTextEl.innerText = singerName;
+    if (countEl) {
+        countEl.innerText = pendingCount > 0 ? `${pendingCount} song${pendingCount === 1 ? '' : 's'} in queue` : "No songs in queue";
+    }
+    if (clearBtn) {
+        clearBtn.style.display = pendingCount > 0 ? "flex" : "none";
+    }
+
+    modal.style.display = "flex";
+}
+
+function closeHostSingerManageModal() {
+    activeManageSinger = null;
+    const modal = document.getElementById("hostSingerManageModal");
+    if (modal) modal.style.display = "none";
+}
+
+function confirmHostSingerAction(checkout) {
+    if (!activeManageSinger) return;
+    const { singerId, singerName, pendingCount } = activeManageSinger;
+    closeHostSingerManageModal();
+
+    fetch(`/api/host/singer/${singerId}/remove-all`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ checkout: !!checkout })
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (checkout) {
+            showToast(`👋 ${singerName} checked out! Name and icon are now free.`);
+        } else {
+            showToast(`Cleared ${data.deleted_count || pendingCount} song(s) for ${singerName}. Profile remains active.`);
+        }
+        loadHostSingerRoster();
+        loadLiveQueue();
+    })
+    .catch(err => {
+        alert("Error updating singer: " + err.message);
+    });
+}
+
+function singerLeaveParty() {
+    if (!confirm("Are you leaving the party? This will clear any queued songs and free your nickname and avatar for other guests.")) {
         return;
     }
-    fetch(`/api/host/singer/${singerId}/remove-all`, { method: "POST" })
-        .then(res => res.json())
-        .then(data => {
-            showToast(`Removed all ${data.deleted_count || count} song(s) for ${singerName}`);
-            loadHostSingerRoster();
-            loadLiveQueue();
-        })
-        .catch(err => {
-            alert("Error removing songs: " + err.message);
-        });
+    const token = currentSinger ? currentSinger.token : (localStorage.getItem("tiki_singer_token") || "");
+    fetch("/api/singer/leave", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: token })
+    })
+    .then(res => res.json())
+    .then(() => {
+        showToast("You have checked out of the party. Have a great night! 🌺");
+        localStorage.removeItem("tiki_singer_token");
+        localStorage.removeItem("tiki_singer_name");
+        localStorage.removeItem("tiki_singer_avatar");
+        currentSinger = null;
+        closeOnboardingModal();
+        const badge = document.getElementById("headerSingerBadge");
+        if (badge) badge.innerHTML = "🌺 Welcome";
+        loadLiveQueue();
+    })
+    .catch(err => {
+        alert("Error checking out: " + err.message);
+    });
 }
 
 function hostPurgeAllSingers() {
@@ -1804,6 +2211,142 @@ function loadHostStorageStatus() {
         });
 }
 
+function checkYtdlpStatus() {
+    const badge = document.getElementById("ytdlpBadge");
+    const text = document.getElementById("ytdlpStatusText");
+    const btn = document.getElementById("updateYtdlpBtn");
+    if (!badge || !text) return;
+
+    fetch("/api/host/system/ytdlp-status")
+        .then(res => res.json())
+        .then(data => {
+            if (data.update_available) {
+                badge.innerText = `Update Available (v${data.latest_version})`;
+                badge.style.color = "var(--neon-gold)";
+                badge.style.background = "rgba(255, 183, 3, 0.18)";
+                text.innerText = `Installed: v${data.current_version} • Latest: v${data.latest_version}`;
+                if (btn) {
+                    btn.innerText = "⚡ Update Now";
+                    btn.style.color = "var(--neon-gold)";
+                    btn.style.borderColor = "var(--neon-gold)";
+                }
+            } else {
+                badge.innerText = `v${data.current_version} (Up to date)`;
+                badge.style.color = "var(--neon-lime)";
+                badge.style.background = "rgba(0, 255, 100, 0.15)";
+                text.innerText = `yt-dlp v${data.current_version} is current and operational.`;
+                if (btn) {
+                    btn.innerText = "🔄 Re-check / Update";
+                    btn.style.color = "var(--neon-cyan)";
+                    btn.style.borderColor = "rgba(0, 240, 255, 0.4)";
+                }
+            }
+        })
+        .catch(err => {
+            console.error("[System] Failed to check yt-dlp status:", err);
+            badge.innerText = "Status Unknown";
+            badge.style.color = "var(--text-muted)";
+        });
+}
+
+function checkHostHealth() {
+    const ffmpegBanner = document.getElementById("hostFfmpegBanner");
+    fetch("/api/host/health")
+        .then(res => res.json())
+        .then(data => {
+            if (ffmpegBanner) {
+                ffmpegBanner.style.display = data.ffmpeg_installed ? "none" : "block";
+            }
+        })
+        .catch(err => {
+            console.error("[Host Health] Health check error:", err);
+        });
+}
+
+function dismissQuickstartCard() {
+    const card = document.getElementById("hostQuickstartCard");
+    if (card) card.style.display = "none";
+    try {
+        localStorage.setItem("tiki_hide_quickstart", "true");
+    } catch (e) {}
+}
+
+function loadHostNetworkStatus() {
+    const urlEl = document.getElementById("networkCurrentUrl");
+    const badgeEl = document.getElementById("networkSslBadge");
+    const modeEl = document.getElementById("networkModeLabel");
+    if (!urlEl || !badgeEl) return;
+
+    fetch("/api/state")
+        .then(res => res.json())
+        .then(data => {
+            const net = data.network;
+            if (net) {
+                urlEl.innerText = net.base_url || window.location.origin;
+                if (net.is_https) {
+                    badgeEl.innerText = "🔒 Secure SSL";
+                    badgeEl.style.color = "var(--neon-lime)";
+                    badgeEl.style.background = "rgba(0, 255, 100, 0.15)";
+                } else {
+                    badgeEl.innerText = "⚠️ Unencrypted HTTP";
+                    badgeEl.style.color = "var(--neon-gold)";
+                    badgeEl.style.background = "rgba(255, 183, 3, 0.15)";
+                }
+                const modeNames = {
+                    "cloudflare_quick": "Cloudflare Quick Tunnel",
+                    "cloudflare_named": "Cloudflare Named Tunnel",
+                    "tailscale": "Tailscale Funnel",
+                    "duckdns": "DuckDNS + Caddy",
+                    "bore": "Bore Static Port",
+                    "local": "Local Wi-Fi Only"
+                };
+                if (modeEl) {
+                    modeEl.innerText = `Mode: ${modeNames[net.remote_mode] || net.remote_mode}`;
+                }
+            }
+        })
+        .catch(err => {
+            console.error("[Network] Failed to load network status:", err);
+        });
+}
+
+async function updateYtdlpEngine() {
+    const btn = document.getElementById("updateYtdlpBtn");
+    const badge = document.getElementById("ytdlpBadge");
+    const text = document.getElementById("ytdlpStatusText");
+
+    if (btn) {
+        btn.disabled = true;
+        btn.innerText = "⏳ Updating...";
+    }
+    if (badge) {
+        badge.innerText = "Installing...";
+        badge.style.color = "var(--neon-cyan)";
+    }
+    if (text) {
+        text.innerText = "Upgrading yt-dlp package from PyPI, please wait...";
+    }
+    showToast("⚙️ Upgrading yt-dlp Video Engine in background...");
+
+    try {
+        const res = await fetch("/api/host/system/update-ytdlp", { method: "POST" });
+        const data = await res.json();
+        if (res.ok && data.status === "success") {
+            showToast(`🎉 yt-dlp updated: v${data.old_version} ➔ v${data.new_version}`);
+            checkYtdlpStatus();
+        } else {
+            showToast(`⚠️ Update error: ${data.detail || data.output || "Failed"}`);
+            checkYtdlpStatus();
+        }
+    } catch (err) {
+        console.error("[System] yt-dlp update request failed:", err);
+        showToast("❌ Network error while updating yt-dlp engine.");
+        checkYtdlpStatus();
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
 function openCleanupModal() {
     const modal = document.getElementById("cleanupModal");
     if (modal) modal.style.display = "flex";
@@ -2077,13 +2620,22 @@ function renderFillerSearchResults(items) {
                         ${durStr ? `⏱️ ${durStr}` : ""} ${item.channel ? `• ${escapeHtml(item.channel)}` : ""}
                     </div>
                 </div>
-                <button type="button" 
-                        id="stageBtn_${item.video_id}"
-                        onclick='stageFillerVideo(${JSON.stringify(item)})'
-                        class="${isStaged ? 'btn-ghost' : 'btn-neon-pink'}" 
-                        style="padding: 8px 12px; font-size: 0.8rem; flex-shrink: 0;">
-                    ${isStaged ? "✓ Staged" : "+ Stage"}
-                </button>
+                <div style="display: flex; gap: 6px; align-items: center; flex-shrink: 0;">
+                    <button type="button" 
+                            onclick='previewFillerSearchResult(${JSON.stringify(item)})'
+                            class="btn-ghost" 
+                            style="padding: 8px 10px; font-size: 0.8rem;" 
+                            title="Preview video privately on phone">
+                        👁️ Preview
+                    </button>
+                    <button type="button" 
+                            id="stageBtn_${item.video_id}"
+                            onclick='stageFillerVideo(${JSON.stringify(item)})'
+                            class="${isStaged ? 'btn-ghost' : 'btn-neon-pink'}" 
+                            style="padding: 8px 12px; font-size: 0.8rem;">
+                        ${isStaged ? "✓ Staged" : "+ Stage"}
+                    </button>
+                </div>
             </div>
         `;
     });
@@ -2276,10 +2828,17 @@ function renderFillerCrateView(tracks) {
                         </div>
                     </div>
                     <div style="display: flex; align-items: center; gap: 6px; flex-shrink: 0;">
-                        <button type="button" onclick="forcePlayFillerTrack(${t.id})" class="btn-ghost" style="padding: 6px 10px; font-size: 0.78rem; border-color: var(--neon-gold); color: var(--neon-gold);" title="Play this video on stage right now">
-                            ▶ Play Now
+                        <button type="button" 
+                                onclick='previewFillerCrateTrack(${t.id}, ${JSON.stringify(t.title)}, ${JSON.stringify(t.artist)}, "${t.video_id}", ${!!t.is_downloaded})' 
+                                class="btn-ghost" 
+                                style="padding: 6px 10px; font-size: 0.78rem;" 
+                                title="Preview video privately on phone">
+                            👁️ Preview
                         </button>
-                        <button type="button" onclick="deleteFillerTrack(${t.id})" class="btn-ghost" style="padding: 6px 8px; font-size: 0.78rem; color: #ff5555;" title="Remove track">
+                        <button type="button" onclick="forcePlayFillerTrack(${t.id})" class="btn-ghost" style="padding: 6px 10px; font-size: 0.78rem; border-color: var(--neon-gold); color: var(--neon-gold);" title="Play this video on stage right now">
+                            ▶ Stage
+                        </button>
+                        <button type="button" onclick="deleteFillerTrack(${t.id})" class="btn-ghost" style="padding: 6px 8px; font-size: 0.78rem; color: #ff5555;" title="Remove track from crate">
                             🗑️
                         </button>
                     </div>
@@ -2374,6 +2933,105 @@ function setBgmTransitionPolicy(policy) {
     .then(() => {
         showToast(policy === "finish" ? "⏳ Policy: Let current video finish" : "⚡ Policy: 3s soft fade when singer queues");
     });
+}
+
+// =============================================================================
+// HOST VIDEO PREVIEW MODAL LOGIC
+// =============================================================================
+
+function openHostVideoPreviewModal(title, artist, badgeText) {
+    const modal = document.getElementById("hostVideoPreviewModal");
+    if (!modal) return;
+    const badgeEl = document.getElementById("previewModalBadge");
+    const titleEl = document.getElementById("previewModalTitle");
+    const artistEl = document.getElementById("previewModalArtist");
+    if (badgeEl) badgeEl.innerText = badgeText || "🎬 BGM PREVIEW";
+    if (titleEl) titleEl.innerText = title;
+    if (artistEl) artistEl.innerText = artist;
+    modal.style.display = "flex";
+}
+
+function closeHostVideoPreview() {
+    const modal = document.getElementById("hostVideoPreviewModal");
+    if (modal) modal.style.display = "none";
+
+    const v = document.getElementById("previewLocalVideo");
+    if (v) {
+        v.pause();
+        v.removeAttribute("src");
+        v.load();
+        v.style.display = "none";
+    }
+
+    const iframe = document.getElementById("previewYoutubeIframe");
+    if (iframe) {
+        iframe.src = "";
+        iframe.style.display = "none";
+    }
+}
+
+function previewFillerSearchResult(video) {
+    if (!video || !video.video_id) return;
+    openHostVideoPreviewModal(video.title, video.artist, "🔍 YOUTUBE SEARCH PREVIEW");
+
+    const localV = document.getElementById("previewLocalVideo");
+    if (localV) localV.style.display = "none";
+
+    const iframe = document.getElementById("previewYoutubeIframe");
+    if (iframe) {
+        iframe.style.display = "block";
+        iframe.src = `https://www.youtube-nocookie.com/embed/${video.video_id}?autoplay=1`;
+    }
+
+    const actions = document.getElementById("previewModalActions");
+    if (actions) {
+        const isStaged = currentStagedFillerIds.has(video.video_id);
+        actions.innerHTML = `
+            <button type="button" onclick="closeHostVideoPreview()" class="btn-ghost" style="padding: 10px 16px; font-size: 0.9rem; border-radius: 8px; cursor: pointer;">
+                Close
+            </button>
+            <button type="button" 
+                    id="previewStageBtn"
+                    onclick='stageFillerVideo(${JSON.stringify(video)}); closeHostVideoPreview();' 
+                    class="${isStaged ? 'btn-ghost' : 'btn-neon-pink'}" 
+                    style="padding: 10px 18px; font-size: 0.9rem; border-radius: 8px; cursor: pointer;">
+                ${isStaged ? "✓ In Crate" : "+ Add to Crate"}
+            </button>
+        `;
+    }
+}
+
+function previewFillerCrateTrack(trackId, title, artist, videoId, isDownloaded) {
+    openHostVideoPreviewModal(title, artist, "📦 CRATE VIDEO PREVIEW");
+
+    const localV = document.getElementById("previewLocalVideo");
+    const iframe = document.getElementById("previewYoutubeIframe");
+
+    if (isDownloaded && localV) {
+        if (iframe) iframe.style.display = "none";
+        localV.style.display = "block";
+        localV.src = `/stream/filler/${trackId}`;
+        localV.play().catch(() => {});
+    } else if (videoId && iframe) {
+        if (localV) localV.style.display = "none";
+        iframe.style.display = "block";
+        iframe.src = `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1`;
+    }
+
+    const actions = document.getElementById("previewModalActions");
+    if (actions) {
+        actions.innerHTML = `
+            <button type="button" onclick="deleteFillerTrack(${trackId}); closeHostVideoPreview();" class="btn-ghost" style="padding: 10px 14px; font-size: 0.85rem; color: #ff5555; border-color: rgba(255,85,85,0.4); border-radius: 8px; cursor: pointer;">
+                🗑️ Remove from Crate
+            </button>
+            <button type="button" onclick="forcePlayFillerTrack(${trackId}); closeHostVideoPreview();" class="btn-ghost" style="padding: 10px 14px; font-size: 0.85rem; color: var(--neon-gold); border-color: var(--neon-gold); border-radius: 8px; cursor: pointer;">
+                ▶ Play on Stage
+            </button>
+            <button type="button" onclick="closeHostVideoPreview()" class="btn-ghost" style="padding: 10px 16px; font-size: 0.9rem; border-radius: 8px; cursor: pointer;">
+                Close
+            </button>
+        `;
+    }
 }
 
 

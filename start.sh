@@ -7,7 +7,7 @@ cd "$DIR"
 PID_FILE="$DIR/data/karaoke.pid"
 
 stop_services() {
-    echo "🌴 Stopping all Florida Tiki Karaoke services..."
+    echo "🌴 Stopping all Tiki Karaoke services..."
     if [ -f "$PID_FILE" ]; then
         PID=$(cat "$PID_FILE")
         if kill -0 "$PID" 2>/dev/null; then
@@ -30,14 +30,14 @@ status_services() {
     if [ -f "$PID_FILE" ]; then
         PID=$(cat "$PID_FILE")
         if kill -0 "$PID" 2>/dev/null; then
-            echo "🌴 Florida Tiki Karaoke Server is RUNNING (PID: $PID)"
+            echo "🌴 Tiki Karaoke Server is RUNNING (PID: $PID)"
             if pgrep -f "bin/bore" >/dev/null; then
                 echo "🌐 Permanent Remote Tunnel (bore) is ACTIVE"
             fi
             return 0
         fi
     fi
-    echo "ℹ️ Florida Tiki Karaoke Server is STOPPED"
+    echo "ℹ️ Tiki Karaoke Server is STOPPED"
     return 1
 }
 

@@ -1,9 +1,18 @@
 import os
 import io
+import sys
+import json
 import time
 import socket
 import asyncio
 import secrets
+import subprocess
+import signal
+import threading
+import shutil
+import urllib.parse
+import urllib.request
+from pathlib import Path
 from typing import List, Dict, Any, Optional
 from contextlib import asynccontextmanager
 
@@ -16,7 +25,7 @@ import qrcode
 
 from config import (
     STATIC_DIR, TEMPLATES_DIR, TRACKS_DIR, HOST_TOKEN, HOST_PIN,
-    PORT, DEFAULT_INTERMISSION_SECONDS, PUBLIC_HOST,
+    PORT, DEFAULT_INTERMISSION_SECONDS, PUBLIC_HOST, REMOTE_MODE,
     load_config, save_config, is_configured,
     get_library_dir, get_tracks_dir, get_playlists_dir, get_data_dir,
     get_db_path, get_path_info, ensure_storage_dirs, get_storage_status,
@@ -39,7 +48,7 @@ from database import (
     add_filler_track, get_filler_tracks, get_filler_track_by_id,
     get_filler_track_by_video_id, update_filler_track_status,
     update_filler_track_metadata, delete_filler_track,
-    record_filler_play, get_next_vibe_filler_track
+    record_filler_play, get_next_vibe_filler_track, checkout_singer
 )
 from search import tiered_search, query_youtube_music_videos
 from downloader import (
@@ -82,9 +91,12 @@ PUBLIC_IP = get_public_ip()
 def get_base_url() -> str:
     host = get_public_host()
     if host:
-        if not host.startswith("http://") and not host.startswith("https://"):
-            return f"http://{host}"
-        return host
+        if host.startswith("http://") or host.startswith("https://"):
+            return host
+        if os.getenv("TIKI_USE_HTTPS") == "1" or "trycloudflare.com" in host or ".ts.net" in host:
+            return f"https://{host}"
+        return f"http://{host}"
+    from config import PORT
     return f"http://{get_public_ip()}:{PORT}"
 
 # WebSocket Connection Hub
@@ -186,13 +198,28 @@ async def on_filler_download_finished(filler_id: int, local_path: Optional[str])
 
 register_filler_callback(on_filler_download_finished)
 
-async def trigger_filler_sequence(last_artist: str = "", last_genre: str = ""):
+async def trigger_filler_sequence(last_artist: str = "", last_genre: str = "", last_year: int = 0):
     global filler_active, filler_transition_state, filler_buffer_end, filler_buffer_task, filler_current_track
     if get_setting("bgm_video_enabled", "true") != "true":
         return
 
-    next_track = get_next_vibe_filler_track(last_artist, last_genre)
+    next_track = get_next_vibe_filler_track(last_artist, last_genre, last_year)
     if not next_track:
+        return
+
+    # If queue is empty, start downloaded music video immediately without text countdown
+    queue = get_queue()
+    pending = [q for q in queue if q["status"] == "pending"]
+    if not pending:
+        filler_active = True
+        filler_transition_state = "playing"
+        filler_current_track = next_track
+        filler_buffer_end = None
+        record_filler_play(next_track["id"])
+        await manager.broadcast({
+            "type": "play_filler_track",
+            "track": next_track
+        })
         return
 
     buffer_seconds = int(get_setting("bgm_buffer_seconds", "15"))
@@ -214,7 +241,7 @@ async def trigger_filler_sequence(last_artist: str = "", last_genre: str = ""):
             if filler_active and filler_transition_state == "buffer_15s":
                 queue = get_queue()
                 if not queue:
-                    pick = get_next_vibe_filler_track(last_artist, last_genre)
+                    pick = get_next_vibe_filler_track(last_artist, last_genre, last_year)
                     if pick:
                         filler_current_track = pick
                         filler_transition_state = "playing"
@@ -271,14 +298,50 @@ async def on_filler_track_ended():
             filler_current_track = None
             await manager.broadcast({"type": "stop_filler"})
 
+async def intermission_watchdog_loop():
+    """Background watchdog that ensures tracks automatically start when intermission timer ends,
+    even if client browsers throttle setInterval or drop connection."""
+    global current_intermission_end
+    while True:
+        try:
+            await asyncio.sleep(1.0)
+            if current_intermission_end and time.time() >= current_intermission_end:
+                current = get_current_playing()
+                if not current:
+                    queue = get_queue()
+                    pending = [q for q in queue if q["status"] == "pending"]
+                    if pending:
+                        next_up = pending[0]
+                        current_intermission_end = None
+                        print(f"[Watchdog] Intermission completed. Auto-starting track {next_up['queue_id']} ({next_up['title']})")
+                        set_queue_status(next_up["queue_id"], "playing")
+                        playing_track = get_current_playing()
+                        await manager.broadcast({
+                            "type": "play_track",
+                            "track": playing_track
+                        })
+                        await manager.broadcast({
+                            "type": "queue_updated",
+                            "queue": get_queue()
+                        })
+                    else:
+                        current_intermission_end = None
+                else:
+                    current_intermission_end = None
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            print(f"[Watchdog] Error: {e}")
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
     clear_queue_on_startup()
     worker_task = asyncio.create_task(downloader_worker())
     filler_worker_task = asyncio.create_task(filler_downloader_worker())
+    watchdog_task = asyncio.create_task(intermission_watchdog_loop())
     print("=" * 60)
-    print("🌴 FLORIDA TIKI KARAOKE LOUNGE 🌴")
+    print("🌴 TIKI KARAOKE LOUNGE 🌴")
     print(f"👉 TV Main Stage Display: {get_base_url()}/stage")
     print(f"👉 Singer Mobile App:    {get_base_url()}/join")
     print(f"👉 Host DJ Remote URL:   {get_base_url()}/host?token={HOST_TOKEN}")
@@ -287,6 +350,7 @@ async def lifespan(app: FastAPI):
     yield
     worker_task.cancel()
     filler_worker_task.cancel()
+    watchdog_task.cancel()
 
 app = FastAPI(title="Tiki Karaoke", lifespan=lifespan)
 
@@ -344,6 +408,13 @@ def is_host_request(request: Request) -> bool:
         return True
     return False
 
+def is_local_request(request: Request) -> bool:
+    """Returns True if the request originates from localhost or the host machine itself."""
+    if not request.client:
+        return True
+    h = request.client.host
+    return h in ("127.0.0.1", "::1", "localhost", "testclient")
+
 class PinAuthRequest(BaseModel):
     pin: str
 
@@ -378,7 +449,7 @@ async def api_auth_pin(req: PinAuthRequest, request: Request):
 # Page Routes
 @app.get("/setup", response_class=HTMLResponse)
 async def setup_page(request: Request):
-    if is_configured() and not is_host_request(request):
+    if is_configured() and not (is_host_request(request) or is_local_request(request)):
         return RedirectResponse(url="/", status_code=303)
     cfg = load_config()
     return templates.TemplateResponse(request=request, name="setup.html", context={
@@ -391,93 +462,369 @@ async def setup_page(request: Request):
 
 @app.get("/api/setup/displays")
 async def api_get_setup_displays(request: Request):
-    if is_configured() and not is_host_request(request):
+    if is_configured() and not (is_host_request(request) or is_local_request(request)):
         raise HTTPException(status_code=403, detail="Host DJ authorization required")
     return get_available_displays()
 
 @app.get("/api/setup/audio-devices")
 async def api_get_setup_audio_devices(request: Request):
-    if is_configured() and not is_host_request(request):
+    if is_configured() and not (is_host_request(request) or is_local_request(request)):
         raise HTTPException(status_code=403, detail="Host DJ authorization required")
     return get_available_audio_sinks()
 
+@app.get("/stage/identify", response_class=HTMLResponse)
+async def stage_identify_page(request: Request, id: int = 0, name: str = "Display", role: str = "stage"):
+    is_host = (role == "host")
+    emoji = "👑" if is_host else "🌴"
+    title_prefix = "HOST DJ CONTROL DISPLAY" if is_host else "STAGE DISPLAY"
+    border_color = "#ffb703" if is_host else "#00f0ff"
+    card_border = "#ff007f" if is_host else "#39ff14"
+    h1_color = "#ffb703" if is_host else "#39ff14"
+    html_content = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <title>{title_prefix} #{id} Identified</title>
+        <style>
+            body {{
+                margin: 0;
+                padding: 0;
+                background: #080e18;
+                color: #00f0ff;
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                height: 100vh;
+                overflow: hidden;
+                box-sizing: border-box;
+                border: 12px solid {border_color};
+                box-shadow: inset 0 0 100px rgba(0, 240, 255, 0.5);
+            }}
+            .card {{
+                background: rgba(13, 21, 38, 0.95);
+                border: 2px solid {card_border};
+                border-radius: 24px;
+                padding: 40px 60px;
+                text-align: center;
+                box-shadow: 0 0 60px rgba(57, 255, 20, 0.4);
+                max-width: 85%;
+            }}
+            h1 {{ font-size: 3.6rem; margin: 0 0 12px 0; color: {h1_color}; text-shadow: 0 0 25px rgba(255, 183, 3, 0.6); }}
+            h2 {{ font-size: 2.2rem; margin: 0 0 16px 0; color: #00f0ff; }}
+            p {{ font-size: 1.3rem; margin: 0; color: #39ff14; font-weight: bold; }}
+            .sub {{ font-size: 1.05rem; color: #94a3b8; margin-top: 25px; }}
+        </style>
+    </head>
+    <body>
+        <div class="card">
+            <div style="font-size: 4.5rem; margin-bottom: 8px;">{emoji}</div>
+            <h1>{title_prefix} #{id}</h1>
+            <h2>{name}</h2>
+            <p>✅ Target Screen Identified Successfully!</p>
+            <div class="sub">Closing automatically...</div>
+        </div>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html_content)
+
 @app.post("/api/setup/test-display")
 async def api_test_display(payload: Dict[str, Any], request: Request):
-    if is_configured() and not is_host_request(request):
+    if is_configured() and not (is_host_request(request) or is_local_request(request)):
         raise HTTPException(status_code=403, detail="Host DJ authorization required")
-    badge = payload.get("badge", "📺 MAIN STAGE DISPLAY")
+    disp_id = int(payload.get("display_id", 0))
+    disp_name = payload.get("name", f"Monitor {disp_id}")
+    role = payload.get("role", "stage")
+    badge_prefix = "👑 HOST DJ CONTROL DISPLAY" if role == "host" else "📺 MAIN STAGE DISPLAY"
+    badge = payload.get("badge", f"{badge_prefix} #{disp_id}: {disp_name}")
+    
+    # 1. Broadcast test badge to any connected stage displays
     await manager.broadcast({
         "type": "test_display",
         "badge": badge
     })
+
+    # 2. Launch momentary popup on that exact physical monitor
+    firefox_bin = shutil.which("firefox")
+    if firefox_bin:
+        try:
+            profile_dir = Path(f"/tmp/tiki_identify_profile_{disp_id}")
+            profile_dir.mkdir(parents=True, exist_ok=True)
+            port = int(payload.get("port", PORT))
+            encoded_name = urllib.parse.quote(disp_name)
+            ident_url = f"http://localhost:{port}/stage/identify?id={disp_id}&name={encoded_name}&role={role}"
+            cmd = [
+                firefox_bin,
+                "--no-remote",
+                "--profile", str(profile_dir),
+                "--new-instance",
+                "--kiosk",
+                f"--kiosk-monitor={disp_id}",
+                ident_url
+            ]
+            proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, preexec_fn=os.setsid)
+            
+            def close_ident():
+                try:
+                    os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+                except Exception:
+                    pass
+                try:
+                    shutil.rmtree(profile_dir, ignore_errors=True)
+                except Exception:
+                    pass
+
+            threading.Timer(3.5, close_ident).start()
+        except Exception as e:
+            print(f"[Test Display] Could not launch identification window: {e}")
+
     return {"status": "ok"}
+
+@app.post("/api/setup/test-audio")
+async def api_test_audio(payload: Dict[str, Any], request: Request):
+    if is_configured() and not (is_host_request(request) or is_local_request(request)):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
+    device = payload.get("device", "default").strip()
+
+    chime_path = STATIC_DIR / "sounds" / "chime.wav"
+    if not chime_path.exists():
+        chime_path.parent.mkdir(parents=True, exist_ok=True)
+        import wave, math, struct
+        sample_rate = 44100
+        duration = 1.6
+        samples = []
+        chords = [(0.0, 523.25), (0.2, 659.25), (0.4, 783.99)]
+        for i in range(int(sample_rate * duration)):
+            t = i / sample_rate
+            val = 0.0
+            for start_t, freq in chords:
+                if t >= start_t:
+                    dt = t - start_t
+                    env = math.exp(-3.5 * dt)
+                    val += 0.35 * math.sin(2.0 * math.pi * freq * dt) * env
+            val = max(-1.0, min(1.0, val))
+            samples.append(int(val * 32767.0))
+        with wave.open(str(chime_path), 'w') as wav_file:
+            wav_file.setnchannels(2)
+            wav_file.setsampwidth(2)
+            wav_file.setframerate(sample_rate)
+            frames = bytearray()
+            for s in samples:
+                frames.extend(struct.pack('<hh', s, s))
+            wav_file.writeframes(frames)
+
+    paplay_bin = shutil.which("paplay")
+    pw_play_bin = shutil.which("pw-play")
+
+    if paplay_bin and chime_path.exists():
+        try:
+            cmd = [paplay_bin]
+            if device and device != "default":
+                cmd.extend(["-d", device])
+            cmd.append(str(chime_path))
+            subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return {"status": "ok", "played": True, "device": device}
+        except Exception as e:
+            print(f"[Test Audio] paplay error: {e}")
+
+    if pw_play_bin and chime_path.exists():
+        try:
+            cmd = [pw_play_bin]
+            if device and device != "default":
+                cmd.extend([f"--target={device}"])
+            cmd.append(str(chime_path))
+            subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return {"status": "ok", "played": True, "device": device}
+        except Exception as e:
+            print(f"[Test Audio] pw-play error: {e}")
+
+    return {"status": "ok", "played": False, "device": device}
 
 @app.post("/api/setup/inspect-path")
 async def api_inspect_storage_path(payload: Dict[str, Any], request: Request):
-    if is_configured() and not is_host_request(request):
+    if is_configured() and not (is_host_request(request) or is_local_request(request)):
         raise HTTPException(status_code=403, detail="Host DJ authorization required")
     path_str = payload.get("path", "").strip()
     if not path_str:
         return {"valid": False, "error": "Path cannot be empty"}
     return get_path_info(path_str)
 
-@app.post("/api/setup")
-async def api_save_setup(payload: Dict[str, Any], request: Request):
-    if is_configured() and not is_host_request(request):
+@app.post("/api/setup/pick-directory")
+async def api_pick_directory(payload: Dict[str, Any], request: Request):
+    if is_configured() and not (is_host_request(request) or is_local_request(request)):
         raise HTTPException(status_code=403, detail="Host DJ authorization required")
-    import shutil
-    old_tracks = get_tracks_dir()
-    old_db = get_db_path()
+    
+    current_path = payload.get("initial_path", "").strip()
+    if not current_path or not Path(current_path).exists():
+        current_path = str(Path.home())
+    else:
+        current_path = str(Path(current_path).expanduser().resolve())
 
-    # Normalize storage paths if supplied
-    new_lib = payload.get("library_dir", "").strip()
-    if new_lib:
-        new_lib_path = Path(new_lib).expanduser().resolve()
-        payload["library_dir"] = str(new_lib_path)
-        new_tracks = new_lib_path / "tracks"
+    # Attempt native desktop file dialog if running on local desktop with display
+    has_display = bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+    if has_display and is_local_request(request):
+        zenity_bin = shutil.which("zenity")
+        kdialog_bin = shutil.which("kdialog")
 
-        # Auto-migrate existing tracks if path changed and old library has files
-        if old_tracks.exists() and old_tracks.resolve() != new_tracks.resolve():
-            existing_tracks = list(old_tracks.glob("*/*.mp4"))
-            if existing_tracks and payload.get("migrate_files", True):
-                new_tracks.mkdir(parents=True, exist_ok=True)
-                for artist_dir in old_tracks.iterdir():
-                    if artist_dir.is_dir() and artist_dir.name != "tracks":
-                        target_artist = new_tracks / artist_dir.name
-                        target_artist.mkdir(parents=True, exist_ok=True)
-                        for f in artist_dir.iterdir():
-                            dest_f = target_artist / f.name
-                            if not dest_f.exists():
-                                shutil.move(str(f), str(dest_f))
-                migrate_storage_paths(str(old_tracks), str(new_tracks))
+        if zenity_bin:
+            try:
+                cmd = [
+                    zenity_bin,
+                    "--file-selection",
+                    "--directory",
+                    "--title=Select Directory for Tiki Karaoke",
+                    f"--filename={current_path}/"
+                ]
+                proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+                if proc.returncode == 0:
+                    chosen = proc.stdout.strip()
+                    if chosen and Path(chosen).is_dir():
+                        return {"status": "ok", "path": chosen, "native": True}
+                elif proc.returncode == 1:
+                    return {"status": "cancelled", "native": True}
+            except Exception as e:
+                print(f"[Pick Directory] zenity error: {e}")
 
-    new_data = payload.get("data_dir", "").strip()
-    if new_data:
-        new_data_path = Path(new_data).expanduser().resolve()
-        payload["data_dir"] = str(new_data_path)
-        new_db = new_data_path / "karaoke.db"
-        if old_db.exists() and old_db.resolve() != new_db.resolve() and not new_db.exists():
-            new_data_path.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(str(old_db), str(new_db))
+        if kdialog_bin:
+            try:
+                cmd = [
+                    kdialog_bin,
+                    "--getexistingdirectory",
+                    current_path,
+                    "--title",
+                    "Select Directory for Tiki Karaoke"
+                ]
+                proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+                if proc.returncode == 0:
+                    chosen = proc.stdout.strip()
+                    if chosen and Path(chosen).is_dir():
+                        return {"status": "ok", "path": chosen, "native": True}
+                elif proc.returncode == 1:
+                    return {"status": "cancelled", "native": True}
+            except Exception as e:
+                print(f"[Pick Directory] kdialog error: {e}")
 
-    cfg = save_config(payload)
-    init_db()
+    # Fallback to web browser directory modal
+    return {"status": "fallback", "native": False, "initial_path": current_path}
 
-    if "bar_name" in payload:
-        set_setting("bar_name", str(payload["bar_name"]))
-    if "intermission_seconds" in payload:
-        set_setting("intermission_seconds", str(payload["intermission_seconds"]))
-    if "tts_enabled" in payload:
-        set_setting("tts_enabled", "true" if payload["tts_enabled"] else "false")
-    if "bgm_enabled" in payload:
-        set_setting("bgm_enabled", "true" if payload["bgm_enabled"] else "false")
-    if "stage_display" in payload:
-        set_setting("stage_display", str(payload["stage_display"]))
-    if "audio_output_device" in payload:
-        set_setting("audio_output_device", str(payload["audio_output_device"]))
-    if "kiosk_mode" in payload:
-        set_setting("kiosk_mode", "true" if payload["kiosk_mode"] else "false")
-    return {"status": "ok", "redirect": "/stage", "config": cfg}
+@app.get("/api/setup/browse-directories")
+async def api_browse_directories(request: Request, path: str = ""):
+    if is_configured() and not (is_host_request(request) or is_local_request(request)):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
+
+    if not path or path == "~":
+        target = Path.home()
+    else:
+        target = Path(path).expanduser().resolve()
+
+    if not target.exists() or not target.is_dir():
+        target = Path.home()
+
+    parent_path = str(target.parent) if target.parent != target else None
+
+    subdirs = []
+    try:
+        for entry in sorted(target.iterdir(), key=lambda e: e.name.lower()):
+            if entry.is_dir() and not entry.name.startswith("."):
+                try:
+                    entry.stat()
+                    subdirs.append(entry.name)
+                except (PermissionError, OSError):
+                    continue
+    except Exception as e:
+        print(f"[Browse Directories] Error reading {target}: {e}")
+
+    return {
+        "status": "ok",
+        "current": str(target),
+        "parent": parent_path,
+        "directories": subdirs
+    }
+
+@app.post("/api/setup")
+async def api_save_setup(payload: Dict[str, Any], request: Request, response: Response):
+    if is_configured() and not (is_host_request(request) or is_local_request(request)):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
+    
+    try:
+        old_tracks = get_tracks_dir()
+        old_db = get_db_path()
+
+        # Normalize storage paths if supplied
+        new_lib = payload.get("library_dir", "").strip()
+        if new_lib:
+            new_lib_path = Path(new_lib).expanduser().resolve()
+            payload["library_dir"] = str(new_lib_path)
+            new_tracks = new_lib_path / "tracks"
+
+            # Auto-migrate existing tracks if path changed and old library has files
+            if old_tracks.exists() and old_tracks.resolve() != new_tracks.resolve():
+                existing_tracks = list(old_tracks.glob("*/*.mp4"))
+                if existing_tracks and payload.get("migrate_files", True):
+                    new_tracks.mkdir(parents=True, exist_ok=True)
+                    for artist_dir in old_tracks.iterdir():
+                        if artist_dir.is_dir() and artist_dir.name != "tracks":
+                            target_artist = new_tracks / artist_dir.name
+                            target_artist.mkdir(parents=True, exist_ok=True)
+                            for f in artist_dir.iterdir():
+                                dest_f = target_artist / f.name
+                                if not dest_f.exists():
+                                    shutil.move(str(f), str(dest_f))
+                    migrate_storage_paths(str(old_tracks), str(new_tracks))
+
+        new_data = payload.get("data_dir", "").strip()
+        if new_data:
+            new_data_path = Path(new_data).expanduser().resolve()
+            payload["data_dir"] = str(new_data_path)
+            new_db = new_data_path / "karaoke.db"
+            if old_db.exists() and old_db.resolve() != new_db.resolve() and not new_db.exists():
+                new_data_path.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(str(old_db), str(new_db))
+
+        cfg = save_config(payload)
+        init_db()
+
+        if "bar_name" in payload:
+            set_setting("bar_name", str(payload["bar_name"]))
+        if "intermission_seconds" in payload:
+            set_setting("intermission_seconds", str(payload["intermission_seconds"]))
+        if "tts_enabled" in payload:
+            set_setting("tts_enabled", "true" if payload["tts_enabled"] else "false")
+        if "bgm_enabled" in payload:
+            set_setting("bgm_enabled", "true" if payload["bgm_enabled"] else "false")
+        if "stage_display" in payload:
+            set_setting("stage_display", str(payload["stage_display"]))
+        if "audio_output_device" in payload:
+            set_setting("audio_output_device", str(payload["audio_output_device"]))
+        if "kiosk_mode" in payload:
+            set_setting("kiosk_mode", "true" if payload["kiosk_mode"] else "false")
+        if "host_display_enabled" in payload:
+            set_setting("host_display_enabled", "true" if payload["host_display_enabled"] else "false")
+        if "host_display" in payload:
+            set_setting("host_display", str(payload["host_display"]))
+        if "host_display_name" in payload:
+            set_setting("host_display_name", str(payload["host_display_name"]))
+        if "host_kiosk_mode" in payload:
+            set_setting("host_kiosk_mode", "true" if payload["host_kiosk_mode"] else "false")
+        if "video_quality_profile" in payload:
+            set_setting("video_quality_profile", str(payload["video_quality_profile"]))
+
+        # Automatically log host in with cookie
+        response.set_cookie(
+            "tiki_host",
+            HOST_TOKEN,
+            max_age=86400 * 30,
+            httponly=False,
+            samesite="lax"
+        )
+        return {"status": "ok", "redirect": "/stage", "config": cfg}
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return JSONResponse(status_code=500, content={"status": "error", "detail": f"Setup save failed: {str(e)}"})
 
 @app.get("/", response_class=HTMLResponse)
 async def index_page(request: Request):
@@ -523,7 +870,7 @@ async def stage_page(request: Request, token: str = ""):
         "port": PORT,
         "host_pin": pin
     })
-    if (token and token == HOST_TOKEN) or is_host_request(request):
+    if (token and token == HOST_TOKEN) or is_host_request(request) or is_local_request(request):
         response.set_cookie("tiki_host", HOST_TOKEN, max_age=86400 * 30, httponly=False)
     return response
 
@@ -534,6 +881,19 @@ async def host_pair_route(request: Request, token: str = ""):
         response.set_cookie("tiki_host", HOST_TOKEN, max_age=86400 * 7, httponly=False)
         return response
     return HTMLResponse("<h3>Invalid Host Token!</h3><p>Scan the Host QR code from the main TV screen.</p>", status_code=403)
+
+@app.get("/host/print-tents")
+async def print_table_tents(request: Request):
+    if not (is_host_request(request) or is_local_request(request)):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
+    cfg = load_config()
+    bar_name = get_setting("bar_name", cfg.get("bar_name", BAR_NAME))
+    return templates.TemplateResponse("print_tents.html", {
+        "request": request,
+        "bar_name": bar_name,
+        "base_url": get_base_url(),
+        "join_url": f"{get_base_url()}/join"
+    })
 
 # QR Code Generators (Point directly to Public IP)
 @app.get("/qr/public")
@@ -650,20 +1010,24 @@ async def api_prune_tracks(req: PruneTracksRequest, request: Request):
 @app.post("/api/singer/register")
 async def api_register_singer(req: SingerRegisterRequest, request: Request):
     client_ip = request.client.host if request.client else ""
+    is_host = is_host_request(request) or is_local_request(request)
     try:
         singer = get_or_create_singer(
             token=req.token,
             name=req.name,
             avatar=req.avatar,
-            ip_address=client_ip
+            ip_address=client_ip,
+            is_host=is_host
         )
         return singer
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e))
 
 @app.get("/api/singer/available-avatars")
-async def api_available_avatars(name: str = "", token: str = ""):
-    taken = get_taken_avatars_for_name(name, exclude_token=token)
+async def api_available_avatars(request: Request, name: str = "", token: str = ""):
+    client_ip = request.client.host if request.client else ""
+    is_host = is_host_request(request) or is_local_request(request)
+    taken = get_taken_avatars_for_name(name, exclude_token=token, client_ip=client_ip, is_host=is_host)
     return {
         "name": name,
         "taken_avatars": taken
@@ -776,9 +1140,9 @@ async def api_enqueue_song(req: QueueSongRequest, request: Request):
     if not singer:
         token_suffix = (req.singer_token[-4:] if req.singer_token and len(req.singer_token) >= 4 else secrets.token_hex(2)).upper()
         try:
-            singer = get_or_create_singer(req.singer_token, f"Guest {token_suffix}", ip_address=client_ip)
+            singer = get_or_create_singer(req.singer_token, f"Guest {token_suffix}", ip_address=client_ip, is_host=is_host)
         except Exception:
-            singer = get_or_create_singer(req.singer_token, f"Guest {secrets.token_hex(3).upper()}", ip_address=client_ip)
+            singer = get_or_create_singer(req.singer_token, f"Guest {secrets.token_hex(3).upper()}", ip_address=client_ip, is_host=is_host)
 
     # Abuse Prevention: 5s cooldown & 5-song quota (bypassed for Host DJ)
     singer_key = req.singer_token or client_ip
@@ -849,14 +1213,16 @@ async def api_enqueue_song(req: QueueSongRequest, request: Request):
 
     track = get_track_by_id(track_id)
 
-    # Pre-cache / download track in background if not yet downloaded
+    # Pre-cache / download track in background if not yet downloaded (unless in live stream-only mode)
     if track and not track["is_downloaded"]:
-        enqueue_download(
-            track_id=track_id,
-            singer_name=singer["name"],
-            title=req.title,
-            artist=req.artist
-        )
+        cfg = load_config()
+        if cfg.get("video_quality_profile") != "stream_only":
+            enqueue_download(
+                track_id=track_id,
+                singer_name=singer["name"],
+                title=req.title,
+                artist=req.artist
+            )
 
     current_playing = get_current_playing()
     queue = get_queue()
@@ -917,18 +1283,13 @@ async def api_enqueue_song(req: QueueSongRequest, request: Request):
                     })
                     return {"status": "ok", "queue_id": queue_id}
 
-        stage_displays = manager.get_stage_displays()
-        if stage_displays:
-            dur = int(get_setting("intermission_seconds", str(DEFAULT_INTERMISSION_SECONDS)))
-            current_intermission_end = time.time() + dur
-            await manager.broadcast({
-                "type": "start_intermission",
-                "next_track": queue[0] if queue else None,
-                "duration": dur
-            })
-        else:
-            current_intermission_end = None
-            print("[Stage] Song queued but no Stage Displays are connected. Paused in waiting state.")
+        dur = int(get_setting("intermission_seconds", str(DEFAULT_INTERMISSION_SECONDS)))
+        current_intermission_end = time.time() + dur
+        await manager.broadcast({
+            "type": "start_intermission",
+            "next_track": queue[0] if queue else None,
+            "duration": dur
+        })
 
     return {"status": "ok", "queue_id": queue_id}
 
@@ -946,7 +1307,7 @@ async def api_remove_queue(queue_id: int, request: Request, token: str = ""):
 
 @app.post("/api/queue/{queue_id}/play")
 async def api_play_queue_item(queue_id: int, request: Request):
-    if not is_host_request(request):
+    if not is_host_request(request) and not is_local_request(request):
         raise HTTPException(status_code=403, detail="Host DJ authorization required")
     global current_intermission_end
     current_intermission_end = None
@@ -964,7 +1325,7 @@ async def api_play_queue_item(queue_id: int, request: Request):
 
 @app.post("/api/queue/{queue_id}/complete")
 async def api_complete_queue_item(queue_id: int, request: Request):
-    if not is_host_request(request):
+    if not is_host_request(request) and not is_local_request(request):
         raise HTTPException(status_code=403, detail="Host DJ authorization required")
     global current_intermission_end
     queue_list = get_queue()
@@ -986,8 +1347,7 @@ async def api_complete_queue_item(queue_id: int, request: Request):
         "queue": remaining
     })
 
-    stage_displays = manager.get_stage_displays()
-    if next_up and stage_displays:
+    if next_up:
         dur = int(get_setting("intermission_seconds", str(DEFAULT_INTERMISSION_SECONDS)))
         current_intermission_end = time.time() + dur
         await manager.broadcast({
@@ -995,9 +1355,6 @@ async def api_complete_queue_item(queue_id: int, request: Request):
             "next_track": next_up,
             "duration": dur
         })
-    elif next_up:
-        current_intermission_end = None
-        print("[Stage] Song completed but no Stage Displays connected. Waiting for display...")
     else:
         current_intermission_end = None
         await manager.broadcast({
@@ -1008,13 +1365,15 @@ async def api_complete_queue_item(queue_id: int, request: Request):
         last_artist = item.get("artist", "") if item else ""
         last_title = item.get("title", "") if item else ""
         last_genre = ""
+        last_year = 0
         if last_artist and last_title:
             try:
                 meta = fetch_track_metadata(last_artist, last_title)
                 last_genre = meta.get("genre", "")
+                last_year = meta.get("release_year", 0)
             except Exception:
                 pass
-        await trigger_filler_sequence(last_artist=last_artist, last_genre=last_genre)
+        await trigger_filler_sequence(last_artist=last_artist, last_genre=last_genre, last_year=last_year)
 
     return {"status": "completed"}
 
@@ -1027,10 +1386,22 @@ async def api_get_state():
     stage_displays = manager.get_stage_displays()
     
     intermission_remaining = 0
-    if not current and next_up and current_intermission_end and stage_displays:
+    if not current and next_up and current_intermission_end:
         intermission_remaining = max(0, int(current_intermission_end - time.time()))
-    elif not current and next_up and stage_displays:
+    elif not current and next_up:
         intermission_remaining = int(get_setting("intermission_seconds", str(DEFAULT_INTERMISSION_SECONDS)))
+
+    # Prefer downloaded BGM videos when stage is idle and queue is empty
+    global filler_active, filler_transition_state, filler_current_track, filler_buffer_end
+    if not current and not next_up:
+        if get_setting("bgm_video_enabled", "true") == "true" and not filler_active:
+            pick = get_next_vibe_filler_track()
+            if pick:
+                filler_active = True
+                filler_transition_state = "playing"
+                filler_current_track = pick
+                filler_buffer_end = None
+                record_filler_play(pick["id"])
 
     return {
         "playing": current,
@@ -1038,7 +1409,7 @@ async def api_get_state():
         "queue": queue,
         "intermission_seconds": intermission_remaining,
         "has_stage_display": len(stage_displays) > 0,
-        "waiting_for_display": (not current and next_up is not None and len(stage_displays) == 0),
+        "waiting_for_display": False,
         "filler": {
             "active": filler_active,
             "state": filler_transition_state,
@@ -1046,10 +1417,35 @@ async def api_get_state():
             "buffer_remaining": max(0, int(filler_buffer_end - time.time())) if filler_buffer_end else 0,
             "transition_policy": get_setting("bgm_transition_policy", "fade"),
             "bgm_video_enabled": get_setting("bgm_video_enabled", "true") == "true"
+        },
+        "av_sync_offset_ms": int(get_setting("av_sync_offset_ms", "0")),
+        "system_health": {
+            "ffmpeg_installed": bool(shutil.which("ffmpeg")),
+            "port": int(os.getenv("TIKI_PORT", str(PORT)))
+        },
+        "network": {
+            "base_url": get_base_url(),
+            "remote_mode": REMOTE_MODE,
+            "is_https": get_base_url().startswith("https://")
         }
     }
 
 # Host Controls & Settings
+@app.get("/api/host/health")
+async def api_host_health(request: Request):
+    if not (is_host_request(request) or is_local_request(request)):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
+    from config import PORT
+    effective_port = int(os.getenv("TIKI_PORT", str(PORT)))
+    return {
+        "status": "ok",
+        "ffmpeg_installed": bool(shutil.which("ffmpeg")),
+        "ffprobe_installed": bool(shutil.which("ffprobe")),
+        "port": effective_port,
+        "python_version": sys.version.split()[0],
+        "platform": sys.platform
+    }
+
 @app.get("/api/auth/role")
 async def api_get_role(request: Request):
     return {"is_host": is_host_request(request)}
@@ -1073,6 +1469,21 @@ async def api_get_bgm_tracks():
         return {"tracks": []}
     tracks = sorted([f"/static/bgm/{f.name}" for f in bgm_dir.glob("*.mp3")])
     return {"tracks": tracks}
+
+@app.post("/api/host/tracks/{track_id}/download")
+async def host_download_track(track_id: int, request: Request):
+    if not is_host_request(request):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
+    track = get_track_by_id(track_id)
+    if not track:
+        raise HTTPException(status_code=404, detail="Track not found")
+    enqueue_download(
+        track_id=track["id"],
+        singer_name="Host DJ",
+        title=track["title"],
+        artist=track["artist"]
+    )
+    return {"status": "ok", "message": f"Downloading {track['artist']} - {track['title']} to library"}
 
 @app.post("/api/host/skip")
 async def host_skip_action(request: Request):
@@ -1249,7 +1660,80 @@ async def api_force_play_filler(filler_id: int, request: Request):
 @app.post("/api/host/filler-tracks/finished")
 async def api_filler_finished(request: Request):
     await on_filler_track_ended()
-    return {"status": "ok"}
+@app.post("/api/host/filler/install-starter")
+async def api_install_starter_crate(request: Request):
+    if not is_host_request(request):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
+    from scripts.seed_filler_crate import STARTER_FILLER_TRACKS
+    existing = {t["video_id"]: t for t in get_filler_tracks()}
+    added = []
+    for track in STARTER_FILLER_TRACKS:
+        vid = track["video_id"]
+        if vid in existing:
+            continue
+        tid = add_filler_track(
+            video_id=vid,
+            title=track["title"],
+            artist=track["artist"],
+            original_title=f"{track['artist']} - {track['title']}",
+            duration=track["duration"],
+            genre=track["genre"],
+            release_year=track["release_year"]
+        )
+        enqueue_filler_download(tid)
+        added.append(track)
+    await manager.broadcast({
+        "type": "filler_tracks_updated",
+        "tracks": get_filler_tracks()
+    })
+    return {"status": "ok", "added_count": len(added), "tracks": added}
+
+@app.post("/api/host/filler/import-from-song/{track_id}")
+async def api_import_filler_from_song(track_id: int, request: Request):
+    if not is_host_request(request):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
+    track = get_track_by_id(track_id)
+    if not track:
+        raise HTTPException(status_code=404, detail="Track not found")
+    
+    artist = track.get("artist", "")
+    title = track.get("title", "")
+    results = query_youtube_music_videos(f"{artist} {title} official music video", max_results=3)
+    if not results:
+        raise HTTPException(status_code=404, detail="No official music video found on YouTube")
+    
+    best = results[0]
+    vid = best["video_id"]
+    
+    existing = get_filler_track_by_video_id(vid)
+    if existing:
+        return {"status": "already_exists", "message": f"{artist} - {title} is already in BGM crate", "track": existing}
+    
+    genre = "Pop"
+    year = 0
+    try:
+        meta = fetch_track_metadata(artist, title)
+        if meta:
+            genre = meta.get("genre", "Pop")
+            year = meta.get("release_year", 0)
+    except Exception:
+        pass
+        
+    tid = add_filler_track(
+        video_id=vid,
+        title=best.get("title") or title,
+        artist=best.get("artist") or artist,
+        original_title=best.get("original_title") or f"{artist} - {title}",
+        duration=best.get("duration", 0),
+        genre=genre,
+        release_year=year
+    )
+    enqueue_filler_download(tid)
+    await manager.broadcast({
+        "type": "filler_tracks_updated",
+        "tracks": get_filler_tracks()
+    })
+    return {"status": "ok", "message": f"Added official music video for {artist} - {title} to BGM!", "filler_id": tid}
 
 @app.get("/api/host/filler-settings")
 async def api_get_filler_settings(request: Request):
@@ -1325,6 +1809,20 @@ async def host_add_time_action(request: Request):
     })
     return {"status": "ok"}
 
+@app.post("/api/host/stage/refresh")
+async def host_refresh_stage_action(request: Request, hard: bool = False):
+    if not is_host_request(request) and not is_local_request(request):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
+    if hard:
+        await manager.broadcast({"type": "reload_display"})
+    else:
+        await manager.broadcast({"type": "resync_state"})
+    await manager.broadcast({
+        "type": "queue_updated",
+        "queue": get_queue()
+    })
+    return {"status": "ok", "state": await api_get_state()}
+
 @app.get("/api/host/singers")
 async def host_get_singers(request: Request):
     if not is_host_request(request):
@@ -1335,13 +1833,43 @@ async def host_get_singers(request: Request):
 async def host_remove_all_singer_songs(singer_id: int, request: Request):
     if not is_host_request(request):
         raise HTTPException(status_code=403, detail="Host DJ authorization required")
+    checkout = False
+    try:
+        body = await request.json()
+        checkout = bool(body.get("checkout", False))
+    except Exception:
+        checkout = request.query_params.get("checkout", "0") in ("1", "true", "True")
+
     deleted_count = remove_all_songs_by_singer(singer_id)
+    if checkout:
+        checkout_singer(singer_id)
+
     queue = get_queue()
     await manager.broadcast({
         "type": "queue_updated",
         "queue": queue
     })
-    return {"status": "ok", "deleted_count": deleted_count}
+    return {"status": "ok", "deleted_count": deleted_count, "checked_out": checkout}
+
+@app.post("/api/singer/leave")
+async def api_singer_leave(request: Request):
+    token = request.query_params.get("token") or ""
+    try:
+        body = await request.json()
+        token = body.get("token", token)
+    except Exception:
+        pass
+    singer = get_singer_by_token(token)
+    if not singer:
+        return {"status": "ok", "message": "Singer not found"}
+    remove_all_songs_by_singer(singer["id"])
+    checkout_singer(singer["id"])
+    queue = get_queue()
+    await manager.broadcast({
+        "type": "queue_updated",
+        "queue": queue
+    })
+    return {"status": "ok", "checked_out": True}
 
 @app.post("/api/host/singers/purge-all")
 async def host_purge_all_singers(request: Request):
@@ -1398,6 +1926,126 @@ async def host_set_display_audio(display_id: str, req: DisplayAudioAction, reque
     })
     return {"status": "ok", "displays": manager.get_stage_displays()}
 
+@app.get("/api/host/system/ytdlp-status")
+async def host_get_ytdlp_status(request: Request):
+    if not is_host_request(request):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
+
+    current_version = "unknown"
+    try:
+        import yt_dlp
+        current_version = getattr(yt_dlp.version, "__version__", "unknown")
+    except Exception as e:
+        print(f"[System] Failed to get yt_dlp version: {e}")
+
+    latest_version = current_version
+    try:
+        def fetch_latest():
+            req = urllib.request.Request("https://pypi.org/pypi/yt-dlp/json", headers={"User-Agent": "TikiKaraoke/1.0"})
+            with urllib.request.urlopen(req, timeout=3.5) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                return data.get("info", {}).get("version", current_version)
+        latest_version = await asyncio.to_thread(fetch_latest)
+    except Exception as e:
+        print(f"[System] Failed to check latest yt-dlp version from PyPI: {e}")
+
+    update_available = bool(latest_version and current_version and latest_version != current_version and latest_version != "unknown")
+
+    return {
+        "status": "ok",
+        "current_version": current_version,
+        "latest_version": latest_version,
+        "update_available": update_available
+    }
+
+@app.post("/api/host/system/update-ytdlp")
+async def host_update_ytdlp(request: Request):
+    if not is_host_request(request):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
+
+    old_version = "unknown"
+    try:
+        import yt_dlp
+        old_version = getattr(yt_dlp.version, "__version__", "unknown")
+    except Exception:
+        pass
+
+    def run_upgrade():
+        cmd = [sys.executable, "-m", "pip", "install", "--upgrade", "--no-cache-dir", "yt-dlp"]
+        print(f"[System] Running yt-dlp upgrade: {' '.join(cmd)}")
+        proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=180)
+        return proc
+
+    try:
+        proc = await asyncio.to_thread(run_upgrade)
+    except Exception as e:
+        print(f"[System] yt-dlp upgrade error: {e}")
+        raise HTTPException(status_code=500, detail=f"Upgrade process failed: {e}")
+
+    new_version = old_version
+    try:
+        import importlib
+        import yt_dlp
+        importlib.reload(yt_dlp)
+        if hasattr(yt_dlp, "version"):
+            importlib.reload(yt_dlp.version)
+        new_version = getattr(yt_dlp.version, "__version__", old_version)
+    except Exception as e:
+        print(f"[System] Could not reload yt_dlp in-process: {e}")
+
+    success = (proc.returncode == 0)
+    return {
+        "status": "success" if success else "error",
+        "old_version": old_version,
+        "new_version": new_version,
+        "output": (proc.stdout or proc.stderr or "").strip(),
+        "returncode": proc.returncode
+    }
+
+class AVSyncPayload(BaseModel):
+    offset_ms: int
+
+@app.get("/api/host/av-sync")
+async def host_get_av_sync(request: Request):
+    if not is_host_request(request):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
+    raw = get_setting("av_sync_offset_ms", "0")
+    try:
+        offset_ms = int(raw)
+    except Exception:
+        offset_ms = 0
+    return {"status": "ok", "offset_ms": offset_ms}
+
+@app.post("/api/host/av-sync")
+async def host_set_av_sync(payload: AVSyncPayload, request: Request):
+    if not is_host_request(request):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
+    offset_ms = max(-300, min(500, payload.offset_ms))
+    set_setting("av_sync_offset_ms", str(offset_ms))
+    await manager.broadcast({
+        "type": "av_sync_updated",
+        "offset_ms": offset_ms
+    })
+    return {"status": "ok", "offset_ms": offset_ms}
+
+@app.post("/api/stage/notify-on-deck")
+async def api_notify_on_deck(queue_id: int):
+    queue = get_queue()
+    pending = [q for q in queue if q["status"] == "pending"]
+    if pending and pending[0]["queue_id"] == queue_id:
+        track = pending[0]
+        await manager.broadcast({
+            "type": "singer_on_deck",
+            "queue_id": track["queue_id"],
+            "singer_id": track["singer_id"],
+            "singer_name": track.get("singer_name", ""),
+            "duet_partner": track.get("duet_partner"),
+            "title": track.get("title", ""),
+            "artist": track.get("artist", ""),
+            "seconds_remaining": 30
+        })
+    return {"status": "ok"}
+
 @app.get("/api/surprise")
 async def api_surprise():
     tracks = search_local_tracks("", limit=50)
@@ -1446,6 +2094,9 @@ async def websocket_endpoint(websocket: WebSocket):
         while True:
             data = await websocket.receive_json()
             msg_type = data.get("type")
+            if msg_type == "ping":
+                await websocket.send_json({"type": "pong", "time": time.time()})
+                continue
             if msg_type == "stage_register":
                 manager.register_stage_display(
                     websocket=websocket,

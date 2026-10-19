@@ -4,7 +4,7 @@ import urllib.parse
 import urllib.request
 from typing import Dict, Any, Optional
 
-USER_AGENT = "TikiKaraoke/1.0 (https://github.com/todd/tiki-karaoke)"
+USER_AGENT = "TikiKaraoke/1.0 (https://github.com/tiki-karaoke/tiki-karaoke)"
 
 STANDARD_GENRES = [
     "Rock", "Pop", "Country", "Hip-Hop", "R&B", "Dance",

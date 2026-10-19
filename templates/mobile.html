@@ -7,7 +7,11 @@
     <link rel="stylesheet" href="/static/css/tiki-theme.css">
     <style>
         body {
-            padding-bottom: 90px;
+            padding-bottom: 105px;
+        }
+
+        body.host-mode-active {
+            padding-bottom: 165px;
         }
 
         .avatar-option {
@@ -212,7 +216,7 @@
             </div>
 
             <!-- Pagination Bar -->
-            <div id="libraryPaginationBar" style="display: none; justify-content: space-between; align-items: center; margin-top: 16px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.1);">
+            <div id="libraryPaginationBar" style="display: none; justify-content: space-between; align-items: center; margin-top: 20px; margin-bottom: 30px; padding-top: 14px; padding-bottom: 14px; border-top: 1px solid rgba(255,255,255,0.1);">
                 <button id="libPrevBtn" onclick="changeLibraryPage(-1)" class="btn-ghost" style="padding: 6px 14px; font-size: 0.85rem;">◀ Prev</button>
                 <span id="libPageInfo" style="font-size: 0.85rem; color: var(--text-muted);">Page 1 of 1</span>
                 <button id="libNextBtn" onclick="changeLibraryPage(1)" class="btn-ghost" style="padding: 6px 14px; font-size: 0.85rem;">Next ▶</button>
@@ -279,6 +283,46 @@
             <div class="tiki-card-pink" style="padding: 16px; margin-bottom: 16px;">
                 <h2 class="font-tiki neon-pink" style="font-size: 1.3rem; margin-bottom: 12px;">👑 Master Host DJ Controls</h2>
 
+                <!-- First-Run Quickstart Guide Banner (Dismissible) -->
+                <div id="hostQuickstartCard" class="tiki-card" style="margin-bottom: 14px; padding: 14px; border-left: 4px solid var(--neon-gold); display: none;">
+                    <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
+                        <span style="font-weight: 700; font-size: 0.95rem; color: var(--neon-gold);">🚀 Welcome to Tiki Karaoke!</span>
+                        <button type="button" onclick="dismissQuickstartCard()" class="btn-ghost" style="padding: 2px 8px; font-size: 0.75rem; border: none; color: var(--text-muted); cursor: pointer;">✕</button>
+                    </div>
+                    <p style="font-size: 0.8rem; color: #ddd; margin: 0 0 10px 0; line-height: 1.4;">
+                        Your lounge is ready! Here is the 3-step party loop:
+                    </p>
+                    <div style="display: flex; flex-direction: column; gap: 8px; font-size: 0.78rem; color: #ccc;">
+                        <div style="display: flex; gap: 8px; align-items: center;">
+                            <span style="background: rgba(255,183,3,0.2); color: var(--neon-gold); border-radius: 50%; width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; font-weight: bold; flex-shrink: 0;">1</span>
+                            <span><strong>Connect Guests:</strong> Point phone cameras at the stage QR code or print table tents.</span>
+                        </div>
+                        <div style="display: flex; gap: 8px; align-items: center;">
+                            <span style="background: rgba(0,240,255,0.2); color: var(--neon-cyan); border-radius: 50%; width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; font-weight: bold; flex-shrink: 0;">2</span>
+                            <span><strong>Queue Songs:</strong> Search any YouTube or local track from the Search tab.</span>
+                        </div>
+                        <div style="display: flex; gap: 8px; align-items: center;">
+                            <span style="background: rgba(0,255,100,0.2); color: var(--neon-lime); border-radius: 50%; width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; font-weight: bold; flex-shrink: 0;">3</span>
+                            <span><strong>Stage Display:</strong> Connect your TV via HDMI and open Stage View full screen!</span>
+                        </div>
+                    </div>
+                    <div style="margin-top: 12px; text-align: right;">
+                        <button type="button" onclick="dismissQuickstartCard()" class="btn-ghost" style="padding: 4px 12px; font-size: 0.75rem; border-color: rgba(255,183,3,0.4); color: var(--neon-gold);">Got it, Let's Party!</button>
+                    </div>
+                </div>
+
+                <!-- FFmpeg Missing Health Warning Banner -->
+                <div id="hostFfmpegBanner" class="tiki-card" style="margin-bottom: 14px; padding: 12px 14px; border-left: 4px solid #ff5555; background: rgba(255,50,50,0.08); display: none;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                        <span style="font-weight: 700; font-size: 0.85rem; color: #ff8888;">⚠️ FFmpeg Missing on Host Machine</span>
+                        <span style="font-size: 0.75rem; font-weight: 700; padding: 2px 8px; border-radius: 8px; background: rgba(255,50,50,0.25); color: #ff7777;">Action Required</span>
+                    </div>
+                    <p style="font-size: 0.76rem; color: #ffcccc; margin: 4px 0 6px 0; line-height: 1.35;">
+                        YouTube audio extraction and video conversion require FFmpeg. Run this in your terminal:
+                    </p>
+                    <code style="display: block; font-size: 0.72rem; padding: 6px 8px; background: rgba(0,0,0,0.5); border-radius: 4px; color: #aaffaa; word-break: break-all;">sudo apt install -y ffmpeg</code>
+                </div>
+
                 <!-- Storage Monitoring Banner -->
                 <div id="hostStorageBanner" class="tiki-card" style="margin-bottom: 14px; padding: 12px 14px; border-left: 4px solid var(--neon-lime);">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
@@ -295,20 +339,48 @@
                     </div>
                 </div>
 
+                <!-- yt-dlp Video Engine Maintenance Banner -->
+                <div id="hostYtdlpBanner" class="tiki-card" style="margin-bottom: 14px; padding: 12px 14px; border-left: 4px solid var(--neon-cyan);">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                        <span style="font-weight: 700; font-size: 0.85rem; color: #fff;">🛠️ YouTube Video Engine</span>
+                        <span id="ytdlpBadge" style="font-size: 0.78rem; font-weight: 700; padding: 2px 8px; border-radius: 8px; background: rgba(0, 240, 255, 0.15); color: var(--neon-cyan);">Checking...</span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.76rem; color: var(--text-muted); margin-top: 4px;">
+                        <span id="ytdlpStatusText">Engine version checking...</span>
+                        <button type="button" id="updateYtdlpBtn" onclick="updateYtdlpEngine()" class="btn-ghost" style="padding: 2px 8px; font-size: 0.72rem; border-color: rgba(0, 240, 255, 0.4); color: var(--neon-cyan);">🔄 Update Engine</button>
+                    </div>
+                </div>
+
+                <!-- Remote Access & SSL Security Card -->
+                <div id="hostNetworkCard" class="tiki-card" style="margin-bottom: 14px; padding: 12px 14px; border-left: 4px solid var(--neon-gold);">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                        <span style="font-weight: 700; font-size: 0.85rem; color: #fff;">🌐 Remote Access & SSL</span>
+                        <span id="networkSslBadge" style="font-size: 0.78rem; font-weight: 700; padding: 2px 8px; border-radius: 8px; background: rgba(0, 255, 100, 0.15); color: var(--neon-lime);">🔒 Active</span>
+                    </div>
+                    <div style="font-size: 0.78rem; color: #ddd; margin-bottom: 6px; word-break: break-all;">
+                        <span style="color: var(--text-muted);">Public URL:</span> <strong id="networkCurrentUrl">Loading...</strong>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.76rem; color: var(--text-muted); margin-top: 4px;">
+                        <span id="networkModeLabel">Mode: Cloudflare Quick Tunnel</span>
+                        <a href="/setup" class="btn-ghost" style="padding: 2px 8px; font-size: 0.72rem; border-color: rgba(255,183,3,0.4); color: var(--neon-gold); text-decoration: none;">⚙️ Change Mode</a>
+                    </div>
+                </div>
+
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px;">
                     <button onclick="hostPauseResume()" class="btn-ghost">⏯️ Pause / Play</button>
                     <button onclick="hostStop()" class="btn-ghost" style="color: #ffaa00; border-color: rgba(255,170,0,0.4);">⏹️ Stop Stage</button>
                     <button onclick="hostSkip()" class="btn-ghost" style="color: #ff5555; border-color: rgba(255,85,85,0.4);">⏭️ Skip Track</button>
                     <button onclick="hostStartNow()" class="btn-neon-cyan">⚡ Start Stage Now</button>
-                    <button onclick="hostAdd15s()" class="btn-ghost" style="grid-column: span 2;">+15s Timer</button>
+                    <button onclick="hostRefreshStage()" class="btn-ghost" style="color: var(--neon-cyan); border-color: rgba(0,240,255,0.4);">🔄 Refresh Stage</button>
+                    <button onclick="hostAdd15s()" class="btn-ghost">+15s Timer</button>
+                    <a href="/host/print-tents" target="_blank" class="btn-ghost" style="color: var(--neon-gold); border-color: rgba(255,183,3,0.4); text-align: center; text-decoration: none; display: flex; align-items: center; justify-content: center; gap: 6px; grid-column: span 2; padding: 10px;">🖨️ Print Table QR Tents</a>
                 </div>
 
                 <div style="margin: 16px 0; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 14px;">
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
                         <span style="font-size: 0.9rem; font-weight: 600;">🎙️ TTS Virtual DJ Announcer:</span>
                         <input type="checkbox" id="ttsToggle" onchange="hostToggleTTS(this.checked)" style="transform: scale(1.4);">
                     </div>
-                    <p style="color: var(--text-muted); font-size: 0.75rem;">Turn off if you introduce singers yourself on the microphone!</p>
                 </div>
 
                 <div style="margin: 16px 0;">
@@ -317,6 +389,32 @@
                             class="btn-ghost" style="width: 100%; padding: 12px; font-weight: 700; background: rgba(255, 183, 3, 0.15); border-color: var(--neon-gold); color: var(--neon-gold);">
                         🎤 Hold to Duck BGM (Speak on Mic)
                     </button>
+                </div>
+
+                <!-- Venue A/V Sync Latency Control -->
+                <div class="tiki-card" style="margin: 16px 0; padding: 14px; border-left: 4px solid var(--neon-gold);">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                        <span style="font-weight: 700; font-size: 0.88rem; color: #fff;">🎛️ Venue A/V Sync (Audio Delay)</span>
+                        <span id="avSyncBadge" style="font-size: 0.82rem; font-weight: 700; padding: 3px 10px; border-radius: 8px; background: rgba(255, 183, 3, 0.18); color: var(--neon-gold);">0 ms</span>
+                    </div>
+                    <p id="avSyncDesc" style="color: var(--text-muted); font-size: 0.76rem; margin: 0 0 10px 0;">
+                        Direct PA / zero lag. Adjust if TV picture trails behind the speakers.
+                    </p>
+
+                    <!-- Smart Presets -->
+                    <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 12px;">
+                        <button type="button" onclick="setVenueAvSyncPreset(0)" class="btn-ghost av-preset-btn" data-offset="0" style="padding: 6px 4px; font-size: 0.72rem; text-align: center;">⚡ Direct<br><span style="color:var(--text-muted);">0ms</span></button>
+                        <button type="button" onclick="setVenueAvSyncPreset(80)" class="btn-ghost av-preset-btn" data-offset="80" style="padding: 6px 4px; font-size: 0.72rem; text-align: center;">📺 TV Lag<br><span style="color:var(--text-muted);">+80ms</span></button>
+                        <button type="button" onclick="setVenueAvSyncPreset(140)" class="btn-ghost av-preset-btn" data-offset="140" style="padding: 6px 4px; font-size: 0.72rem; text-align: center;">📽️ Projector<br><span style="color:var(--text-muted);">+140ms</span></button>
+                        <button type="button" onclick="setVenueAvSyncPreset(-150)" class="btn-ghost av-preset-btn" data-offset="-150" style="padding: 6px 4px; font-size: 0.72rem; text-align: center;">📡 Bluetooth<br><span style="color:var(--text-muted);">-150ms</span></button>
+                    </div>
+
+                    <!-- Live Steppers -->
+                    <div style="display: flex; gap: 8px; align-items: center;">
+                        <button type="button" onclick="nudgeVenueAvSync(-10)" class="btn-ghost" style="flex: 1; padding: 8px; font-size: 0.85rem; font-weight: 700;">-10 ms</button>
+                        <button type="button" onclick="setVenueAvSyncPreset(0)" class="btn-ghost" style="padding: 8px 12px; font-size: 0.78rem; color: var(--text-muted);">⟲ Reset</button>
+                        <button type="button" onclick="nudgeVenueAvSync(10)" class="btn-ghost" style="flex: 1; padding: 8px; font-size: 0.85rem; font-weight: 700;">+10 ms</button>
+                    </div>
                 </div>
 
                 <!-- DJ Soundboard -->
@@ -333,49 +431,69 @@
                 <!-- Host DJ Quick Guide Dropdown Data Sheet -->
                 <div style="margin-top: 20px; padding-top: 14px; border-top: 1px solid rgba(255,255,255,0.12);">
                     <button type="button" id="guideToggleBtn" onclick="toggleHostGuideDropdown()" class="btn-ghost" style="width: 100%; padding: 13px 16px; font-weight: 600; font-size: 0.95rem; border-color: var(--neon-cyan); color: var(--neon-cyan); display: flex; align-items: center; justify-content: space-between; border-radius: 12px; background: rgba(0, 240, 255, 0.08); cursor: pointer;">
-                        <span>📖 Host DJ Quick Guide & Instructions</span>
+                        <span>📖 Host DJ Master Guide & Manual</span>
                         <span id="guideArrow" style="font-size: 1.1rem; transition: transform 0.2s;">▼</span>
                     </button>
 
                     <!-- Collapsible Data Sheet -->
                     <div id="hostGuideDropdown" style="display: none; margin-top: 12px; padding: 16px; background: rgba(8, 14, 24, 0.95); border: 1px solid rgba(0, 240, 255, 0.25); border-radius: 14px; font-size: 0.88rem; line-height: 1.55; color: #e2e8f0; box-shadow: 0 4px 20px rgba(0,0,0,0.5);">
                         <div style="margin-bottom: 14px;">
-                            <div style="font-weight: 700; color: var(--neon-cyan); margin-bottom: 4px;">🌴 1. How the TV Stage Works</div>
+                            <div style="font-weight: 700; color: var(--neon-cyan); margin-bottom: 4px;">🌴 1. TV Stage & Display Setup</div>
                             <p style="margin: 0; color: var(--text-muted); font-size: 0.83rem;">
-                                The main stage runs at <code style="color: var(--neon-gold); background: rgba(255,183,3,0.1); padding: 2px 6px; border-radius: 4px;">/stage</code> on your TV. Between songs, it plays ambient lounge BGM, counts down 20s, and shows who is <strong>Up Next</strong> so they can get to the microphone.
+                                The TV Stage runs at <code style="color: var(--neon-gold); background: rgba(255,183,3,0.1); padding: 2px 6px; border-radius: 4px;">/stage</code> on your main TV or projector. Between songs, it displays the room QR code, counts down intermission, and announces who is <strong>Up Next</strong> so singers can get to the microphone.
                             </p>
                         </div>
 
                         <div style="margin-bottom: 14px;">
-                            <div style="font-weight: 700; color: var(--neon-pink); margin-bottom: 4px;">⚡ 2. Playback & Stage Controls</div>
+                            <div style="font-weight: 700; color: var(--neon-pink); margin-bottom: 4px;">⚡ 2. Live Playback & Stage Controls</div>
                             <ul style="margin: 4px 0 0 16px; padding: 0; font-size: 0.83rem; color: var(--text-muted);">
-                                <li style="margin-bottom: 3px;"><strong style="color: #fff;">⏯️ Pause / Play:</strong> Pause or resume video playback on the TV screen.</li>
-                                <li style="margin-bottom: 3px;"><strong style="color: #fff;">⏭️ Skip Track:</strong> Skip the current song if the singer finishes early or steps out.</li>
-                                <li style="margin-bottom: 3px;"><strong style="color: #fff;">⚡ Start Stage Now:</strong> Skip the 20s intermission countdown and start the next song immediately.</li>
-                                <li style="margin-bottom: 3px;"><strong style="color: #fff;">+15s Timer:</strong> Add 15 extra seconds if the singer needs time getting to the mic.</li>
+                                <li style="margin-bottom: 3px;"><strong style="color: #fff;">⏯️ Pause / Play:</strong> Instantly pause or resume video playback on the TV screen.</li>
+                                <li style="margin-bottom: 3px;"><strong style="color: #fff;">⏭️ Skip Track:</strong> Fade out and skip the current song if the singer finishes early or steps out.</li>
+                                <li style="margin-bottom: 3px;"><strong style="color: #fff;">⚡ Start Stage Now:</strong> Bypass the intermission countdown and start the next song immediately.</li>
+                                <li style="margin-bottom: 3px;"><strong style="color: #fff;">+15s Timer:</strong> Add 15 extra seconds if a singer needs more time getting to the mic.</li>
                             </ul>
                         </div>
 
                         <div style="margin-bottom: 14px;">
-                            <div style="font-weight: 700; color: var(--neon-gold); margin-bottom: 4px;">🎙️ 3. Mic Ducking & Voice MC</div>
+                            <div style="font-weight: 700; color: var(--neon-gold); margin-bottom: 4px;">🎬 3. BGM Video Autopilot & Crate</div>
                             <ul style="margin: 4px 0 0 16px; padding: 0; font-size: 0.83rem; color: var(--text-muted);">
-                                <li style="margin-bottom: 3px;"><strong style="color: #fff;">🎤 Hold to Duck BGM:</strong> Press & hold while talking into your room microphone. The TV background music instantly ducks to 5% volume so guests hear your voice loud and clear.</li>
-                                <li style="margin-bottom: 3px;"><strong style="color: #fff;">TTS Virtual Announcer:</strong> When checked, the TV automatically speaks each singer's name before their song. Turn it off if you introduce singers yourself!</li>
+                                <li style="margin-bottom: 3px;"><strong style="color: #fff;">Autopilot:</strong> When the queue runs empty, official music videos automatically play on the TV screen.</li>
+                                <li style="margin-bottom: 3px;"><strong style="color: #fff;">Room Pulse & 90-min Cooldown:</strong> BGM matches the eras/genres sung tonight, and automatically bars songs sung within the last 90 minutes so the party never feels repetitive.</li>
+                                <li style="margin-bottom: 3px;"><strong style="color: #fff;">Private Preview:</strong> In the Crate or YouTube Search tabs, tap <strong>👁️ Preview</strong> to privately inspect videos on your phone before stage playback.</li>
                             </ul>
                         </div>
 
                         <div style="margin-bottom: 14px;">
-                            <div style="font-weight: 700; color: var(--neon-cyan); margin-bottom: 4px;">🔊 4. Live DJ Soundboard</div>
-                            <p style="margin: 0; color: var(--text-muted); font-size: 0.83rem;">
-                                Tap <strong style="color: #fff;">Air Horn</strong>, <strong style="color: #fff;">Applause</strong>, <strong style="color: #fff;">Rimshot</strong>, or <strong style="color: #fff;">Tropical Bird</strong> to trigger real-time sound effects out of the TV speakers to hype up great performances.
-                            </p>
+                            <div style="font-weight: 700; color: var(--neon-lime); margin-bottom: 4px;">🎛️ 4. Audio DSP (Key Pitch & Vocal Cut)</div>
+                            <ul style="margin: 4px 0 0 16px; padding: 0; font-size: 0.83rem; color: var(--text-muted);">
+                                <li style="margin-bottom: 3px;"><strong style="color: #fff;">Key / Pitch Shift:</strong> Adjust pitch by ±1 to ±6 semitones so any song matches a singer's vocal range.</li>
+                                <li style="margin-bottom: 3px;"><strong style="color: #fff;">Vocal Attenuation:</strong> Center-channel filter suppresses guide vocals on tracks with backing singers.</li>
+                            </ul>
+                        </div>
+
+                        <div style="margin-bottom: 14px;">
+                            <div style="font-weight: 700; color: var(--neon-cyan); margin-bottom: 4px;">🎙️ 5. Mic Ducking, Soundboard & Voice MC</div>
+                            <ul style="margin: 4px 0 0 16px; padding: 0; font-size: 0.83rem; color: var(--text-muted);">
+                                <li style="margin-bottom: 3px;"><strong style="color: #fff;">🎤 Hold to Duck BGM:</strong> Press and hold while speaking into the room microphone. TV music drops to 5% volume so your voice cuts through loud and clear.</li>
+                                <li style="margin-bottom: 3px;"><strong style="color: #fff;">TTS Virtual Announcer:</strong> Automatically announces the next singer over the TV sound system.</li>
+                                <li style="margin-bottom: 3px;"><strong style="color: #fff;">Soundboard:</strong> Trigger Air Horn, Applause, Rimshot, or Tropical Bird to hype the room.</li>
+                            </ul>
+                        </div>
+
+                        <div style="margin-bottom: 14px;">
+                            <div style="font-weight: 700; color: var(--neon-pink); margin-bottom: 4px;">👥 6. Fair Queue & Singer Checkout</div>
+                            <ul style="margin: 4px 0 0 16px; padding: 0; font-size: 0.83rem; color: var(--text-muted);">
+                                <li style="margin-bottom: 3px;"><strong style="color: #fff;">Fair Round-Robin:</strong> The queue automatically balances stage time across singers so no single person monopolizes the microphone.</li>
+                                <li style="margin-bottom: 3px;"><strong style="color: #fff;">Singer Checkout:</strong> In the Singer Roster, tap any singer to choose <em>"Just Clear Songs (No-Show)"</em> to purge their queue, or <em>"Singer Left Party (Check Out & Free Name)"</em> to release their profile.</li>
+                            </ul>
                         </div>
 
                         <div>
-                            <div style="font-weight: 700; color: var(--neon-pink); margin-bottom: 4px;">📜 5. Managing the Queue</div>
-                            <p style="margin: 0; color: var(--text-muted); font-size: 0.83rem;">
-                                Check the <strong style="color: #fff;">Queue</strong> tab at the bottom anytime. The fair round-robin queue prevents single-singer hoarding. As Host, you can remove songs or tap <strong style="color: #fff;">▶️ Play Now</strong> to promote any track to the top of the queue.
-                            </p>
+                            <div style="font-weight: 700; color: var(--neon-gold); margin-bottom: 4px;">💾 7. Storage Profiles & 1-Tap Save</div>
+                            <ul style="margin: 4px 0 0 16px; padding: 0; font-size: 0.83rem; color: var(--text-muted);">
+                                <li style="margin-bottom: 3px;"><strong style="color: #fff;">Profiles:</strong> Set in Setup: <em>"I'm a Pro"</em> (1080p HD cache), <em>"I'm Inept"</em> (compact 480p), or <em>"Live Only"</em> (0 MB disk / direct stream).</li>
+                                <li style="margin-bottom: 3px;"><strong style="color: #fff;">1-Tap Save:</strong> In the Songbook / History tab, tap <strong>⬇️ Save</strong> on any streamed song to permanently save it to local storage. Tap <strong>🎬 BGM</strong> to convert any crowd favorite into an official BGM music video!</li>
+                            </ul>
                         </div>
                     </div>
                 </div>
@@ -386,9 +504,6 @@
                         <span style="font-size: 0.85rem; color: var(--neon-cyan); font-weight: 700;">📺 STAGE DISPLAYS & AUDIO ROUTING</span>
                         <button onclick="loadHostDisplays()" class="btn-ghost" style="padding: 3px 8px; font-size: 0.75rem; border-color: rgba(0,240,255,0.3);">🔄 Refresh</button>
                     </div>
-                    <p style="color: var(--text-muted); font-size: 0.78rem; margin: 0 0 10px 0;">
-                        Choose which display outputs master audio to room speakers (and mute all others):
-                    </p>
                     <div id="hostDisplaysContainer" style="display: flex; flex-direction: column; gap: 8px;">
                         <!-- Dynamically populated by mobile-client.js -->
                     </div>
@@ -397,12 +512,9 @@
                 <!-- Singer Roster & Mass Queue Removal -->
                 <div style="margin-top: 20px; padding-top: 14px; border-top: 1px solid rgba(255,255,255,0.12);">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                        <span style="font-size: 0.85rem; color: var(--neon-gold); font-weight: 700;">👥 SINGER ROSTER & MASS QUEUE PURGE</span>
+                        <span style="font-size: 0.85rem; color: var(--neon-gold); font-weight: 700;">👥 SINGER ROSTER & ACTIONS</span>
                         <button onclick="loadHostSingerRoster()" class="btn-ghost" style="padding: 3px 8px; font-size: 0.75rem; border-color: rgba(0,240,255,0.3);">🔄 Refresh</button>
                     </div>
-                    <p style="color: var(--text-muted); font-size: 0.78rem; margin: 0 0 10px 0;">
-                        If a singer leaves the party, mass-remove all their queued songs in one tap:
-                    </p>
                     <div id="hostSingerRosterContainer" style="display: flex; flex-direction: column; gap: 10px;">
                         <!-- Dynamically populated by mobile-client.js -->
                     </div>
@@ -421,7 +533,6 @@
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
                     <div>
                         <h2 class="font-tiki neon-gold" style="font-size: 1.3rem; margin: 0 0 4px 0;">🎬 BGM Video Crate & Autopilot</h2>
-                        <div style="font-size: 0.8rem; color: var(--text-muted);">Plays official music videos when nobody is in the karaoke queue</div>
                     </div>
                     <button onclick="loadFillerTracks()" class="btn-ghost" style="padding: 4px 10px; font-size: 0.78rem;">↻ Refresh</button>
                 </div>
@@ -445,6 +556,16 @@
                             </button>
                         </div>
                     </div>
+                </div>
+
+                <!-- Starter Crate Seed Action -->
+                <div style="margin-bottom: 14px; display: flex; gap: 8px;">
+                    <button type="button" onclick="installStarterCrate()" class="btn-ghost" style="flex: 1; border-color: var(--neon-gold); color: var(--neon-gold); font-size: 0.82rem; padding: 10px; border-radius: 10px;">
+                        🌴 Install Starter Crate (15 Classics)
+                    </button>
+                    <button type="button" onclick="switchTab('fillerSearchTab')" class="btn-ghost" style="flex: 1; border-color: var(--neon-cyan); color: var(--neon-cyan); font-size: 0.82rem; padding: 10px; border-radius: 10px;">
+                        🔍 Search YouTube
+                    </button>
                 </div>
 
                 <!-- Batch Actions Banner -->
@@ -710,7 +831,101 @@
             <button type="button" id="onboardingSubmitBtn" onclick="completeOnboarding()" class="btn-neon-cyan" style="width: 100%; padding: 14px; font-size: 1.1rem;">
                 Let's Sing! 🎤
             </button>
+
+            <!-- Singer Leave / Sign Out Option -->
+            <div id="singerLeavePartyContainer" style="margin-top: 14px; display: none;">
+                <button type="button" onclick="singerLeaveParty()" class="btn-ghost" style="width: 100%; padding: 10px; font-size: 0.85rem; color: #ff5555; border-color: rgba(255,85,85,0.35); border-radius: 10px; cursor: pointer;">
+                    👋 Leave Party / Sign Out
+                </button>
+            </div>
         </div>
+    </div>
+
+    <!-- Host Singer Manage & Checkout Modal -->
+    <div id="hostSingerManageModal" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.88); backdrop-filter: blur(12px); display: none; align-items: center; justify-content: center; z-index: 250; padding: 20px;" onclick="if(event.target === this) closeHostSingerManageModal()">
+        <div class="tiki-card-pink" style="max-width: 400px; width: 100%; padding: 24px; text-align: center;">
+            <div id="manageSingerAvatar" style="font-size: 2.8rem; margin-bottom: 6px;">🌴</div>
+            <h2 id="manageSingerName" class="font-tiki neon-cyan" style="font-size: 1.5rem; margin-bottom: 4px;">Bob</h2>
+            <div id="manageSingerQueueCount" style="color: var(--neon-gold); font-size: 0.85rem; font-weight: 700; margin-bottom: 16px;">2 songs in queue</div>
+
+            <p style="color: var(--text-muted); font-size: 0.88rem; margin-bottom: 18px;">
+                Has <span id="manageSingerNameText" style="color: #fff; font-weight: 700;">Bob</span> left the party, or are they just away from the mic?
+            </p>
+
+            <div style="display: flex; flex-direction: column; gap: 10px;">
+                <button type="button" id="manageClearQueueOnlyBtn" onclick="confirmHostSingerAction(false)" class="btn-ghost" style="padding: 12px; font-weight: 700; border-color: var(--neon-cyan); color: var(--neon-cyan); text-align: left; display: flex; align-items: center; gap: 10px; border-radius: 10px; cursor: pointer;">
+                    <span style="font-size: 1.3rem;">🎵</span>
+                    <div>
+                        <div>Just Clear Songs (No-Show)</div>
+                        <div style="font-size: 0.72rem; color: var(--text-muted); font-weight: 400;">Drops songs from queue, keeps name & avatar locked for singer.</div>
+                    </div>
+                </button>
+
+                <button type="button" onclick="confirmHostSingerAction(true)" class="btn-ghost" style="padding: 12px; font-weight: 700; border-color: rgba(255,85,85,0.5); color: #ff5555; background: rgba(255,85,85,0.08); text-align: left; display: flex; align-items: center; gap: 10px; border-radius: 10px; cursor: pointer;">
+                    <span style="font-size: 1.3rem;">👋</span>
+                    <div>
+                        <div>Singer Left Party (Check Out)</div>
+                        <div style="font-size: 0.72rem; color: var(--text-muted); font-weight: 400;">Clears songs & frees up name so other guests can use it.</div>
+                    </div>
+                </button>
+
+                <button type="button" onclick="closeHostSingerManageModal()" class="btn-ghost" style="margin-top: 6px; padding: 10px; font-size: 0.85rem; border-radius: 10px; cursor: pointer;">
+                    Cancel
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Host Video Preview Modal -->
+    <div id="hostVideoPreviewModal" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.92); backdrop-filter: blur(14px); display: none; align-items: center; justify-content: center; z-index: 300; padding: 16px;" onclick="if(event.target === this) closeHostVideoPreview()">
+        <div class="tiki-card-pink" style="max-width: 520px; width: 100%; padding: 20px; text-align: left;">
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px;">
+                <div style="flex: 1; min-width: 0; padding-right: 10px;">
+                    <span id="previewModalBadge" class="badge-youtube font-tiki" style="font-size: 0.72rem; padding: 2px 8px;">🎬 BGM PREVIEW</span>
+                    <h3 id="previewModalTitle" style="font-size: 1.05rem; font-weight: 700; color: #fff; margin: 6px 0 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Song Title</h3>
+                    <div id="previewModalArtist" style="font-size: 0.85rem; color: var(--neon-cyan); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Artist Name</div>
+                </div>
+                <button type="button" onclick="closeHostVideoPreview()" class="btn-ghost" style="padding: 4px 10px; font-size: 1rem; border-radius: 8px; cursor: pointer;">✕</button>
+            </div>
+
+            <!-- Preview Viewport (16:9 ratio) -->
+            <div style="position: relative; width: 100%; padding-top: 56.25%; background: #000; border-radius: 12px; overflow: hidden; margin-bottom: 16px; border: 1px solid rgba(0, 240, 255, 0.35); box-shadow: 0 0 20px rgba(0, 240, 255, 0.15);">
+                <video id="previewLocalVideo" controls playsinline style="display: none; position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: contain;"></video>
+                <iframe id="previewYoutubeIframe" src="" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen style="display: none; position: absolute; top: 0; left: 0; width: 100%; height: 100%; border: none;"></iframe>
+            </div>
+
+            <!-- Modal Footer Actions -->
+            <div id="previewModalActions" style="display: flex; gap: 10px; justify-content: flex-end;"></div>
+        </div>
+    </div>
+
+    <!-- Reconnecting Status Pill -->
+    <div id="reconnectingPill" style="display: none; position: fixed; top: 12px; left: 50%; transform: translateX(-50%); background: rgba(255, 85, 85, 0.95); color: #fff; padding: 5px 14px; border-radius: 20px; font-size: 0.78rem; font-weight: 700; z-index: 999; box-shadow: 0 4px 15px rgba(0,0,0,0.4); align-items: center; gap: 6px;">
+        <span>📡</span> Reconnecting to Tiki Lounge...
+    </div>
+
+    <!-- Notification Permission Banner -->
+    <div id="notificationPermissionBanner" style="display: none; position: fixed; bottom: 75px; left: 16px; right: 16px; max-width: 460px; margin: 0 auto; background: rgba(16, 28, 45, 0.96); backdrop-filter: blur(10px); border: 1px solid var(--neon-gold); border-radius: 12px; padding: 12px 16px; z-index: 200; box-shadow: 0 8px 25px rgba(0,0,0,0.6); align-items: center; justify-content: space-between; gap: 12px;">
+        <div style="flex: 1; font-size: 0.82rem; color: #e2e8f0;">
+            🔔 <strong>Buzz Phone When Up?</strong> Get alerted when it's your turn to sing!
+        </div>
+        <div style="display: flex; gap: 6px;">
+            <button onclick="requestNotificationPermission()" class="btn-ghost" style="padding: 4px 10px; font-size: 0.75rem; border-color: var(--neon-gold); color: var(--neon-gold); font-weight: 700;">Allow</button>
+            <button onclick="dismissNotificationBanner()" class="btn-ghost" style="padding: 4px 8px; font-size: 0.75rem; color: var(--text-muted);">✕</button>
+        </div>
+    </div>
+
+    <!-- Singer On-Deck Top Notification Banner (Non-Blocking) -->
+    <div id="singerOnDeckBanner" style="display: none; position: fixed; top: 14px; left: 16px; right: 16px; max-width: 440px; margin: 0 auto; background: rgba(14, 22, 38, 0.98); backdrop-filter: blur(14px); border: 2px solid var(--neon-pink); box-shadow: 0 4px 25px rgba(255, 42, 133, 0.5); border-radius: 14px; padding: 12px 16px; z-index: 1000; align-items: center; justify-content: space-between; gap: 12px; transform: translateY(-30px); transition: transform 0.3s ease, opacity 0.3s ease; opacity: 0; cursor: pointer;" onclick="dismissSingerOnDeckBanner()">
+        <div style="display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0;">
+            <div style="font-size: 2rem; flex-shrink: 0;">🎤</div>
+            <div style="min-width: 0; overflow: hidden;">
+                <div style="font-size: 0.72rem; font-weight: 800; color: var(--neon-gold); letter-spacing: 1px; text-transform: uppercase;">YOU'RE UP IN ~30 SECONDS!</div>
+                <div id="onDeckSongTitle" style="font-size: 0.95rem; font-weight: 700; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Song Title</div>
+                <div style="font-size: 0.76rem; color: var(--text-muted);">Head toward the stage microphone 🌴</div>
+            </div>
+        </div>
+        <button type="button" onclick="event.stopPropagation(); dismissSingerOnDeckBanner();" class="btn-ghost" style="padding: 4px 8px; font-size: 0.85rem; color: var(--text-muted); flex-shrink: 0;">✕</button>
     </div>
 
     <script>
@@ -727,6 +942,6 @@
             }
         }
     </script>
-    <script src="/static/js/mobile-client.js?v=20261018_host_pin_auth"></script>
+    <script src="/static/js/mobile-client.js?v=20261019_30s_top_banner"></script>
 </body>
 </html>

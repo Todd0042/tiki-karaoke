@@ -140,6 +140,9 @@ def init_db():
         INSERT OR IGNORE INTO settings (key, value) VALUES ('bgm_video_enabled', 'true');
         INSERT OR IGNORE INTO settings (key, value) VALUES ('bgm_mode', 'vibe');
         INSERT OR IGNORE INTO settings (key, value) VALUES ('bgm_buffer_seconds', '15');
+        INSERT OR IGNORE INTO settings (key, value) VALUES ('host_display_enabled', 'false');
+        INSERT OR IGNORE INTO settings (key, value) VALUES ('host_display', '1');
+        INSERT OR IGNORE INTO settings (key, value) VALUES ('host_kiosk_mode', 'false');
         """)
 
         # Ensure play_count and last_played exist on existing databases
@@ -172,35 +175,72 @@ def init_db():
         conn.execute("CREATE INDEX IF NOT EXISTS idx_tracks_library ON tracks(is_downloaded, play_count, last_played)")
     conn.close()
 
-# Singer Operations
-def get_taken_avatars_for_name(name: str, exclude_token: str = "") -> List[str]:
-    """Returns list of avatar emojis already claimed by other singers for this specific name."""
+# Session Tracking & Singer Operations
+_SESSION_START_TIME = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+def set_session_start_time(iso_ts: Optional[str] = None) -> str:
+    global _SESSION_START_TIME
+    if iso_ts:
+        _SESSION_START_TIME = str(iso_ts).replace("T", " ").replace("Z", "")[:19]
+    else:
+        _SESSION_START_TIME = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    return _SESSION_START_TIME
+
+def get_session_start_time() -> str:
+    global _SESSION_START_TIME
+    return _SESSION_START_TIME
+
+def get_taken_avatars_for_name(
+    name: str, 
+    exclude_token: str = "", 
+    client_ip: str = "", 
+    is_host: bool = False
+) -> List[str]:
+    """Returns list of avatar emojis currently actively claimed by other singers for this specific name tonight."""
     clean_name = name.strip()
     if not clean_name:
         return []
     conn = get_db()
     cursor = conn.execute("""
-        SELECT avatar FROM singers 
+        SELECT avatar, token, ip_address, last_seen FROM singers 
         WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) AND token != ?
     """, (clean_name, exclude_token))
     rows = cursor.fetchall()
     conn.close()
-    return [r["avatar"] for r in rows if r["avatar"]]
 
-def check_singer_avatar_available(name: str, avatar: str, exclude_token: str = "") -> bool:
-    clean_name = name.strip()
-    if not clean_name:
-        return False
-    conn = get_db()
-    cursor = conn.execute("""
-        SELECT COUNT(*) as cnt FROM singers 
-        WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) AND avatar = ? AND token != ?
-    """, (clean_name, avatar, exclude_token))
-    row = cursor.fetchone()
-    conn.close()
-    return row["cnt"] == 0
+    session_start = get_session_start_time()
+    taken = []
+    for r in rows:
+        av = r["avatar"]
+        if not av:
+            continue
+        last_seen = str(r["last_seen"] or "").replace("T", " ").replace("Z", "")[:19]
+        # If is_host is True or client_ip matches, the host/user can reclaim their own avatar:
+        if is_host or (client_ip and r["ip_address"] == client_ip):
+            continue
+        # If not active during the current session, it is available to be reclaimed:
+        if last_seen < session_start:
+            continue
+        taken.append(av)
+    return taken
 
-def get_or_create_singer(token: str, name: str = "", avatar: str = "🌺", ip_address: str = "") -> Dict[str, Any]:
+def check_singer_avatar_available(
+    name: str, 
+    avatar: str, 
+    exclude_token: str = "", 
+    client_ip: str = "", 
+    is_host: bool = False
+) -> bool:
+    taken = get_taken_avatars_for_name(name, exclude_token=exclude_token, client_ip=client_ip, is_host=is_host)
+    return avatar not in taken
+
+def get_or_create_singer(
+    token: str, 
+    name: str = "", 
+    avatar: str = "🌺", 
+    ip_address: str = "", 
+    is_host: bool = False
+) -> Dict[str, Any]:
     import secrets
     clean_token = token.strip() if token else ""
     if not clean_token or clean_token.lower() in ("undefined", "null"):
@@ -215,19 +255,40 @@ def get_or_create_singer(token: str, name: str = "", avatar: str = "🌺", ip_ad
         cursor = conn.execute("SELECT * FROM singers WHERE token = ?", (clean_token,))
         row = cursor.fetchone()
         clean_avatar = avatar if avatar else "🌺"
+        session_start = get_session_start_time()
 
         if row:
             target_name = clean_name if clean_name else row["name"]
             target_avatar = clean_avatar if avatar else row["avatar"]
 
-            # If changing name or avatar, ensure the (name, avatar) combo is not claimed by another token
+            # If changing name or avatar, check if target (name, avatar) exists on another singer
             if target_name.lower() != row["name"].lower() or target_avatar != row["avatar"]:
-                chk = conn.execute("""
-                    SELECT COUNT(*) as cnt FROM singers 
+                other = conn.execute("""
+                    SELECT * FROM singers 
                     WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) AND avatar = ? AND token != ?
                 """, (target_name, target_avatar, clean_token)).fetchone()
-                if chk["cnt"] > 0:
-                    raise ValueError(f"'{target_name}' with the {target_avatar} avatar is already taken! Please pick another avatar.")
+
+                if other:
+                    other_last_seen = str(other["last_seen"] or "").replace("T", " ").replace("Z", "")[:19]
+                    is_active_tonight = (other_last_seen >= session_start) and (not is_host) and (other["ip_address"] != ip_address)
+                    if is_active_tonight:
+                        raise ValueError(f"'{target_name}' with the {target_avatar} avatar is currently active tonight! Please pick another avatar.")
+                    
+                    # Reclaim other record! Merge temporary row into other
+                    conn.execute("UPDATE queue SET singer_id = ? WHERE singer_id = ?", (other["id"], row["id"]))
+                    conn.execute("UPDATE history SET singer_id = ? WHERE singer_id = ?", (other["id"], row["id"]))
+                    conn.execute("UPDATE singer_song_log SET singer_id = ? WHERE singer_id = ?", (other["id"], row["id"]))
+                    conn.execute("DELETE FROM singers WHERE id = ?", (row["id"],))
+
+                    conn.execute("""
+                        UPDATE singers 
+                        SET token = ?,
+                            ip_address = COALESCE(NULLIF(?, ''), ip_address),
+                            last_seen = CURRENT_TIMESTAMP
+                        WHERE id = ?
+                    """, (clean_token, ip_address, other["id"]))
+                    cursor = conn.execute("SELECT * FROM singers WHERE id = ?", (other["id"],))
+                    return dict(cursor.fetchone())
 
             conn.execute("""
                 UPDATE singers 
@@ -242,28 +303,52 @@ def get_or_create_singer(token: str, name: str = "", avatar: str = "🌺", ip_ad
             return dict(row)
         else:
             final_name = clean_name if clean_name else "Tiki Singer"
-            chk = conn.execute("""
-                SELECT COUNT(*) as cnt FROM singers 
+            other = conn.execute("""
+                SELECT * FROM singers 
                 WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) AND avatar = ? AND token != ?
             """, (final_name, clean_avatar, clean_token)).fetchone()
-            if chk["cnt"] > 0:
-                if not clean_name or clean_name.lower().startswith("guest") or clean_name.lower().startswith("tiki singer"):
-                    avatars = ["🌺", "🦩", "🍹", "🌴", "🦜", "🥥", "🏄", "🍍"]
-                    found = False
-                    for av in avatars:
-                        chk_av = conn.execute("""
-                            SELECT COUNT(*) as cnt FROM singers 
-                            WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) AND avatar = ? AND token != ?
-                        """, (final_name, av, clean_token)).fetchone()
-                        if chk_av["cnt"] == 0:
-                            clean_avatar = av
-                            found = True
-                            break
-                    if not found:
-                        suffix = clean_token[-4:].upper() if len(clean_token) >= 4 else secrets.token_hex(2).upper()
-                        final_name = f"{final_name} {suffix}"
-                else:
-                    raise ValueError(f"'{final_name}' with the {clean_avatar} avatar is already taken! Please pick another avatar.")
+
+            if other:
+                other_last_seen = str(other["last_seen"] or "").replace("T", " ").replace("Z", "")[:19]
+                is_active_tonight = (other_last_seen >= session_start) and (not is_host) and (other["ip_address"] != ip_address)
+                if is_active_tonight:
+                    if not clean_name or clean_name.lower().startswith("guest") or clean_name.lower().startswith("tiki singer"):
+                        avatars = ["🌺", "🦩", "🍹", "🌴", "🦜", "🥥", "🏄", "🍍"]
+                        found = False
+                        for av in avatars:
+                            chk_av = conn.execute("""
+                                SELECT * FROM singers 
+                                WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) AND avatar = ? AND token != ?
+                            """, (final_name, av, clean_token)).fetchone()
+                            if not chk_av:
+                                clean_avatar = av
+                                found = True
+                                break
+                            else:
+                                chk_last_seen = str(chk_av["last_seen"] or "").replace("T", " ").replace("Z", "")[:19]
+                                if chk_last_seen < session_start or is_host or (ip_address and chk_av["ip_address"] == ip_address):
+                                    clean_avatar = av
+                                    found = True
+                                    other = chk_av
+                                    break
+                        if not found:
+                            suffix = clean_token[-4:].upper() if len(clean_token) >= 4 else secrets.token_hex(2).upper()
+                            final_name = f"{final_name} {suffix}"
+                            other = None
+                    else:
+                        raise ValueError(f"'{final_name}' with the {clean_avatar} avatar is currently active tonight! Please pick another avatar.")
+
+            if other:
+                # Reclaim & Adopt returning singer profile
+                conn.execute("""
+                    UPDATE singers 
+                    SET token = ?,
+                        ip_address = COALESCE(NULLIF(?, ''), ip_address),
+                        last_seen = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                """, (clean_token, ip_address, other["id"]))
+                cursor = conn.execute("SELECT * FROM singers WHERE id = ?", (other["id"],))
+                return dict(cursor.fetchone())
 
             cursor = conn.execute("""
                 INSERT INTO singers (token, name, avatar, ip_address)
@@ -336,6 +421,18 @@ def remove_all_songs_by_singer(singer_id: int) -> int:
         count = cursor.rowcount
     conn.close()
     return count
+
+def checkout_singer(singer_id: int) -> bool:
+    """Marks a singer as checked out for the current session, freeing their name and avatar."""
+    conn = get_db()
+    with conn:
+        conn.execute("""
+            UPDATE singers 
+            SET last_seen = '2000-01-01 00:00:00'
+            WHERE id = ?
+        """, (singer_id,))
+    conn.close()
+    return True
 
 def purge_all_singers(include_history: bool = True) -> Dict[str, int]:
     """Purges all test/registered singers and associated queue/history records while preserving tracks and settings."""
@@ -1357,13 +1454,13 @@ def record_filler_play(filler_id: int):
         """, (filler_id,))
     conn.close()
 
-def get_next_vibe_filler_track(last_track_artist: str = "", last_track_genre: str = "") -> Optional[Dict[str, Any]]:
+def get_next_vibe_filler_track(last_track_artist: str = "", last_track_genre: str = "", last_track_year: int = 0) -> Optional[Dict[str, Any]]:
     """
-    Selects the next ready BGM filler track matching the vibe of the last song.
-    1. Avoid tracks by the same artist as last_track_artist (if other artists exist).
-    2. If last_track_genre is provided, prioritize tracks whose genre matches (or shares keywords with) last_track_genre.
-    3. Rotate based on play_count ASC, coalesce(last_played, '1970-01-01') ASC, id ASC.
-    4. Only returns tracks that are ready (download_status = 'ready' or is_downloaded = 1).
+    Selects the next ready BGM filler track matching the vibe of the room and recent songs.
+    1. 90-Minute Cooldown: Excludes tracks matching songs sung by guests in the last 90 minutes.
+    2. Artist Diversity: Penalizes back-to-back tracks by the same artist.
+    3. Genre & Year Proximity: Awards bonus points for matching genre and era/decade proximity.
+    4. Fair Rotation: Rotates across the crate by penalizing play_count and recent last_played.
     """
     conn = get_db()
     tracks = [dict(r) for r in conn.execute("""
@@ -1371,29 +1468,82 @@ def get_next_vibe_filler_track(last_track_artist: str = "", last_track_genre: st
         WHERE download_status = 'ready' OR is_downloaded = 1
         ORDER BY play_count ASC, coalesce(last_played, '1970-01-01') ASC, id ASC
     """).fetchall()]
-    conn.close()
 
     if not tracks:
+        conn.close()
         return None
 
-    # Filter out same artist if possible
-    diff_artist_tracks = [t for t in tracks if t["artist"].strip().lower() != last_track_artist.strip().lower()]
-    candidate_pool = diff_artist_tracks if diff_artist_tracks else tracks
+    # 1. 90-Minute Sung Song Cooldown
+    try:
+        recent_sung = conn.execute("""
+            SELECT LOWER(t.title) as title, LOWER(t.artist) as artist
+            FROM history h
+            JOIN tracks t ON h.track_id = t.id
+            WHERE h.played_at >= datetime('now', '-90 minutes')
+        """).fetchall()
+        recent_sung_pairs = {(r["artist"].strip(), r["title"].strip()) for r in recent_sung}
+    except Exception as e:
+        print(f"[Database] Error checking recent sung history: {e}")
+        recent_sung_pairs = set()
 
-    # If genre provided, look for matching genre in candidate pool
-    if last_track_genre:
-        target_g = last_track_genre.strip().lower()
-        genre_matches = [
-            t for t in candidate_pool
-            if t["genre"] and (
-                t["genre"].strip().lower() in target_g or target_g in t["genre"].strip().lower()
-            )
-        ]
-        if genre_matches:
-            return genre_matches[0]
+    conn.close()
 
-    # Return least recently played
-    return candidate_pool[0]
+    # Filter out tracks sung recently tonight unless doing so would leave 0 candidates
+    cooled_pool = []
+    for t in tracks:
+        t_artist = t["artist"].strip().lower()
+        t_title = t["title"].strip().lower()
+        if (t_artist, t_title) in recent_sung_pairs or (t_title, t_artist) in recent_sung_pairs:
+            continue
+        cooled_pool.append(t)
+
+    candidate_pool = cooled_pool if cooled_pool else tracks
+
+    # 2. Vibe Scoring Engine
+    def score_track(t: Dict[str, Any]) -> float:
+        score = 100.0
+
+        # Artist diversity: heavy bonus for different artist
+        if last_track_artist:
+            if t["artist"].strip().lower() != last_track_artist.strip().lower():
+                score += 50.0
+            else:
+                score -= 80.0
+
+        # Genre affinity
+        if last_track_genre and t.get("genre"):
+            cand_g = t["genre"].strip().lower()
+            target_g = last_track_genre.strip().lower()
+            if cand_g == target_g or cand_g in target_g or target_g in cand_g:
+                score += 40.0
+
+        # Year / Era proximity
+        cand_year = t.get("release_year") or 0
+        if last_track_year > 0 and cand_year > 0:
+            year_diff = abs(cand_year - last_track_year)
+            if year_diff <= 3:
+                score += 35.0
+            elif year_diff <= 7:
+                score += 20.0
+            elif year_diff <= 12:
+                score += 10.0
+            else:
+                score -= min(20.0, (year_diff - 12) * 1.5)
+
+        # Fair crate rotation: penalize higher play counts
+        play_cnt = t.get("play_count") or 0
+        score -= (play_cnt * 25.0)
+
+        return score
+
+    # Sort candidates by calculated score descending, then by last_played ascending
+    sorted_candidates = sorted(
+        candidate_pool,
+        key=lambda x: (score_track(x), -(1 if x.get("last_played") else 0)),
+        reverse=True
+    )
+
+    return sorted_candidates[0]
 
 
 

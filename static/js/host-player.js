@@ -16,6 +16,8 @@ let isMutedViewer = false;
 let configuredAudioSink = null;
 let bgmPlaylist = [];
 let currentBgmIndex = -1;
+let currentNextTrack = null;
+let onDeckAlertFiredForQueueId = null;
 
 const myDisplayId = localStorage.getItem("tiki_display_id") || ("disp_" + Math.random().toString(36).substring(2, 8));
 localStorage.setItem("tiki_display_id", myDisplayId);
@@ -110,10 +112,25 @@ function resumeStagePlayback() {
     if (unmute) unmute.style.display = "none";
 }
 
+let wsPingInterval = null;
+
 function initWebSocket() {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const wsUrl = `${protocol}//${window.location.host}/ws`;
     
+    if (wsPingInterval) {
+        clearInterval(wsPingInterval);
+        wsPingInterval = null;
+    }
+
+    try {
+        if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+            ws.onclose = null;
+            ws.onerror = null;
+            ws.close();
+        }
+    } catch (e) {}
+
     ws = new WebSocket(wsUrl);
 
     ws.onopen = () => {
@@ -124,6 +141,16 @@ function initWebSocket() {
             name: myDisplayName,
             is_muted: isMutedViewer
         }));
+
+        // Keepalive heartbeat every 10s to prevent router/tunnel idle drops
+        wsPingInterval = setInterval(() => {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: "ping" }));
+            }
+        }, 10000);
+
+        // Always sync current server state upon connect or reconnect
+        fetchCurrentState();
     };
 
     ws.onmessage = (event) => {
@@ -135,14 +162,25 @@ function initWebSocket() {
         }
     };
 
+    ws.onerror = (e) => {
+        console.warn("[Host WS] Error on socket:", e);
+    };
+
     ws.onclose = () => {
         console.log("[Host WS] Disconnected, retrying in 2s...");
+        if (wsPingInterval) {
+            clearInterval(wsPingInterval);
+            wsPingInterval = null;
+        }
         setTimeout(initWebSocket, 2000);
     };
 }
 
 function handleSocketMessage(data) {
     switch (data.type) {
+        case "pong":
+            // Heartbeat response received
+            break;
         case "set_display_audio":
             if (data.display_id === myDisplayId) {
                 applyStageAudioMute(data.is_muted);
@@ -156,6 +194,21 @@ function handleSocketMessage(data) {
             break;
         case "stop_track":
             stopCurrentTrack(data.next_track);
+            break;
+        case "queue_empty":
+            skipCurrentTrack();
+            stopIntermission();
+            stopFillerPlayback();
+            triggerIntermission(null, 0);
+            break;
+        case "reload_display":
+            console.log("[Stage] Reload display command received from host.");
+            window.location.reload(true);
+            break;
+        case "resync_state":
+            console.log("[Stage] Resync state command received from host.");
+            fetchCurrentState();
+            showSyncToast("🔄 Stage Resynced by Host");
             break;
         case "pause_track":
             pausePlayback();
@@ -199,6 +252,9 @@ function handleSocketMessage(data) {
             break;
         case "soundboard_play":
             playSoundEffect(data.sound);
+            break;
+        case "av_sync_updated":
+            if (audioDSP) audioDSP.setSyncOffset(data.offset_ms);
             break;
         case "test_display":
             showTestDisplayFlash(data.badge);
@@ -253,6 +309,7 @@ function startTrackPlayback(track) {
     stopIntermission();
     stopFillerPlayback();
     fadeOutBGM();
+    onDeckAlertFiredForQueueId = null;
 
     document.getElementById("nowPlayingBar").style.display = "flex";
     const joinQR = document.getElementById("joinQROverlay");
@@ -296,8 +353,12 @@ function startTrackPlayback(track) {
                 if (unmuteOverlay) unmuteOverlay.style.display = "none";
             })
             .catch(e => {
+                if (e.name === "AbortError") return;
                 console.log("Local video autoplay blocked by browser policy:", e);
-                if (unmuteOverlay) unmuteOverlay.style.display = "flex";
+                const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+                if (isMobile && unmuteOverlay && localVideo.paused) {
+                    unmuteOverlay.style.display = "flex";
+                }
             });
         localVideo.onended = onSongFinished;
         localVideo.onerror = (e) => {
@@ -349,6 +410,10 @@ function skipCurrentTrack() {
     const ytContainer = document.getElementById("youtubeContainer");
     if (ytContainer) ytContainer.style.display = "none";
 
+    const nowPlayingBar = document.getElementById("nowPlayingBar");
+    if (nowPlayingBar) nowPlayingBar.style.display = "none";
+
+    stopFillerPlayback();
     currentTrack = null;
     fadeInBGM();
 }
@@ -398,6 +463,7 @@ function updatePitchBadge(pitch) {
 function triggerIntermission(nextTrack, duration = 20) {
     isIntermission = true;
     intermissionRemaining = duration;
+    stopFillerPlayback();
 
     const overlay = document.getElementById("intermissionOverlay");
     overlay.style.display = "flex";
@@ -461,6 +527,7 @@ function triggerIntermission(nextTrack, duration = 20) {
 function stopCurrentTrack(nextTrack) {
     isIntermission = true;
     currentTrack = null;
+    stopFillerPlayback();
     clearInterval(intermissionTimer);
     intermissionTimer = null;
 
@@ -652,33 +719,81 @@ function playSoundEffect(sound) {
     audio.play().catch(() => {});
 }
 
+function showSyncToast(msg) {
+    let toast = document.getElementById("stageSyncToast");
+    if (!toast) {
+        toast = document.createElement("div");
+        toast.id = "stageSyncToast";
+        toast.style.cssText = "position: fixed; top: 80px; right: 30px; z-index: 9999; background: rgba(8,14,24,0.92); border: 1px solid var(--neon-cyan); color: #fff; padding: 10px 18px; border-radius: 12px; font-size: 0.95rem; font-weight: 700; box-shadow: 0 0 20px rgba(0,240,255,0.4); pointer-events: none; transition: opacity 0.3s ease;";
+        document.body.appendChild(toast);
+    }
+    toast.innerText = msg || "🔄 Stage Player Synced";
+    toast.style.opacity = "1";
+    toast.style.display = "block";
+    clearTimeout(window._syncToastTimer);
+    window._syncToastTimer = setTimeout(() => {
+        toast.style.opacity = "0";
+        setTimeout(() => { toast.style.display = "none"; }, 350);
+    }, 1800);
+}
+
 function fetchCurrentState() {
     fetch("/api/state")
         .then(res => res.json())
         .then(data => {
+            if (audioDSP && typeof data.av_sync_offset_ms === "number") {
+                audioDSP.setSyncOffset(data.av_sync_offset_ms);
+            }
+            currentNextTrack = data.next || null;
             if (data.playing) {
-                stopFillerPlayback();
-                startTrackPlayback(data.playing);
+                // Only start playback if we are not already playing this track
+                if (!currentTrack || currentTrack.queue_id !== data.playing.queue_id) {
+                    console.log("[Stage Sync] Detected new playing track from server:", data.playing.title);
+                    stopFillerPlayback();
+                    startTrackPlayback(data.playing);
+                }
+            } else if (currentTrack) {
+                // Server says nothing playing, but we had a track playing -> track was skipped or ended
+                console.log("[Stage Sync] Track ended or skipped on server");
+                skipCurrentTrack();
+                if (data.next) {
+                    triggerIntermission(data.next, data.intermission_seconds || 10);
+                } else {
+                    triggerIntermission(null, 0);
+                }
             } else if (data.filler && data.filler.active) {
                 if (data.filler.state === "buffer_15s") {
-                    triggerFillerBuffer(data.filler.buffer_remaining || 15);
+                    const buf = document.getElementById("fillerBufferOverlay");
+                    if (!buf || buf.style.display !== "flex") {
+                        triggerFillerBuffer(data.filler.buffer_remaining || 15);
+                    }
                 } else if (data.filler.current_track) {
-                    startFillerPlayback(data.filler.current_track);
+                    if (!isFillerPlaying || (currentFillerTrack && currentFillerTrack.id !== data.filler.current_track.id)) {
+                        startFillerPlayback(data.filler.current_track);
+                    }
                 }
             } else if (data.next) {
                 stopFillerPlayback();
-                if (data.intermission_seconds && data.intermission_seconds > 0) {
-                    triggerIntermission(data.next, data.intermission_seconds);
-                } else {
-                    stopCurrentTrack(data.next);
+                if (!isIntermission || !intermissionTimer) {
+                    triggerIntermission(data.next, data.intermission_seconds || 10);
                 }
             } else {
                 stopFillerPlayback();
-                triggerIntermission(null, 0);
+                if (!isIntermission) {
+                    triggerIntermission(null, 0);
+                }
             }
             if (data.queue) updateNextTicker(data.queue);
+        })
+        .catch(err => {
+            console.warn("[Stage Sync] Notice: state poll error:", err);
         });
 }
+
+// Periodic background sync every 2.5s to ensure display never desyncs if socket drops
+setInterval(() => {
+    fetchCurrentState();
+}, 2500);
 
 function fetchNextTrackForIntermission() {
     fetch("/api/queue")
@@ -693,9 +808,11 @@ function updateNextTicker(queue) {
     const ticker = document.getElementById("upNextSinger");
     const pending = queue.filter(q => q.status === "pending");
     if (pending.length > 0) {
+        currentNextTrack = pending[0];
         const nextSinger = pending[0].duet_partner ? `${pending[0].singer_name} & ${pending[0].duet_partner}` : pending[0].singer_name;
         ticker.innerText = `${nextSinger} ("${pending[0].title}")`;
     } else {
+        currentNextTrack = null;
         ticker.innerText = "Queue is open — scan to sing!";
     }
 }
@@ -711,6 +828,14 @@ function setupEventListeners() {
         } else if (e.key === "n" || e.key === "N") {
             // N for Next/Skip
             fetch("/api/host/skip", { method: "POST" });
+        } else if (e.key === "r" || e.key === "R") {
+            // R for Refresh / Resync
+            if (e.shiftKey) {
+                window.location.reload(true);
+            } else {
+                fetchCurrentState();
+                showSyncToast("🔄 Stage Player Synced");
+            }
         } else if (e.key === "[") {
             // Pitch down 1 semitone
             if (audioDSP) audioDSP.setPitch(audioDSP.currentPitch - 1);
@@ -719,6 +844,34 @@ function setupEventListeners() {
             toggleStageAudioMute();
         }
     });
+
+    // Auto-dismiss unmute overlay whenever video actually starts playing
+    const localV = document.getElementById("localVideo");
+    const fillerV = document.getElementById("fillerVideo");
+    if (localV) {
+        localV.addEventListener("playing", () => {
+            const overlay = document.getElementById("unmuteOverlay");
+            if (overlay) overlay.style.display = "none";
+        });
+        localV.addEventListener("timeupdate", () => {
+            if (!currentTrack || isMutedViewer || !currentNextTrack) return;
+            const dur = localV.duration;
+            const cur = localV.currentTime;
+            if (!dur || isNaN(dur) || dur < 35) return;
+            const remaining = dur - cur;
+            if (remaining <= 30 && onDeckAlertFiredForQueueId !== currentNextTrack.queue_id) {
+                onDeckAlertFiredForQueueId = currentNextTrack.queue_id;
+                console.log(`[Stage] ~30s remaining in current song. Notifying next singer on-deck for track ${currentNextTrack.queue_id}`);
+                fetch(`/api/stage/notify-on-deck?queue_id=${currentNextTrack.queue_id}`, { method: "POST" }).catch(() => {});
+            }
+        });
+    }
+    if (fillerV) {
+        fillerV.addEventListener("playing", () => {
+            const overlay = document.getElementById("unmuteOverlay");
+            if (overlay) overlay.style.display = "none";
+        });
+    }
 }
 
 function applyStageAudioMute(muted) {
@@ -883,15 +1036,32 @@ function startFillerPlayback(track) {
 
     fadeOutBGM();
 
+    // Hide standard join QR overlay so it doesn't clash with fillerQRCard
+    const joinQR = document.getElementById("joinQROverlay");
+    if (joinQR) joinQR.style.display = "none";
+
     const qrCard = document.getElementById("fillerQRCard");
     if (qrCard) qrCard.style.display = "flex";
 
     const tickerBar = document.getElementById("fillerTickerBar");
-    if (tickerBar) tickerBar.style.display = "flex";
+    if (tickerBar) {
+        tickerBar.style.display = "flex";
+        tickerBar.style.background = "rgba(8, 14, 24, 0.95)";
+        tickerBar.style.borderTop = "1px solid rgba(0, 240, 255, 0.3)";
+    }
 
     const tickerText = document.getElementById("fillerTickerText");
     if (tickerText) {
+        tickerText.style.animation = "none";
+        tickerText.style.textAlign = "left";
+        tickerText.style.width = "auto";
+        tickerText.style.paddingLeft = "20px";
+        tickerText.style.color = "var(--neon-cyan)";
+        tickerText.style.fontSize = "0.95rem";
+        tickerText.style.fontWeight = "600";
         tickerText.innerText = `🌴 DJ LOUNGE MUSIC: ${track.artist} - ${track.title} • 🌺 OPEN MIC: Scan the QR code to queue your favorite song!`;
+        tickerText.offsetHeight; /* trigger reflow to reset animation from right */
+        tickerText.style.animation = "tickerMarquee 25s linear infinite";
     }
 
     const fillerVideo = document.getElementById("fillerVideo");
@@ -924,9 +1094,13 @@ function startFillerPlayback(track) {
                 }
             };
             fillerVideo.play().catch(e => {
+                if (e.name === "AbortError") return;
                 console.log("[Filler] Playback blocked:", e);
+                const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
                 const unmuteOverlay = document.getElementById("unmuteOverlay");
-                if (unmuteOverlay) unmuteOverlay.style.display = "flex";
+                if (isMobile && unmuteOverlay && fillerVideo.paused) {
+                    unmuteOverlay.style.display = "flex";
+                }
             });
         }
     } else {
@@ -943,9 +1117,22 @@ function startFillerPlayback(track) {
 }
 
 function handleFillerTransitionFade(data) {
+    const tickerBar = document.getElementById("fillerTickerBar");
+    if (tickerBar) {
+        tickerBar.style.background = "linear-gradient(90deg, rgba(255,42,133,0.95) 0%, rgba(255,183,3,0.95) 100%)";
+        tickerBar.style.borderTop = "2px solid #fff";
+    }
     const tickerText = document.getElementById("fillerTickerText");
     if (tickerText) {
-        tickerText.innerText = `🎤 STAGE RE-OPENING: ${data.next_singer} is up next with "${data.next_title}"! Fading in 3... 2... 1... ⚡`;
+        // Freeze animation and show prominent centered alert banner
+        tickerText.style.animation = "none";
+        tickerText.style.textAlign = "center";
+        tickerText.style.width = "100%";
+        tickerText.style.paddingLeft = "0";
+        tickerText.style.color = "#fff";
+        tickerText.style.fontSize = "1.05rem";
+        tickerText.style.fontWeight = "800";
+        tickerText.innerHTML = `⚡ <strong>STAGE RE-OPENING:</strong> <span style="color: #fff; text-decoration: underline;">${escapeHtml(data.next_singer)}</span> with "${escapeHtml(data.next_title)}"! <em>(Starting in 3s...)</em>`;
     }
 
     const fillerVideo = document.getElementById("fillerVideo");
@@ -965,9 +1152,34 @@ function handleFillerTransitionFade(data) {
 }
 
 function handleFillerTransitionFinish(data) {
+    const tickerBar = document.getElementById("fillerTickerBar");
+    if (tickerBar) {
+        tickerBar.style.background = "linear-gradient(90deg, rgba(8,14,24,0.95) 0%, rgba(255,183,3,0.3) 100%)";
+        tickerBar.style.borderTop = "2px solid var(--neon-gold)";
+    }
     const tickerText = document.getElementById("fillerTickerText");
     if (tickerText) {
-        tickerText.innerText = `🎤 UP NEXT: ${data.next_singer} is up next with "${data.next_title}" by ${data.next_artist} right after this video! Get ready! 🎶`;
+        // Display stationary alert banner for 4s so everyone can read it, then resume marquee from right
+        tickerText.style.animation = "none";
+        tickerText.style.textAlign = "center";
+        tickerText.style.width = "100%";
+        tickerText.style.paddingLeft = "0";
+        tickerText.style.color = "var(--neon-gold)";
+        tickerText.style.fontSize = "1rem";
+        tickerText.style.fontWeight = "800";
+        tickerText.innerHTML = `🎤 <strong>UP NEXT:</strong> ${escapeHtml(data.next_singer)} with "${escapeHtml(data.next_title)}" <em>(Right after this video!)</em> 🎶`;
+
+        setTimeout(() => {
+            if (isFillerPlaying && tickerText) {
+                tickerText.style.textAlign = "left";
+                tickerText.style.width = "auto";
+                tickerText.style.paddingLeft = "20px";
+                tickerText.innerText = `🎤 UP NEXT: ${data.next_singer} with "${data.next_title}" by ${data.next_artist} right after this video! • 🌺 Scan QR to join the queue!`;
+                tickerText.style.animation = "none";
+                tickerText.offsetHeight; /* trigger reflow */
+                tickerText.style.animation = "tickerMarquee 25s linear infinite";
+            }
+        }, 4000);
     }
 }
 
@@ -986,8 +1198,26 @@ function stopFillerPlayback() {
     const qrCard = document.getElementById("fillerQRCard");
     if (qrCard) qrCard.style.display = "none";
 
+    // Restore standard join QR overlay for karaoke playback and intermissions
+    const joinQR = document.getElementById("joinQROverlay");
+    if (joinQR) joinQR.style.display = "flex";
+
     const tickerBar = document.getElementById("fillerTickerBar");
-    if (tickerBar) tickerBar.style.display = "none";
+    if (tickerBar) {
+        tickerBar.style.display = "none";
+        tickerBar.style.background = "rgba(8, 14, 24, 0.95)";
+        tickerBar.style.borderTop = "1px solid rgba(0, 240, 255, 0.3)";
+    }
+
+    const tickerText = document.getElementById("fillerTickerText");
+    if (tickerText) {
+        tickerText.style.animation = "none";
+        tickerText.style.textAlign = "left";
+        tickerText.style.width = "auto";
+        tickerText.style.color = "var(--neon-cyan)";
+        tickerText.style.fontSize = "0.95rem";
+        tickerText.style.fontWeight = "600";
+    }
 
     const fillerVideo = document.getElementById("fillerVideo");
     if (fillerVideo) {

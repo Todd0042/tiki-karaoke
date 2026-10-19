@@ -29,8 +29,19 @@ karaoke_library/tracks/*
 !karaoke_library/tracks/.gitkeep
 karaoke_library/playlists_m3u/*
 !karaoke_library/playlists_m3u/.gitkeep
+karaoke_library/filler/*
+!karaoke_library/filler/.gitkeep
+
+# Backup folders
+_backup_karaoke_data/
+_backup*/
+
+# User runtime configuration
+config.json
+data/
 
 # Environment and OS files
 .env
 .DS_Store
 Thumbs.db
+

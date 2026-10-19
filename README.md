@@ -1,104 +1,140 @@
-# 🌴 Florida Tiki Karaoke Lounge & Neon Bar
+# 🌴 Tiki Karaoke Lounge & Neon Bar
 
-A self-hosted, broadcast-grade Karaoke Party Server, DJ, and Archiver application styled after a vibrant Florida Tiki Bar with neon lights.
+[![License: PolyForm Noncommercial](https://img.shields.io/badge/License-PolyForm%20Noncommercial-blue.svg)](LICENSE)
+[![Platform: Linux](https://img.shields.io/badge/Platform-Linux%20x86__64-orange.svg)]()
+[![Python: 3.10+](https://img.shields.io/badge/Python-3.10%2B-green.svg)]()
+[![FastAPI](https://img.shields.io/badge/Backend-FastAPI%20%2B%20WebSockets-teal.svg)]()
 
----
-
-## ✨ Features
-
-- **📱 Mobile Web App (Smartphones)**: Zero-install PWA. Guests scan a QR code on the TV screen over local Wi-Fi, register a nickname with a tropical avatar (🌺, 🦩, 🍹, 🌴, 🥥, 🦜, 🏄), search songs, pick custom keys, and queue requests.
-- **⚡ Tiered Search Pipeline (Local-First $\rightarrow$ Online Fallback)**:
-  - **Tier 1 (Instant Local Library)**: Sub-millisecond SQLite FTS5 full-text search across downloaded tracks with zero buffering and zero quota usage.
-  - **Tier 2 (On-Demand YouTube Query)**: Automatically queries YouTube if not found locally, removing clutter (`[Sing King]`, `4K`, `Official`) and clustering versions (backing vocals, guide melody, key changes) into clean cards.
-- **👑 Private Host DJ Remote & Dual QR System**:
-  - **Public QR Code**: Displayed on TV for guests (`http://<ip>:8000/join`).
-  - **Private Host QR Code**: Opened from the TV admin modal or terminal (`http://<ip>:8000/host?token=...`), turning the host's phone into the Master DJ remote with Skip, Pause, Live Pitch/EQ, Soundboard, and TV volume.
-- **🎵 Real-Time Web Audio DSP (Pitch Shifting & 3-Band Parametric EQ)**:
-  - Built-in Chris Wilson delay-line pitch shifter ($\pm 6$ semitones) that changes key without altering tempo or video sync.
-  - Hardware-accelerated 3-band parametric EQ (Bass, Mid, Treble) and Web Audio peak limiter preventing audio distortion.
-- **🔊 Automated Audio Loudness Normalization (EBU R128 / LUFS)**:
-  - Every downloaded song is automatically normalized to **-16 LUFS** (-1.5 dBFS True Peak) using FFmpeg `loudnorm` in 1–2s without re-encoding video.
-- **🌴 Broadcast-Grade Stage Intermission Display**:
-  - Fullscreen TV display with 20-second circular countdown timer, Up Next tickers, and background intermission music (BGM) with auto-ducking.
-  - Optional Virtual DJ TTS voice announcer (toggleable on/off for live human MCs).
-  - Floating audience emoji reactions (🔥, 🍹, 🌴, 👏, 🌺, 🍻) sent live from crowd smartphones.
-- **📥 Background Downloader & Local Archiver (`yt-dlp` + `ffmpeg`)**:
-  - Asynchronously downloads played/queued tracks into `karaoke_library/tracks/[Artist]/[Title].mp4`.
-  - Automatically exports standard `.m3u8` playlists for each singer (`karaoke_library/playlists_m3u/[Singer].m3u8`).
-- **☁️ Google Account Playlist Sync (OAuth 2.0)**:
-  - Automatically saves played tracks to dedicated playlists in the host's YouTube account (`Karaoke - [Singer Name]`) with deduplication.
+> A modern, self-hosted, broadcast-grade Karaoke Party Server and Host DJ engine styled after a neon tropical tiki bar. Built specifically for Linux living rooms, party hosts, and audio enthusiasts.
 
 ---
 
-## 🚀 Quick Start
+## 🍹 Why Tiki Karaoke?
 
-### 1. Requirements
-- Python 3.10+
-- FFmpeg (installed and available on PATH)
+Most Linux karaoke software was abandoned over a decade ago—requiring complex local text files, dated UIs, or manual window shuffling. 
 
-### 2. Launching the Server
+**Tiki Karaoke is designed for modern house parties:**
+* **Zero App Installation for Guests**: Singers point their phone cameras at the TV screen's QR code. They can instantly browse songs, search YouTube, and queue tracks with their own nickname and tropical avatar.
+* **Autonomous Stage Display**: Connect an HDMI cable from your laptop or mini-PC to your TV. The stage runs borderless in kiosk mode with automated countdown intermissions, background video music, and live on-screen audience emoji reactions.
+* **Private Host DJ Remote**: The host controls pitch shifting, live EQ, intermission timers, queue reordering, and soundboard effects directly from their phone or secondary monitor.
+* **Hardware-Accelerated Web Audio DSP**: Real-time key/pitch shifting ($\pm 6$ semitones) without altering playback speed or video sync, 3-band parametric EQ, and venue A/V latency calibration.
+
+---
+
+## 🚀 60-Second Quick Start (Linux)
+
+### 1. Prerequisites
+* **Python 3.10 or newer**
+* **FFmpeg** (for YouTube audio extraction and loudness normalization)
+  ```bash
+  # Ubuntu / Debian / Linux Mint:
+  sudo apt update && sudo apt install -y ffmpeg python3-venv
+
+  # Arch Linux / Manjaro:
+  sudo pacman -S ffmpeg python
+
+  # Fedora / RHEL:
+  sudo dnf install -y ffmpeg python3
+  ```
+
+### 2. Clone & Install
 ```bash
-cd ~/Documents/GitHub/tiki-karaoke
+git clone https://github.com/your-username/tiki-karaoke.git
+cd tiki-karaoke
+./install.sh
+```
+*The installer automatically creates the Python virtual environment, installs dependencies, and creates a desktop application launcher.*
+
+### 3. Start the Lounge
+```bash
 ./start.sh
 ```
-Or directly:
+*(Or launch **Tiki Karaoke** directly from your Linux Application Menu!)*
+
+---
+
+## 🖥️ Screen URLs & Remote Access (🔒 Trusted SSL by Default)
+
+When launched with internet connectivity, Tiki Karaoke automatically establishes an **encrypted Cloudflare Quick Tunnel** (`https://*.trycloudflare.com`), providing guests with an instant **trusted 🔒 HTTPS green padlock** on their mobile phones with zero browser security warnings.
+
+| Screen | URL | Purpose |
+| :--- | :--- | :--- |
+| **📺 Main Stage Display** | `https://<tunnel-id>.trycloudflare.com/stage` *(or `http://<ip>:8000/stage`)* | Fullscreen TV display showing video lyrics, countdowns, and emoji hype. |
+| **📱 Guest Singer Join** | `https://<tunnel-id>.trycloudflare.com/join` *(or `http://<ip>:8000/join`)* | Mobile web app for singers to search songs and join the queue. |
+| **👑 Host DJ Remote** | `https://<tunnel-id>.trycloudflare.com/host?token=...` | Protected DJ dashboard with pitch shifting, queue controls, and settings. |
+
+* **Default Host PIN**: `1234` (configurable via `./setup.sh` or web setup).
+* **CLI Options**:
+  * `./start.sh`: Standard start with automatic Cloudflare 🔒 HTTPS and port collision fallback.
+  * `./start.sh --local-only`: Restricts traffic strictly to your local Wi-Fi LAN (`http://<ip>:8000`).
+  * `./start.sh --bore`: Use legacy static port HTTP tunnel (`http://bore.pub:38480`).
+  * `./start.sh --no-browser`: Headless mode (does not auto-open browser windows).
+  * `./start.sh --stop`: Gracefully terminates all background services.
+
+### 🌐 Modular Remote Access & Domain Options
+Run `./setup.sh` or visit `/setup` anytime to configure your preferred remote access provider:
+1. **Cloudflare Quick Tunnel (Default)**: Zero setup, auto HTTPS, changing session URL.
+2. **Cloudflare Named Tunnel (Custom Domain)**: Connect your own domain (e.g. `https://sing.mybar.com`) for permanent branded lounge access.
+3. **Tailscale Funnel**: Free permanent `https://*.ts.net` HTTPS URL without owning a domain or opening router ports.
+4. **DuckDNS + Caddy**: Free subdomain with automated Let's Encrypt certificates (requires router ports 80/443).
+5. **Local Wi-Fi Only**: Offline mode for cabins, off-grid parties, or private local networks.
+6. **Bore**: Static unencrypted port fallback.
+
+---
+
+## ✨ Feature Highlights
+
+### ⚡ Tiered Search Engine
+* **Instant Local Cache**: Zero-latency SQLite FTS5 search across downloaded video tracks.
+* **On-Demand YouTube Fallback**: Automatically queries YouTube for karaoke versions, stripping clickbait tags (`[Sing King]`, `Official 4K`) and clustering versions (backing vocals, guide melody, instrumental).
+
+### 🎛️ Real-Time Venue A/V Sync Calibration
+* Compensates for video processing lag on smart TVs and Bluetooth speaker delays directly from the Host Remote:
+  * **Direct Audio**: `0 ms` (wired studio monitors or headphones)
+  * **Smart TV Lag**: `+80 ms` (HDMI input processing delay)
+  * **Projector**: `+140 ms` (home theater projector delay)
+  * **Bluetooth Speaker**: `-150 ms` (wireless audio latency compensation)
+  * Live `[ -10ms ]` / `[ +10ms ]` fine-tuning nudges during live playback.
+
+### 🔔 30-Second Non-Blocking On-Deck Alert
+* Exactly 30 seconds before a singer's song begins, their phone receives an alert pill notifying them to grab a microphone.
+* **Zero Show Interruption**: The stage flow never pauses waiting for singer confirmation; intermission countdowns proceed autonomously.
+
+### 🔊 EBU R128 Loudness Normalization
+* Every downloaded song is automatically analyzed and normalized to **-16 LUFS** (-1.5 dBFS True Peak) using FFmpeg `loudnorm`, eliminating jarring volume differences between quiet 80s ballads and loud modern pop tracks.
+
+---
+
+## 🛠️ Troubleshooting & FAQ
+
+#### ⚠️ "Port 8000 is already in use"
+Tiki Karaoke automatically detects occupied ports and seamlessly shifts to `8001`, `8002`, etc., updating QR codes dynamically. To stop previous instances manually, run:
 ```bash
-./venv/bin/python main.py
+./start.sh --stop
 ```
-By default, the server establishes a **permanent, fixed static URL** (`http://bore.pub:38480`) that **never changes across restarts** and requires zero AT&T router port forwarding or configuration.
 
-### 3. Remote Access & URLs
-- **Main TV Stage Display**: `http://bore.pub:38480/stage` (or local `http://192.168.1.189:8000/stage`)
-- **Guest / Singer Mobile View**: `http://bore.pub:38480/join` (or local `http://192.168.1.189:8000/join`)
-- **Host DJ Remote URL**: `http://bore.pub:38480/host?token=24bb8bedcc7c2342d099b69c912db6e0`
-- **Host 4-Digit PIN**: `1234`
+#### ⚠️ "FFmpeg is missing on host machine"
+If `ffmpeg` is not found, YouTube downloads will be paused. Install FFmpeg using your package manager (`sudo apt install ffmpeg`), then restart `./start.sh`.
 
-Options:
-- `./start.sh`: Launches with the permanent static public URL (`bore.pub:38480`).
-- `./start.sh --local-only`: Run strictly on the local Wi-Fi network without remote tunneling.
-- `./start.sh --tunnel`: Use an ephemeral Cloudflare HTTPS tunnel if preferred.
-- `--no-browser`: Do not auto-launch browser window on start.
-
-### 3. Screen URLs
-- **Main TV Stage Display**: `http://<your-local-ip>:8000/stage`
-- **Guest / Singer Mobile View**: `http://<your-local-ip>:8000/join`
-- **Host DJ Remote URL**: `http://<your-local-ip>:8000/host?token=<HOST_TOKEN>`
-- **Host 4-Digit PIN**: `1234` (or configured via `TIKI_HOST_PIN` environment variable).
+#### 🔇 Audio playing through laptop instead of TV HDMI
+1. Run `./setup.sh` to launch the interactive configuration wizard.
+2. Under **Stage Audio Output Device**, select your TV's HDMI audio sink from the detected PulseAudio / PipeWire devices.
 
 ---
 
-## 📁 Directory Structure
+## 🧪 Running the Test Suite
 
-```
-tiki-karaoke/
-├── main.py                   # Server CLI entry point & terminal QR generator
-├── app.py                    # FastAPI server, WebSockets hub & routes
-├── database.py               # SQLite schema, WAL mode, FTS5 index, queue & history
-├── search.py                 # Tiered search engine & RapidFuzz deduplicator
-├── downloader.py             # Background yt-dlp downloader & FFmpeg loudnorm (-16 LUFS)
-├── playlist_sync.py          # Google OAuth 2.0 & YouTube playlist sync
-├── config.py                 # Paths, ports, and persistent secrets
-├── static/
-│   ├── css/tiki-theme.css    # Florida Tiki Bar neon theme & animations
-│   ├── js/audio-dsp.js       # Web Audio EQ, Pitch Shifter & Peak Limiter
-│   ├── js/host-player.js     # Chromium dual-player engine & stage intermission
-│   ├── js/mobile-client.js   # Mobile client PWA logic & host controls
-│   ├── sounds/               # Soundboard stems (airhorn, applause, rimshot, bird)
-│   └── bgm/                  # Ambient background intermission music
-├── templates/
-│   ├── host.html             # TV / Main stage display template
-│   └── mobile.html           # Smartphone web client template
-├── data/
-│   └── karaoke.db            # SQLite database & FTS5 index
-└── karaoke_library/
-    ├── tracks/               # Permanent local library of normalized MP4s
-    └── playlists_m3u/        # Auto-generated M3U playlists per singer
-```
+Tiki Karaoke includes an automated test suite covering API endpoints, WebSocket broadcasting, queue ordering, and latency calibration:
 
----
-
-## 🧪 Running Tests
 ```bash
 ./venv/bin/python test_system.py
-./venv/bin/python test_api.py
 ```
+
+---
+
+## 📜 License
+
+This project is licensed under the **PolyForm Noncommercial License 1.0.0** ([LICENSE](LICENSE)).
+
+* **Permitted**: Free personal use, hobbyist use, private house parties, educational use, and beta testing/modification on Linux.
+* **Prohibited**: Commercial exploitation, charging entry/subscriptions, or resale without written commercial licensing from the author.

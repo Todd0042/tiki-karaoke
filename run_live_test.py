@@ -21,7 +21,7 @@ def run_tests():
     print("=" * 65)
 
     # 1. Register test singers
-    singer1 = get_or_create_singer("token_todd", "Todd", "🦩", "127.0.0.1")
+    singer1 = get_or_create_singer("token_testsinger", "TestSinger", "🦩", "127.0.0.1")
     singer2 = get_or_create_singer("token_friend", "Alex", "🍹", "127.0.0.1")
     print(f"✅ Registered Singer 1: {singer1['name']} ({singer1['avatar']})")
     print(f"✅ Registered Singer 2: {singer2['name']} ({singer2['avatar']})")

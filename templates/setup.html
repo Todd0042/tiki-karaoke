@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Florida Tiki Bar - Initial Setup Wizard 🌴</title>
+    <title>Tiki Bar - Initial Setup Wizard 🌴</title>
     <link rel="stylesheet" href="/static/css/tiki-theme.css">
     <style>
         body {
@@ -150,7 +150,7 @@
 <body>
     <div class="setup-card">
         <div class="setup-title">
-            <h1 class="font-tiki neon-cyan">🌴 Florida Tiki Lounge Setup 🍹</h1>
+            <h1 class="font-tiki neon-cyan">🌴 Tiki Lounge Setup 🍹</h1>
             <p style="color: var(--text-muted); font-size: 0.95rem; margin: 0;">
                 Configure your distributed Karaoke Server, Host DJ PIN, and Remote Access.
             </p>
@@ -182,23 +182,39 @@
 
             <!-- Section 2: Remote Connectivity -->
             <div class="form-section">
-                <div class="section-header">🌐 2. Remote Access & URLs</div>
+                <div class="section-header">🌐 2. Remote Access & SSL / HTTPS</div>
                 <div class="field-desc" style="margin-bottom: 12px;">Choose how singers and the stage connect across devices or over the internet:</div>
 
                 <div class="radio-card-grid">
-                    <label class="radio-card active" id="cardBore" onclick="selectRemoteMode('bore')">
-                        <input type="radio" name="remote_mode" value="bore" checked style="margin-top: 4px;">
+                    <label class="radio-card active" id="cardCloudflareQuick" onclick="selectRemoteMode('cloudflare_quick')">
+                        <input type="radio" name="remote_mode" value="cloudflare_quick" checked style="margin-top: 4px;">
                         <div>
-                            <div style="font-weight: 700; color: var(--neon-cyan);">Fixed Static URL (Permanent)</div>
-                            <div class="field-desc">Uses bore.pub:38480. Permanent link that never changes. No router setup needed!</div>
+                            <div style="font-weight: 700; color: var(--neon-gold);">🔒 Cloudflare Quick Tunnel (Recommended)</div>
+                            <div class="field-desc">Instant trusted HTTPS on *.trycloudflare.com. Zero setup, no account needed, green padlock for all guests.</div>
                         </div>
                     </label>
 
-                    <label class="radio-card" id="cardCloudflare" onclick="selectRemoteMode('cloudflare')">
-                        <input type="radio" name="remote_mode" value="cloudflare" style="margin-top: 4px;">
+                    <label class="radio-card" id="cardCloudflareNamed" onclick="selectRemoteMode('cloudflare_named')">
+                        <input type="radio" name="remote_mode" value="cloudflare_named" style="margin-top: 4px;">
                         <div>
-                            <div style="font-weight: 700; color: var(--neon-gold);">Cloudflare Tunnel (HTTPS)</div>
-                            <div class="field-desc">Creates a secure temporary trycloudflare.com HTTPS domain.</div>
+                            <div style="font-weight: 700; color: var(--neon-cyan);">👑 Cloudflare Named Tunnel (Custom Domain)</div>
+                            <div class="field-desc">Permanent branded HTTPS domain (e.g. sing.mybar.com). Requires free Cloudflare account & tunnel token.</div>
+                        </div>
+                    </label>
+
+                    <label class="radio-card" id="cardTailscale" onclick="selectRemoteMode('tailscale')">
+                        <input type="radio" name="remote_mode" value="tailscale" style="margin-top: 4px;">
+                        <div>
+                            <div style="font-weight: 700; color: #aaffaa;">🔒 Tailscale Funnel</div>
+                            <div class="field-desc">Permanent free *.ts.net HTTPS URL. Works behind CGNAT, requires tailscale CLI installed.</div>
+                        </div>
+                    </label>
+
+                    <label class="radio-card" id="cardDuckdns" onclick="selectRemoteMode('duckdns')">
+                        <input type="radio" name="remote_mode" value="duckdns" style="margin-top: 4px;">
+                        <div>
+                            <div style="font-weight: 700; color: #ffaa55;">🔒 DuckDNS + Caddy</div>
+                            <div class="field-desc">Free *.duckdns.org subdomain with auto Let's Encrypt SSL. Requires router port forwarding (80/443).</div>
                         </div>
                     </label>
 
@@ -206,22 +222,71 @@
                         <input type="radio" name="remote_mode" value="local" style="margin-top: 4px;">
                         <div>
                             <div style="font-weight: 700; color: #fff;">Local Wi-Fi Only</div>
-                            <div class="field-desc">Restricted to devices on the same home or venue Wi-Fi network.</div>
+                            <div class="field-desc">Offline internal LAN only (http://192.168.x.x:8000). Zero internet required.</div>
                         </div>
                     </label>
 
-                    <label class="radio-card" id="cardCustom" onclick="selectRemoteMode('custom')">
-                        <input type="radio" name="remote_mode" value="custom" style="margin-top: 4px;">
+                    <label class="radio-card" id="cardBore" onclick="selectRemoteMode('bore')">
+                        <input type="radio" name="remote_mode" value="bore" style="margin-top: 4px;">
                         <div>
-                            <div style="font-weight: 700; color: var(--neon-pink);">Custom Public Host</div>
-                            <div class="field-desc">Specify your own static IP, DDNS domain, or port-forwarded host.</div>
+                            <div style="font-weight: 700; color: var(--text-muted);">Bore Static Port (Legacy)</div>
+                            <div class="field-desc">Fixed port on bore.pub:38480. Unencrypted HTTP fallback.</div>
                         </div>
                     </label>
                 </div>
 
-                <div id="customHostField" class="field-group" style="display: none; margin-top: 14px;">
-                    <label for="publicHost">Custom Public Host / Domain (with port if needed)</label>
-                    <input type="text" id="publicHost" name="public_host" placeholder="karaoke.mybar.com:8000" value="{{ config.public_host or '' }}">
+                <!-- Sub-panel: Cloudflare Named Tunnel -->
+                <div id="cfNamedFields" class="tiki-card" style="display: none; margin-top: 14px; padding: 12px; border-left: 3px solid var(--neon-cyan);">
+                    <div style="font-weight: 700; color: var(--neon-cyan); margin-bottom: 6px;">Cloudflare Named Tunnel Setup:</div>
+                    <div class="field-desc" style="margin-bottom: 8px;">
+                        1. Go to <a href="https://one.dash.cloudflare.com" target="_blank" style="color: var(--neon-cyan);">one.dash.cloudflare.com</a> → Networks → Tunnels.<br>
+                        2. Create a tunnel (name it anything you like, e.g. your lounge name) and select <code>cloudflared</code>.<br>
+                        3. Add a Public Hostname pointing to <code>HTTP 127.0.0.1:8000</code>.
+                    </div>
+                    <div class="field-group" style="margin-bottom: 8px;">
+                        <label for="cfTunnelToken">Cloudflare Tunnel Token</label>
+                        <input type="text" id="cfTunnelToken" name="cloudflare_token" placeholder="eyJh..." value="{{ config.cloudflare_token or '' }}">
+                    </div>
+                    <div class="field-group">
+                        <label for="cfCustomDomain">Branded Domain Name</label>
+                        <input type="text" id="cfCustomDomain" name="custom_domain" placeholder="sing.mybar.com" value="{{ config.custom_domain or '' }}">
+                    </div>
+                </div>
+
+                <!-- Sub-panel: Tailscale Funnel -->
+                <div id="tailscaleFields" class="tiki-card" style="display: none; margin-top: 14px; padding: 12px; border-left: 3px solid #aaffaa;">
+                    <div style="font-weight: 700; color: #aaffaa; margin-bottom: 6px;">Tailscale Funnel Setup:</div>
+                    <div class="field-desc" style="margin-bottom: 8px;">
+                        Ensure Tailscale is installed (<code>curl -fsSL https://tailscale.com/install.sh | sh</code>) and Funnel is enabled in your admin console.
+                    </div>
+                    <div class="field-group">
+                        <label for="tsDomain">Tailscale Domain (leave blank to auto-detect)</label>
+                        <input type="text" id="tsDomain" name="tailscale_domain" placeholder="tiki.my-tailnet.ts.net" value="{{ config.tailscale_domain or '' }}">
+                    </div>
+                </div>
+
+                <!-- Sub-panel: DuckDNS -->
+                <div id="duckdnsFields" class="tiki-card" style="display: none; margin-top: 14px; padding: 12px; border-left: 3px solid #ffaa55;">
+                    <div style="font-weight: 700; color: #ffaa55; margin-bottom: 6px;">DuckDNS + Caddy Setup:</div>
+                    <div class="field-desc" style="margin-bottom: 8px;">
+                        Register at <a href="https://www.duckdns.org" target="_blank" style="color: #ffaa55;">duckdns.org</a> and forward router ports 80 & 443 to this machine.
+                    </div>
+                    <div class="field-group" style="margin-bottom: 8px;">
+                        <label for="duckDomain">DuckDNS Subdomain (without .duckdns.org)</label>
+                        <input type="text" id="duckDomain" name="duckdns_domain" placeholder="my-tiki-lounge" value="{{ config.duckdns_domain or '' }}">
+                    </div>
+                    <div class="field-group">
+                        <label for="duckToken">DuckDNS Token</label>
+                        <input type="text" id="duckToken" name="duckdns_token" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" value="{{ config.duckdns_token or '' }}">
+                    </div>
+                </div>
+
+                <!-- Sub-panel: Bore Port -->
+                <div id="boreFields" class="tiki-card" style="display: none; margin-top: 14px; padding: 12px; border-left: 3px solid var(--text-muted);">
+                    <div class="field-group">
+                        <label for="borePort">Permanent Port on bore.pub</label>
+                        <input type="number" id="borePort" name="remote_port" value="{{ config.remote_port or 38480 }}" placeholder="38480">
+                    </div>
                 </div>
             </div>
 
@@ -229,13 +294,14 @@
             <div class="form-section">
                 <div class="section-header">💾 3. Storage & Media Library</div>
                 <div class="field-desc" style="margin-bottom: 14px;">
-                    Choose where downloaded video files, playlists, and database are saved. Perfect for using a dedicated secondary NVMe SSD or storage drive (e.g. <code style="color: var(--neon-gold);">/home/todd/storage/karaoke</code>).
+                    Choose where downloaded video files, playlists, and database are saved. Perfect for using a dedicated secondary NVMe SSD or storage drive (e.g. <code style="color: var(--neon-gold);">/media/storage/karaoke</code> or <code style="color: var(--neon-gold);">~/karaoke</code>).
                 </div>
 
                 <div class="field-group">
                     <label for="libraryDir">Video Media Library Path (Tracks & Playlists)</label>
                     <div style="display: flex; gap: 8px;">
-                        <input type="text" id="libraryDir" name="library_dir" value="{{ config.library_dir or default_library_dir }}" placeholder="{{ default_library_dir }}" onblur="checkStoragePath('libraryDir', 'libDiskInfo')">
+                        <input type="text" id="libraryDir" name="library_dir" value="{{ config.library_dir or default_library_dir }}" placeholder="Paste or select the directory you wish to use for songs here" onblur="checkStoragePath('libraryDir', 'libDiskInfo')">
+                        <button type="button" class="btn-ghost" style="white-space: nowrap; padding: 0 16px; border-color: var(--neon-gold); color: var(--neon-gold); border-radius: 10px; cursor: pointer;" onclick="openDirectoryPicker('libraryDir', 'libDiskInfo')">📁 Browse...</button>
                         <button type="button" class="btn-ghost" style="white-space: nowrap; padding: 0 16px; border-color: var(--neon-cyan); color: var(--neon-cyan); border-radius: 10px; cursor: pointer;" onclick="checkStoragePath('libraryDir', 'libDiskInfo')">🔍 Check Drive</button>
                     </div>
                     <div id="libDiskInfo" class="field-desc" style="margin-top: 6px; font-weight: 500;"></div>
@@ -244,13 +310,41 @@
                 <div class="field-group">
                     <label for="dataDir">Database & Runtime Data Path (karaoke.db & host token)</label>
                     <div style="display: flex; gap: 8px;">
-                        <input type="text" id="dataDir" name="data_dir" value="{{ config.data_dir or default_data_dir }}" placeholder="{{ default_data_dir }}" onblur="checkStoragePath('dataDir', 'dataDiskInfo')">
+                        <input type="text" id="dataDir" name="data_dir" value="{{ config.data_dir or default_data_dir }}" placeholder="Paste or select the directory you wish to use for database here" onblur="checkStoragePath('dataDir', 'dataDiskInfo')">
+                        <button type="button" class="btn-ghost" style="white-space: nowrap; padding: 0 16px; border-color: var(--neon-gold); color: var(--neon-gold); border-radius: 10px; cursor: pointer;" onclick="openDirectoryPicker('dataDir', 'dataDiskInfo')">📁 Browse...</button>
                         <button type="button" class="btn-ghost" style="white-space: nowrap; padding: 0 16px; border-color: var(--neon-cyan); color: var(--neon-cyan); border-radius: 10px; cursor: pointer;" onclick="checkStoragePath('dataDir', 'dataDiskInfo')">🔍 Check Drive</button>
                     </div>
                     <div id="dataDiskInfo" class="field-desc" style="margin-top: 6px; font-weight: 500;"></div>
                 </div>
 
-                <div style="margin-top: 10px;">
+                <div class="field-group" style="margin-top: 16px;">
+                    <label>Video Quality & Storage Footprint Profile</label>
+                    <div style="display: grid; grid-template-columns: 1fr; gap: 10px; margin-top: 6px;">
+                        <label class="radio-card profile-card {% if config.video_quality_profile == 'pro' or not config.video_quality_profile %}active{% endif %}" id="cardProfilePro" onclick="selectQualityProfile('pro')">
+                            <input type="radio" name="video_quality_profile" value="pro" style="margin-top: 4px;" {% if config.video_quality_profile == 'pro' or not config.video_quality_profile %}checked{% endif %}>
+                            <div>
+                                <div style="font-weight: 700; color: var(--neon-cyan);">🏆 "I'm a Pro" (Highest Quality / Maximum Storage)</div>
+                                <div class="field-desc">Downloads full 1080p/720p HD video & audio, pre-normalizes to -23.0 LUFS. Zero-lag playback on stage.</div>
+                            </div>
+                        </label>
+                        <label class="radio-card profile-card {% if config.video_quality_profile == 'inept' %}active{% endif %}" id="cardProfileInept" onclick="selectQualityProfile('inept')">
+                            <input type="radio" name="video_quality_profile" value="inept" style="margin-top: 4px;" {% if config.video_quality_profile == 'inept' %}checked{% endif %}>
+                            <div>
+                                <div style="font-weight: 700; color: var(--neon-gold);">💾 "I'm Inept" (Space Saver / Compact 480p)</div>
+                                <div class="field-desc">Downloads lightweight 480p/360p video files (~70% smaller file sizes) for mini-PCs, SD cards, or tight drives.</div>
+                            </div>
+                        </label>
+                        <label class="radio-card profile-card {% if config.video_quality_profile == 'stream_only' %}active{% endif %}" id="cardProfileStream" onclick="selectQualityProfile('stream_only')">
+                            <input type="radio" name="video_quality_profile" value="stream_only" style="margin-top: 4px;" {% if config.video_quality_profile == 'stream_only' %}checked{% endif %}>
+                            <div>
+                                <div style="font-weight: 700; color: var(--neon-pink);">⚡ "Live Only: I'm a Pro, but This is a Budget Setup" (Zero Disk)</div>
+                                <div class="field-desc">Zero video downloads. Streams karaoke tracks live on stage via YouTube player. Save hits with 1 tap from Host History.</div>
+                            </div>
+                        </label>
+                    </div>
+                </div>
+
+                <div style="margin-top: 14px;">
                     <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 0.88rem; color: var(--text-muted);">
                         <input type="checkbox" id="migrateFilesCheck" name="migrate_files" value="true" checked>
                         <span>📦 Automatically move existing video files if switching to a new library folder</span>
@@ -288,6 +382,44 @@
                         <span>🖥️ Fullscreen Dedicated Kiosk Mode (borderless TV display window)</span>
                     </label>
                 </div>
+
+                <hr style="border: 0; border-top: 1px solid rgba(255, 255, 255, 0.1); margin: 20px 0;">
+
+                <div style="margin-bottom: 10px;">
+                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 1rem; font-weight: 600; color: var(--neon-gold);">
+                        <input type="checkbox" id="hostDisplayEnabledCheck" name="host_display_enabled" value="true" onchange="toggleHostDisplayControls()" {% if config.host_display_enabled %}checked{% endif %}>
+                        <span>👑 Automatically open Host DJ Remote Window on startup (Multi-Monitor)</span>
+                    </label>
+                    <div class="field-desc" style="margin-left: 26px; margin-top: 4px;">
+                        Opens the Master DJ Remote pre-authenticated on a second screen (e.g. your desk monitor) while the stage window plays on your TV.
+                    </div>
+                </div>
+
+                <div id="hostDisplayFields" style="{% if not config.host_display_enabled %}display: none;{% endif %} margin-top: 14px; padding-left: 26px;">
+                    <div class="field-group">
+                        <label for="hostDisplaySelect">Target Monitor for Host DJ Remote</label>
+                        <div style="display: flex; gap: 8px;">
+                            <select id="hostDisplaySelect" name="host_display" onchange="onHostDisplaySelected()" style="flex: 1;">
+                                <option value="1">Detecting displays...</option>
+                            </select>
+                            <button type="button" class="btn-ghost" style="white-space: nowrap; padding: 0 16px; border-color: var(--neon-gold); color: var(--neon-gold); border-radius: 10px; cursor: pointer;" onclick="testHostDisplayFlash()">👑 Identify Host Screen</button>
+                        </div>
+                        <div id="hostDisplayDetailsInfo" class="field-desc" style="margin-top: 6px; color: var(--neon-gold);"></div>
+                    </div>
+
+                    <input type="hidden" id="hostDisplayX" name="host_display_x" value="{{ config.host_display_x or 0 }}">
+                    <input type="hidden" id="hostDisplayY" name="host_display_y" value="{{ config.host_display_y or 0 }}">
+                    <input type="hidden" id="hostDisplayWidth" name="host_display_width" value="{{ config.host_display_width or 1920 }}">
+                    <input type="hidden" id="hostDisplayHeight" name="host_display_height" value="{{ config.host_display_height or 1080 }}">
+                    <input type="hidden" id="hostDisplayName" name="host_display_name" value="{{ config.host_display_name or '' }}">
+
+                    <div style="margin-top: 10px;">
+                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 0.95rem;">
+                            <input type="checkbox" id="hostKioskMode" name="host_kiosk_mode" value="true" {% if config.host_kiosk_mode %}checked{% endif %}>
+                            <span>🖥️ Fullscreen Dedicated Kiosk Mode for Host Window</span>
+                        </label>
+                    </div>
+                </div>
             </div>
 
             <!-- Section 5: Audio Output Device Selection -->
@@ -317,9 +449,10 @@
                     <div class="field-group">
                         <label for="targetLufs">Loudness Target (EBU R128)</label>
                         <select id="targetLufs" name="target_lufs">
-                            <option value="-16.0" selected>-16.0 LUFS (Broadcast Standard)</option>
-                            <option value="-14.0">-14.0 LUFS (Punchy Club Loud)</option>
-                            <option value="-18.0">-18.0 LUFS (Soft & Dynamic)</option>
+                            <option value="-23.0" {% if config.target_lufs == -23.0 or not config.target_lufs %}selected{% endif %}>-23.0 LUFS (Broadcast Standard - Recommended)</option>
+                            <option value="-20.0" {% if config.target_lufs == -20.0 %}selected{% endif %}>-20.0 LUFS (Comfortable Party)</option>
+                            <option value="-16.0" {% if config.target_lufs == -16.0 %}selected{% endif %}>-16.0 LUFS (Punchy Streaming/Web)</option>
+                            <option value="-14.0" {% if config.target_lufs == -14.0 %}selected{% endif %}>-14.0 LUFS (Very Loud Club)</option>
                         </select>
                         <div class="field-desc">Automatically normalizes all downloaded tracks.</div>
                     </div>
@@ -352,25 +485,44 @@
 
     <script>
         function selectRemoteMode(mode) {
-            document.querySelectorAll('.radio-card').forEach(c => c.classList.remove('active'));
+            document.querySelectorAll('#cardCloudflareQuick, #cardCloudflareNamed, #cardTailscale, #cardDuckdns, #cardLocal, #cardBore').forEach(c => c.classList.remove('active'));
             const radio = document.querySelector(`input[name="remote_mode"][value="${mode}"]`);
             if (radio) radio.checked = true;
             
             const cardMap = {
-                'bore': 'cardBore',
-                'cloudflare': 'cardCloudflare',
+                'cloudflare_quick': 'cardCloudflareQuick',
+                'cloudflare_named': 'cardCloudflareNamed',
+                'tailscale': 'cardTailscale',
+                'duckdns': 'cardDuckdns',
                 'local': 'cardLocal',
-                'custom': 'cardCustom'
+                'bore': 'cardBore'
             };
             const activeCard = document.getElementById(cardMap[mode]);
             if (activeCard) activeCard.classList.add('active');
 
-            const customField = document.getElementById('customHostField');
-            if (mode === 'custom') {
-                customField.style.display = 'block';
-            } else {
-                customField.style.display = 'none';
-            }
+            const cfNamed = document.getElementById('cfNamedFields');
+            const tsFields = document.getElementById('tailscaleFields');
+            const duckFields = document.getElementById('duckdnsFields');
+            const boreFields = document.getElementById('boreFields');
+
+            if (cfNamed) cfNamed.style.display = (mode === 'cloudflare_named') ? 'block' : 'none';
+            if (tsFields) tsFields.style.display = (mode === 'tailscale') ? 'block' : 'none';
+            if (duckFields) duckFields.style.display = (mode === 'duckdns') ? 'block' : 'none';
+            if (boreFields) boreFields.style.display = (mode === 'bore') ? 'block' : 'none';
+        }
+
+        function selectQualityProfile(profile) {
+            document.querySelectorAll('.profile-card').forEach(c => c.classList.remove('active'));
+            const radio = document.querySelector(`input[name="video_quality_profile"][value="${profile}"]`);
+            if (radio) radio.checked = true;
+
+            const cardMap = {
+                'pro': 'cardProfilePro',
+                'inept': 'cardProfileInept',
+                'stream_only': 'cardProfileStream'
+            };
+            const activeCard = document.getElementById(cardMap[profile]);
+            if (activeCard) activeCard.classList.add('active');
         }
 
         async function checkStoragePath(inputId, infoId) {
@@ -405,12 +557,16 @@
 
         async function loadDisplays() {
             const sel = document.getElementById('stageDisplaySelect');
+            const hostSel = document.getElementById('hostDisplaySelect');
             if (!sel) return;
             try {
                 const res = await fetch('/api/setup/displays');
                 detectedDisplays = await res.json();
                 sel.innerHTML = '';
+                if (hostSel) hostSel.innerHTML = '';
+
                 const configuredId = parseInt('{{ config.stage_display or 0 }}');
+                const configuredHostId = parseInt('{{ config.host_display or 1 }}');
 
                 detectedDisplays.forEach(d => {
                     const opt = document.createElement('option');
@@ -418,8 +574,17 @@
                     opt.text = `${d.label}${d.is_primary ? ' ★ Primary' : ''}`;
                     if (d.id === configuredId) opt.selected = true;
                     sel.appendChild(opt);
+
+                    if (hostSel) {
+                        const hOpt = document.createElement('option');
+                        hOpt.value = d.id;
+                        hOpt.text = `${d.label}${d.is_primary ? ' ★ Primary' : ''}`;
+                        if (d.id === configuredHostId) hOpt.selected = true;
+                        hostSel.appendChild(hOpt);
+                    }
                 });
                 onDisplaySelected();
+                if (hostSel) onHostDisplaySelected();
             } catch (e) {
                 console.error("Error loading displays:", e);
                 sel.innerHTML = '<option value="0">Default Primary Screen</option>';
@@ -444,37 +609,86 @@
             }
         }
 
+        function toggleHostDisplayControls() {
+            const chk = document.getElementById('hostDisplayEnabledCheck');
+            const fields = document.getElementById('hostDisplayFields');
+            if (fields) {
+                fields.style.display = (chk && chk.checked) ? 'block' : 'none';
+            }
+        }
+
+        function onHostDisplaySelected() {
+            const sel = document.getElementById('hostDisplaySelect');
+            const infoEl = document.getElementById('hostDisplayDetailsInfo');
+            if (!sel || detectedDisplays.length === 0) return;
+            const chosenId = parseInt(sel.value);
+            const disp = detectedDisplays.find(d => d.id === chosenId) || detectedDisplays[0];
+            if (disp) {
+                document.getElementById('hostDisplayX').value = disp.x;
+                document.getElementById('hostDisplayY').value = disp.y;
+                document.getElementById('hostDisplayWidth').value = disp.width;
+                document.getElementById('hostDisplayHeight').value = disp.height;
+                document.getElementById('hostDisplayName').value = disp.name;
+                if (infoEl) {
+                    infoEl.innerHTML = `Host Screen: <strong>${disp.width}x${disp.height}</strong> at offset <strong>+${disp.x}+${disp.y}</strong>`;
+                }
+            }
+        }
+
         async function testDisplayFlash() {
             const sel = document.getElementById('stageDisplaySelect');
             const chosenId = sel ? parseInt(sel.value) : 0;
-            const disp = detectedDisplays.find(d => d.id === chosenId) || {x: 0, y: 0, name: "Screen"};
+            const disp = detectedDisplays.find(d => d.id === chosenId) || {x: 0, y: 0, name: `Monitor ${chosenId}`};
+            const btn = event ? event.target : null;
+            const oldText = btn ? btn.innerText : "";
+            if (btn) btn.innerText = "📺 Flashing Screen...";
             
-            // 1. Broadcast test badge to open stage displays
-            fetch('/api/setup/test-display', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ badge: `📺 MAIN STAGE DISPLAY: ${disp.name}` })
-            }).catch(() => {});
-
-            // 2. Open a test window positioned at monitor coordinates for 3.5 seconds
             try {
-                const testWin = window.open(
-                    'about:blank',
-                    'stage_identify_window',
-                    `left=${disp.x + 50},top=${disp.y + 50},width=600,height=350,menubar=no,toolbar=no`
-                );
-                if (testWin) {
-                    testWin.document.write(`
-                        <body style="background:#080e18; color:#00f0ff; font-family:sans-serif; display:flex; flex-direction:column; align-items:center; justify-content:center; height:100vh; margin:0; text-align:center;">
-                            <div style="font-size:3rem; margin-bottom:10px;">🌴</div>
-                            <h2 style="margin:0; font-size:1.8rem; color:#39ff14;">${disp.label || disp.name}</h2>
-                            <p style="color:#ffb703; font-size:1.1rem; margin-top:8px;">✅ Target Stage Screen Identified!</p>
-                            <div style="font-size:0.8rem; color:#94a3b8; margin-top:15px;">Closing in 3 seconds...</div>
-                        </body>
-                    `);
-                    setTimeout(() => { try { testWin.close(); } catch(e){} }, 3500);
-                }
-            } catch(e) {}
+                await fetch('/api/setup/test-display', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        display_id: chosenId,
+                        name: disp.label || disp.name,
+                        role: 'stage',
+                        port: window.location.port || 8000
+                    })
+                });
+            } catch (e) {
+                console.error("Test display error:", e);
+            } finally {
+                setTimeout(() => {
+                    if (btn) btn.innerText = oldText || "📺 Identify Display";
+                }, 3500);
+            }
+        }
+
+        async function testHostDisplayFlash() {
+            const sel = document.getElementById('hostDisplaySelect');
+            const chosenId = sel ? parseInt(sel.value) : 1;
+            const disp = detectedDisplays.find(d => d.id === chosenId) || {x: 0, y: 0, name: `Monitor ${chosenId}`};
+            const btn = event ? event.target : null;
+            const oldText = btn ? btn.innerText : "";
+            if (btn) btn.innerText = "👑 Flashing Host Screen...";
+            
+            try {
+                await fetch('/api/setup/test-display', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        display_id: chosenId,
+                        name: disp.label || disp.name,
+                        role: 'host',
+                        port: window.location.port || 8000
+                    })
+                });
+            } catch (e) {
+                console.error("Test host display error:", e);
+            } finally {
+                setTimeout(() => {
+                    if (btn) btn.innerText = oldText || "👑 Identify Host Screen";
+                }, 3500);
+            }
         }
 
         async function loadAudioDevices() {
@@ -531,47 +745,53 @@
             }
         }
 
-        function testAudioChime() {
+        async function testAudioChime() {
+            const sel = document.getElementById('audioDeviceSelect');
+            const chosenDevice = sel ? sel.value : "default";
+            const btn = event ? event.target : null;
+            const oldText = btn ? btn.innerText : "";
+            if (btn) btn.innerText = "🔔 Playing Sound...";
+
+            // 1. Play directly to physical hardware sink via backend
+            try {
+                await fetch('/api/setup/test-audio', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ device: chosenDevice })
+                });
+            } catch (e) {
+                console.error("Backend audio test error:", e);
+            }
+
+            // 2. Play Web Audio API chime in browser
             try {
                 const ctx = new (window.AudioContext || window.webkitAudioContext)();
+                if (typeof ctx.setSinkId === 'function' && chosenDevice && chosenDevice !== 'default') {
+                    ctx.setSinkId(chosenDevice).catch(() => {});
+                }
                 const now = ctx.currentTime;
-                
-                // Play a pleasant 2-tone Tiki chime
-                const osc1 = ctx.createOscillator();
-                const gain1 = ctx.createGain();
-                osc1.type = 'sine';
-                osc1.frequency.setValueAtTime(523.25, now); // C5
-                gain1.gain.setValueAtTime(0.3, now);
-                gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.8);
-                osc1.connect(gain1);
-                gain1.connect(ctx.destination);
-                osc1.start(now);
-                osc1.stop(now + 0.8);
+                const chords = [
+                    { freq: 523.25, time: now, gain: 0.3, dur: 0.8 },
+                    { freq: 659.25, time: now + 0.2, gain: 0.35, dur: 1.0 },
+                    { freq: 783.99, time: now + 0.4, gain: 0.4, dur: 1.2 }
+                ];
+                chords.forEach(c => {
+                    const osc = ctx.createOscillator();
+                    const gain = ctx.createGain();
+                    osc.type = 'sine';
+                    osc.frequency.setValueAtTime(c.freq, c.time);
+                    gain.gain.setValueAtTime(c.gain, c.time);
+                    gain.gain.exponentialRampToValueAtTime(0.001, c.time + c.dur);
+                    osc.connect(gain);
+                    gain.connect(ctx.destination);
+                    osc.start(c.time);
+                    osc.stop(c.time + c.dur);
+                });
+            } catch(e) {}
 
-                const osc2 = ctx.createOscillator();
-                const gain2 = ctx.createGain();
-                osc2.type = 'sine';
-                osc2.frequency.setValueAtTime(659.25, now + 0.2); // E5
-                gain2.gain.setValueAtTime(0.35, now + 0.2);
-                gain2.gain.exponentialRampToValueAtTime(0.001, now + 1.2);
-                osc2.connect(gain2);
-                gain2.connect(ctx.destination);
-                osc2.start(now + 0.2);
-                osc2.stop(now + 1.2);
-
-                const osc3 = ctx.createOscillator();
-                const gain3 = ctx.createGain();
-                osc3.type = 'sine';
-                osc3.frequency.setValueAtTime(783.99, now + 0.4); // G5
-                gain3.gain.setValueAtTime(0.4, now + 0.4);
-                gain3.gain.exponentialRampToValueAtTime(0.001, now + 1.5);
-                osc3.connect(gain3);
-                gain3.connect(ctx.destination);
-                osc3.start(now + 0.4);
-                osc3.stop(now + 1.5);
-            } catch(e) {
-                console.error("Audio chime error:", e);
-            }
+            setTimeout(() => {
+                if (btn) btn.innerText = oldText || "🔔 Test Sound";
+            }, 1800);
         }
 
         // Auto-check default storage locations, displays, and audio on load
@@ -596,7 +816,13 @@
                 port: parseInt(formData.get('port') || "8000"),
                 remote_mode: formData.get('remote_mode'),
                 public_host: formData.get('public_host') || "",
-                target_lufs: parseFloat(formData.get('target_lufs') || "-16.0"),
+                cloudflare_token: formData.get('cloudflare_token') || "",
+                custom_domain: formData.get('custom_domain') || "",
+                tailscale_domain: formData.get('tailscale_domain') || "",
+                duckdns_domain: formData.get('duckdns_domain') || "",
+                duckdns_token: formData.get('duckdns_token') || "",
+                remote_port: parseInt(formData.get('remote_port') || "38480"),
+                target_lufs: parseFloat(formData.get('target_lufs') || "-23.0"),
                 intermission_seconds: parseInt(formData.get('intermission_seconds') || "20"),
                 bgm_enabled: formData.get('bgm_enabled') === 'true',
                 tts_enabled: formData.get('tts_enabled') === 'true',
@@ -611,7 +837,15 @@
                 stage_display_height: parseInt(formData.get('stage_display_height') || "1080"),
                 kiosk_mode: formData.get('kiosk_mode') === 'true',
                 audio_output_device: formData.get('audio_output_device') || "default",
-                audio_output_name: formData.get('audio_output_name') || "System Default Audio Output"
+                audio_output_name: formData.get('audio_output_name') || "System Default Audio Output",
+                host_display_enabled: formData.get('host_display_enabled') === 'true',
+                host_display: parseInt(formData.get('host_display') || "1"),
+                host_display_name: formData.get('host_display_name') || "",
+                host_display_x: parseInt(formData.get('host_display_x') || "0"),
+                host_display_y: parseInt(formData.get('host_display_y') || "0"),
+                host_display_width: parseInt(formData.get('host_display_width') || "1920"),
+                host_display_height: parseInt(formData.get('host_display_height') || "1080"),
+                host_kiosk_mode: formData.get('host_kiosk_mode') === 'true'
             };
 
             try {
@@ -620,14 +854,22 @@
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify(payload)
                 });
-                const data = await res.json();
-                if (data.status === 'ok') {
+                
+                const text = await res.text();
+                let data = {};
+                try {
+                    data = JSON.parse(text);
+                } catch(pe) {
+                    throw new Error(`Server returned HTTP ${res.status}: ${text.slice(0, 150)}`);
+                }
+
+                if (res.ok && data.status === 'ok') {
                     btn.innerText = "✨ Configuration Saved! Redirecting...";
                     setTimeout(() => {
                         window.location.href = data.redirect || '/stage';
                     }, 1000);
                 } else {
-                    alert("Error saving setup: " + (data.detail || "Unknown error"));
+                    alert("Error saving setup: " + (data.detail || data.error || "Unknown server error"));
                     btn.disabled = false;
                     btn.innerText = "🌺 Save & Launch Lounge!";
                 }
@@ -637,6 +879,123 @@
                 btn.innerText = "🌺 Save & Launch Lounge!";
             }
         }
+        let activePickerInputId = null;
+        let activePickerInfoId = null;
+        let currentBrowserPath = "";
+
+        async function openDirectoryPicker(inputId, infoId) {
+            activePickerInputId = inputId;
+            activePickerInfoId = infoId;
+            const currentVal = document.getElementById(inputId).value.trim();
+
+            try {
+                const res = await fetch('/api/setup/pick-directory', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ initial_path: currentVal })
+                });
+                const data = await res.json();
+                if (data.status === 'ok' && data.path) {
+                    document.getElementById(inputId).value = data.path;
+                    checkStoragePath(inputId, infoId);
+                    return;
+                } else if (data.status === 'cancelled') {
+                    return;
+                }
+            } catch (e) {
+                console.log("Native picker fallback:", e);
+            }
+
+            openDirModal(currentVal);
+        }
+
+        async function openDirModal(startPath) {
+            const modal = document.getElementById('dirPickerModal');
+            if (!modal) return;
+            modal.style.display = 'flex';
+            await loadDirListing(startPath || "");
+        }
+
+        function closeDirModal() {
+            const modal = document.getElementById('dirPickerModal');
+            if (modal) modal.style.display = 'none';
+        }
+
+        async function loadDirListing(path) {
+            const listEl = document.getElementById('dirPickerList');
+            const pathEl = document.getElementById('dirPickerCurrentPath');
+            if (!listEl) return;
+            listEl.innerHTML = '<div style="color: var(--text-muted); padding: 15px; text-align: center;">⏳ Loading folders...</div>';
+
+            try {
+                const res = await fetch(`/api/setup/browse-directories?path=${encodeURIComponent(path)}`);
+                const data = await res.json();
+                if (data.status === 'ok') {
+                    currentBrowserPath = data.current;
+                    pathEl.innerText = data.current;
+                    listEl.innerHTML = '';
+
+                    if (data.parent) {
+                        const upBtn = document.createElement('div');
+                        upBtn.style.cssText = 'padding: 8px 12px; background: rgba(255,255,255,0.05); border-radius: 8px; cursor: pointer; display: flex; align-items: center; gap: 8px; font-weight: bold; color: var(--neon-cyan);';
+                        upBtn.innerHTML = '📁 <strong>.. (Up one level)</strong>';
+                        upBtn.onclick = () => loadDirListing(data.parent);
+                        listEl.appendChild(upBtn);
+                    }
+
+                    if (data.directories.length === 0) {
+                        const empty = document.createElement('div');
+                        empty.style.cssText = 'padding: 12px; color: var(--text-muted); font-style: italic;';
+                        empty.innerText = 'No subdirectories found.';
+                        listEl.appendChild(empty);
+                    } else {
+                        data.directories.forEach(dir => {
+                            const item = document.createElement('div');
+                            item.style.cssText = 'padding: 8px 12px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.05); border-radius: 8px; cursor: pointer; display: flex; align-items: center; gap: 8px; transition: background 0.15s ease;';
+                            item.onmouseover = () => item.style.background = 'rgba(255,255,255,0.1)';
+                            item.onmouseout = () => item.style.background = 'rgba(255,255,255,0.03)';
+                            item.innerHTML = `📁 <span>${dir}</span>`;
+                            const fullSubPath = (currentBrowserPath === '/' ? '' : currentBrowserPath) + '/' + dir;
+                            item.onclick = () => loadDirListing(fullSubPath);
+                            listEl.appendChild(item);
+                        });
+                    }
+                } else {
+                    listEl.innerHTML = `<div style="color: var(--neon-pink); padding: 15px;">Failed to load directories.</div>`;
+                }
+            } catch (err) {
+                listEl.innerHTML = `<div style="color: var(--neon-pink); padding: 15px;">Error: ${err.message}</div>`;
+            }
+        }
+
+        function selectCurrentModalDir() {
+            if (activePickerInputId && currentBrowserPath) {
+                document.getElementById(activePickerInputId).value = currentBrowserPath;
+                if (activePickerInfoId) {
+                    checkStoragePath(activePickerInputId, activePickerInfoId);
+                }
+            }
+            closeDirModal();
+        }
     </script>
+
+    <!-- Directory Picker Modal (Web Fallback) -->
+    <div id="dirPickerModal" style="display: none; position: fixed; inset: 0; background: rgba(10, 15, 29, 0.85); backdrop-filter: blur(8px); z-index: 10000; align-items: center; justify-content: center; padding: 20px;">
+        <div style="background: var(--bg-card); border: 2px solid var(--neon-cyan); border-radius: 16px; width: 100%; max-width: 600px; max-height: 85vh; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 10px 40px rgba(0,0,0,0.8);">
+            <div style="padding: 16px 20px; border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; background: rgba(0,0,0,0.2);">
+                <div style="font-weight: 700; font-size: 1.1rem; color: var(--neon-cyan);">📁 Choose Directory</div>
+                <button type="button" onclick="closeDirModal()" style="background: none; border: none; color: var(--text-muted); font-size: 1.5rem; cursor: pointer;">✕</button>
+            </div>
+            <div style="padding: 12px 20px; background: rgba(0,0,0,0.15); border-bottom: 1px solid var(--border-color); font-family: monospace; font-size: 0.85rem; color: var(--neon-gold); word-break: break-all;" id="dirPickerCurrentPath">
+                /
+            </div>
+            <div id="dirPickerList" style="flex: 1; overflow-y: auto; padding: 10px 20px; display: flex; flex-direction: column; gap: 6px; min-height: 250px; max-height: 400px;">
+            </div>
+            <div style="padding: 14px 20px; border-top: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; background: rgba(0,0,0,0.2);">
+                <button type="button" class="btn-ghost" onclick="closeDirModal()" style="padding: 8px 16px; border-radius: 8px;">Cancel</button>
+                <button type="button" class="btn-primary" onclick="selectCurrentModalDir()" style="padding: 8px 20px; border-radius: 8px;">✅ Select This Folder</button>
+            </div>
+        </div>
+    </div>
 </body>
 </html>

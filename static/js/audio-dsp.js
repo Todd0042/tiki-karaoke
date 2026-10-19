@@ -14,6 +14,8 @@ class AudioDSPPipeline {
         this.masterGain = null;
         this.pitchShifter = null;
         this.currentPitch = 0;
+        this.avDelayNode = null;
+        this.currentSyncOffsetMs = 0;
         this.initialized = false;
     }
 
@@ -46,27 +48,45 @@ class AudioDSPPipeline {
         // 3. Pitch Shifter (Delay-Line cross-fader)
         this.pitchShifter = new WebAudioPitchShifter(this.ctx);
 
-        // 4. Dynamics Compressor (Brickwall Safety Limiter)
+        // 4. Dynamics Compressor (Gentle Safety Limiter only for pitch shift)
         this.limiter = this.ctx.createDynamicsCompressor();
-        this.limiter.threshold.value = -2.0;
-        this.limiter.knee.value = 8.0;
-        this.limiter.ratio.value = 12.0;
-        this.limiter.attack.value = 0.003;
-        this.limiter.release.value = 0.25;
+        this.limiter.threshold.value = -0.5;
+        this.limiter.knee.value = 6.0;
+        this.limiter.ratio.value = 4.0;
+        this.limiter.attack.value = 0.005;
+        this.limiter.release.value = 0.15;
 
         // 5. Master Gain
         this.masterGain = this.ctx.createGain();
         this.masterGain.gain.value = 1.0;
 
+        // 6. Direct Clean Bypass vs DSP Branch
+        this.directGain = this.ctx.createGain();
+        this.directGain.gain.value = 1.0;
+
+        this.dspGain = this.ctx.createGain();
+        this.dspGain.gain.value = 0.0;
+
         // Wire Audio Graph:
-        // Source -> Bass -> Mid -> Treble -> PitchShifter -> Limiter -> MasterGain -> Destination
+        // Source -> Bass -> Mid -> Treble
         this.sourceNode.connect(this.bassFilter);
         this.bassFilter.connect(this.midFilter);
         this.midFilter.connect(this.trebleFilter);
+
+        // Branch 1: Bit-perfect Clean Direct Bypass (Pitch = 0, default)
+        this.trebleFilter.connect(this.directGain);
+        this.directGain.connect(this.masterGain);
+
+        // Branch 2: Pitch Shift + Limiter (Active ONLY when Pitch != 0)
         this.trebleFilter.connect(this.pitchShifter.input);
         this.pitchShifter.output.connect(this.limiter);
-        this.limiter.connect(this.masterGain);
-        this.masterGain.connect(this.ctx.destination);
+        this.limiter.connect(this.dspGain);
+        // 7. Venue A/V Sync Delay Node
+        this.avDelayNode = this.ctx.createDelay(1.0);
+        this.avDelayNode.delayTime.value = Math.max(0, this.currentSyncOffsetMs) / 1000.0;
+
+        this.masterGain.connect(this.avDelayNode);
+        this.avDelayNode.connect(this.ctx.destination);
 
         this.initialized = true;
     }
@@ -82,6 +102,17 @@ class AudioDSPPipeline {
         if (this.pitchShifter) {
             this.pitchShifter.setPitchOffset(semitones);
         }
+        if (this.directGain && this.dspGain) {
+            if (semitones === 0) {
+                // 100% Bit-perfect direct stream without delay lines or compressor pumping
+                this.directGain.gain.setValueAtTime(1.0, this.ctx.currentTime);
+                this.dspGain.gain.setValueAtTime(0.0, this.ctx.currentTime);
+            } else {
+                // Enable pitch shift circuit
+                this.directGain.gain.setValueAtTime(0.0, this.ctx.currentTime);
+                this.dspGain.gain.setValueAtTime(1.0, this.ctx.currentTime);
+            }
+        }
     }
 
     setEQ(bass, mid, treble) {
@@ -93,6 +124,18 @@ class AudioDSPPipeline {
     setMasterVolume(val) {
         if (this.masterGain) {
             this.masterGain.gain.setValueAtTime(val, this.ctx.currentTime);
+        }
+    }
+
+    setSyncOffset(offsetMs) {
+        this.currentSyncOffsetMs = Number(offsetMs) || 0;
+        if (this.avDelayNode && this.ctx) {
+            const delaySec = Math.max(0, this.currentSyncOffsetMs) / 1000.0;
+            try {
+                this.avDelayNode.delayTime.setTargetAtTime(delaySec, this.ctx.currentTime, 0.02);
+            } catch (e) {
+                this.avDelayNode.delayTime.value = delaySec;
+            }
         }
     }
 }

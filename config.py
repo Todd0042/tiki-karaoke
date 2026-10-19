@@ -17,10 +17,15 @@ DEFAULT_CONFIG = {
     "bar_name": "The Tiki Hut Karaoke Lounge",
     "host_pin": "1234",
     "port": 8000,
-    "remote_mode": "bore",
+    "remote_mode": "cloudflare_quick",
     "remote_port": 38480,
     "public_host": "",
-    "target_lufs": -16.0,
+    "cloudflare_token": "",
+    "custom_domain": "",
+    "tailscale_domain": "",
+    "duckdns_domain": "",
+    "duckdns_token": "",
+    "target_lufs": -23.0,
     "intermission_seconds": 20,
     "tts_enabled": False,
     "bgm_enabled": True,
@@ -37,7 +42,16 @@ DEFAULT_CONFIG = {
     "stage_display_height": 1080,
     "kiosk_mode": True,
     "audio_output_device": "default",
-    "audio_output_name": "System Default Audio Output"
+    "audio_output_name": "System Default Audio Output",
+    "host_display_enabled": False,
+    "host_display": 1,
+    "host_display_name": "Secondary Display",
+    "host_display_x": 0,
+    "host_display_y": 0,
+    "host_display_width": 1920,
+    "host_display_height": 1080,
+    "host_kiosk_mode": False,
+    "video_quality_profile": "pro"
 }
 
 def get_available_displays() -> List[Dict[str, Any]]:
@@ -53,11 +67,12 @@ def get_available_displays() -> List[Dict[str, Any]]:
                     m = re.search(r'^\s*(\d+):\s*(\S+)\s+(\d+)/\d+x(\d+)/\d+\+(\d+)\+(\d+)\s+(\S+)', line)
                     if m:
                         idx, flags, w, h, x, y, name = m.groups()
+                        is_prim = "*" in flags
                         monitors.append({
                             "id": int(idx),
                             "name": name,
-                            "label": f"Monitor {idx}: {name} ({w}x{h})",
-                            "is_primary": "*" in flags,
+                            "label": f"Monitor {idx}: {name} [{w}x{h}]" + (" ★ Primary" if is_prim else ""),
+                            "is_primary": is_prim,
                             "width": int(w),
                             "height": int(h),
                             "x": int(x),
@@ -65,6 +80,22 @@ def get_available_displays() -> List[Dict[str, Any]]:
                         })
         except Exception as e:
             print(f"[Display Detection] xrandr error: {e}")
+
+    # Try enriching with monitor model names from GDK
+    try:
+        cmd = ["/usr/bin/python", "-c", "import gi; gi.require_version('Gdk', '3.0'); from gi.repository import Gdk; Gdk.init([]); d = Gdk.Display.get_default(); print([(i, d.get_monitor(i).get_model() or '') for i in range(d.get_n_monitors())])"]
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=1.5)
+        if res.returncode == 0:
+            import ast
+            models = dict(ast.literal_eval(res.stdout.strip()))
+            for m in monitors:
+                if m["id"] in models and models[m["id"]]:
+                    model_str = models[m["id"]].strip()
+                    m["name"] = f"{m['name']} ({model_str})"
+                    prim_str = " ★ Primary" if m["is_primary"] else ""
+                    m["label"] = f"Monitor {m['id']}: {m['name']} [{m['width']}x{m['height']}]{prim_str}"
+    except Exception:
+        pass
 
     # Fallback to primary default if no monitors found
     if not monitors:
@@ -199,7 +230,8 @@ def get_host_token() -> str:
 
 def refresh_globals():
     global DATA_DIR, LIBRARY_DIR, TRACKS_DIR, PLAYLISTS_DIR, DB_PATH, SECRET_FILE, HOST_TOKEN
-    global HOST_PIN, PORT, PUBLIC_HOST, TARGET_LUFS, DEFAULT_INTERMISSION_SECONDS, REMOTE_MODE, REMOTE_PORT, BAR_NAME
+    global HOST_PIN, PORT, PUBLIC_HOST, TARGET_LUFS, DEFAULT_INTERMISSION_SECONDS, REMOTE_MODE, REMOTE_PORT, BAR_NAME, VIDEO_QUALITY_PROFILE
+    global CLOUDFLARE_TOKEN, CUSTOM_DOMAIN, TAILSCALE_DOMAIN, DUCKDNS_DOMAIN, DUCKDNS_TOKEN
     _current_cfg = load_config()
     DATA_DIR = get_data_dir()
     LIBRARY_DIR = get_library_dir()
@@ -212,11 +244,17 @@ def refresh_globals():
     HOST_PIN = os.getenv("TIKI_HOST_PIN", _current_cfg.get("host_pin", "1234"))
     PORT = int(os.getenv("TIKI_PORT", str(_current_cfg.get("port", 8000))))
     PUBLIC_HOST = os.getenv("TIKI_PUBLIC_HOST", _current_cfg.get("public_host", "")).strip()
-    TARGET_LUFS = float(_current_cfg.get("target_lufs", -16.0))
+    TARGET_LUFS = float(_current_cfg.get("target_lufs", -23.0))
     DEFAULT_INTERMISSION_SECONDS = int(_current_cfg.get("intermission_seconds", 20))
-    REMOTE_MODE = os.getenv("TIKI_REMOTE_MODE", _current_cfg.get("remote_mode", "bore"))
+    REMOTE_MODE = os.getenv("TIKI_REMOTE_MODE", _current_cfg.get("remote_mode", "cloudflare_quick"))
     REMOTE_PORT = int(os.getenv("TIKI_REMOTE_PORT", str(_current_cfg.get("remote_port", 38480))))
     BAR_NAME = os.getenv("TIKI_BAR_NAME", _current_cfg.get("bar_name", "The Tiki Hut Karaoke Lounge"))
+    VIDEO_QUALITY_PROFILE = _current_cfg.get("video_quality_profile", "pro")
+    CLOUDFLARE_TOKEN = os.getenv("TIKI_CLOUDFLARE_TOKEN", _current_cfg.get("cloudflare_token", "")).strip()
+    CUSTOM_DOMAIN = os.getenv("TIKI_CUSTOM_DOMAIN", _current_cfg.get("custom_domain", "")).strip()
+    TAILSCALE_DOMAIN = os.getenv("TIKI_TAILSCALE_DOMAIN", _current_cfg.get("tailscale_domain", "")).strip()
+    DUCKDNS_DOMAIN = os.getenv("TIKI_DUCKDNS_DOMAIN", _current_cfg.get("duckdns_domain", "")).strip()
+    DUCKDNS_TOKEN = os.getenv("TIKI_DUCKDNS_TOKEN", _current_cfg.get("duckdns_token", "")).strip()
 
 def save_config(updates: Dict[str, Any]) -> Dict[str, Any]:
     cfg = load_config()
@@ -331,8 +369,9 @@ _current_cfg = load_config()
 HOST_PIN = os.getenv("TIKI_HOST_PIN", _current_cfg.get("host_pin", "1234"))
 PORT = int(os.getenv("TIKI_PORT", str(_current_cfg.get("port", 8000))))
 PUBLIC_HOST = os.getenv("TIKI_PUBLIC_HOST", _current_cfg.get("public_host", "")).strip()
-TARGET_LUFS = float(_current_cfg.get("target_lufs", -16.0))
+TARGET_LUFS = float(_current_cfg.get("target_lufs", -23.0))
 DEFAULT_INTERMISSION_SECONDS = int(_current_cfg.get("intermission_seconds", 20))
 REMOTE_MODE = os.getenv("TIKI_REMOTE_MODE", _current_cfg.get("remote_mode", "bore"))
 REMOTE_PORT = int(os.getenv("TIKI_REMOTE_PORT", str(_current_cfg.get("remote_port", 38480))))
 BAR_NAME = os.getenv("TIKI_BAR_NAME", _current_cfg.get("bar_name", "The Tiki Hut Karaoke Lounge"))
+VIDEO_QUALITY_PROFILE = _current_cfg.get("video_quality_profile", "pro")

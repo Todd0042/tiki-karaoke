@@ -35,10 +35,14 @@
             background: #000;
         }
 
-        #localVideo, #youtubeContainer {
+        #localVideo, #fillerVideo, #youtubeContainer, #youtubeContainer iframe {
+            position: absolute;
+            top: 0;
+            left: 0;
             width: 100%;
             height: 100%;
             object-fit: contain;
+            border: none;
         }
 
         /* Top HUD Bar */
@@ -227,6 +231,9 @@
                 <button id="stageAudioToggleBtn" onclick="toggleStageAudioMute()" class="btn-ghost" title="Mute/Unmute Display (Press M)" style="padding: 6px 12px; font-size: 0.9rem;">
                     🔊 Audio On
                 </button>
+                <button onclick="fetchCurrentState(); showSyncToast('🔄 Stage Player Synced');" class="btn-ghost" title="Resync Stage Player (Press R)" style="padding: 6px 12px; font-size: 0.9rem; color: var(--neon-cyan); border-color: rgba(0,240,255,0.4);">
+                    🔄 Sync
+                </button>
                 <button onclick="toggleHostQRModal()" class="btn-ghost" title="Host DJ Remote Pairing (Press H)" style="padding: 6px 12px; font-size: 0.9rem;">
                     ⚙️ Host Remote
                 </button>
@@ -357,7 +364,7 @@
         <source src="/static/bgm/01_tiki_breeze.mp3" type="audio/mpeg">
     </audio>
 
-    <script src="/static/js/audio-dsp.js"></script>
-    <script src="/static/js/host-player.js?v=20261017_bgm_stop"></script>
+    <script src="/static/js/audio-dsp.js?v=20261019_venue_av_delay"></script>
+    <script src="/static/js/host-player.js?v=20261019_30s_on_deck"></script>
 </body>
 </html>

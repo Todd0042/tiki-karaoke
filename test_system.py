@@ -17,7 +17,8 @@ from database import (
     save_track, get_track_by_id, search_local_tracks,
     enqueue_song, get_queue, set_queue_status, remove_from_queue,
     get_singer_history, get_party_wrapped_stats, get_setting, set_setting,
-    get_browsable_tracks, get_unique_downloaded_artists, get_cleanup_candidates, prune_local_track
+    get_browsable_tracks, get_unique_downloaded_artists, get_cleanup_candidates, prune_local_track,
+    set_session_start_time, get_session_start_time, get_taken_avatars_for_name
 )
 from search import normalize_title_artist, extract_attributes, deduplicate_and_group, tiered_search
 from downloader import sanitize_filename, normalize_audio_loudness, update_singer_m3u_playlist
@@ -291,6 +292,198 @@ class TestTikiKaraoke(unittest.TestCase):
         # 9. Duplicate addition doesn't repeat
         res3 = add_duet_partner(q_id, "Andy")
         self.assertEqual(res3["duet_partner"], "Andy & Sarah")
+
+    def test_12_session_aware_singer_persistence(self):
+        # 1. Establish session 1 in the past
+        set_session_start_time("2026-10-01 20:00:00")
+        s_past = get_or_create_singer("token_old_testsinger", "TestSinger", "🌴", "192.168.1.10")
+        self.assertEqual(s_past["name"], "TestSinger")
+        self.assertEqual(s_past["avatar"], "🌴")
+        original_singer_id = s_past["id"]
+
+        # Simulate last_seen from that past session
+        from database import get_db
+        conn = get_db()
+        with conn:
+            conn.execute("UPDATE singers SET last_seen = '2026-10-01 20:05:00' WHERE id = ?", (original_singer_id,))
+        conn.close()
+
+        # Advance session start time to tonight
+        set_session_start_time("2026-10-18 22:00:00")
+
+        # 2. Before TestSinger joins tonight, check taken avatars for "TestSinger"
+        taken = get_taken_avatars_for_name("TestSinger", exclude_token="token_new_testsinger", client_ip="192.168.1.50")
+        # TestSinger was last seen in session 1, so 🌴 is NOT taken tonight!
+        self.assertNotIn("🌴", taken)
+
+        # 3. TestSinger joins on a new phone with a brand new token
+        s_reclaimed = get_or_create_singer("token_new_testsinger", "TestSinger", "🌴", "192.168.1.50")
+        # Should reclaim the original singer ID!
+        self.assertEqual(s_reclaimed["id"], original_singer_id)
+        self.assertEqual(s_reclaimed["token"], "token_new_testsinger")
+        self.assertEqual(s_reclaimed["name"], "TestSinger")
+        self.assertEqual(s_reclaimed["avatar"], "🌴")
+
+        # 4. Now TestSinger is actively in tonight's session.
+        # Another guest tries to take "TestSinger" with "🌴" from a different IP
+        taken_tonight = get_taken_avatars_for_name("TestSinger", exclude_token="guest_token", client_ip="192.168.1.99")
+        self.assertIn("🌴", taken_tonight)
+
+        with self.assertRaises(ValueError):
+            get_or_create_singer("guest_token", "TestSinger", "🌴", "192.168.1.99", is_host=False)
+
+        # 5. Host on host machine or is_host can always reconnect / reclaim
+        s_host = get_or_create_singer("token_host_refresh", "TestSinger", "🌴", "127.0.0.1", is_host=True)
+        self.assertEqual(s_host["id"], original_singer_id)
+        self.assertEqual(s_host["token"], "token_host_refresh")
+
+    def test_quality_profiles_format(self):
+        from downloader import get_ydl_video_format
+        import config
+
+        # Test "inept" profile
+        cfg = config.load_config()
+        original_profile = cfg.get("video_quality_profile", "pro")
+        try:
+            config.save_config({"video_quality_profile": "inept"})
+            fmt_inept = get_ydl_video_format()
+            self.assertIn("height<=480", fmt_inept)
+
+            config.save_config({"video_quality_profile": "pro"})
+            fmt_pro = get_ydl_video_format()
+            self.assertIn("height<=1080", fmt_pro)
+        finally:
+            config.save_config({"video_quality_profile": original_profile})
+
+    def test_bgm_90min_cooldown_and_era_scoring(self):
+        from database import add_filler_track, get_next_vibe_filler_track, save_track, enqueue_song, get_db
+
+        # Add two filler tracks
+        tid_nirvana = add_filler_track("nirv123", "Smells Like Teen Spirit", "Nirvana", "Nirvana - Smells Like Teen Spirit", genre="Rock", release_year=1991)
+        tid_queen = add_filler_track("queen123", "Bohemian Rhapsody", "Queen", "Queen - Bohemian Rhapsody", genre="Rock", release_year=1975)
+
+        # Record Nirvana as having been sung 15 minutes ago
+        track_id = save_track("nirv_karaoke", "Smells Like Teen Spirit", "Nirvana", "Nirvana - Smells Like Teen Spirit")
+        singer = get_or_create_singer("token_sing", "Rocker", "🎸", "127.0.0.1")
+
+        # Mark both as downloaded / ready and insert history
+        conn = get_db()
+        conn.execute("UPDATE filler_tracks SET download_status = 'ready', is_downloaded = 1")
+        conn.execute("""
+            INSERT INTO history (track_id, singer_id, played_at)
+            VALUES (?, ?, datetime('now', '-15 minutes'))
+        """, (track_id, singer["id"]))
+        conn.commit()
+        conn.close()
+
+        # When picking filler, Nirvana should be in 90-minute cooldown, so Queen is selected!
+        pick = get_next_vibe_filler_track(last_track_artist="Bush", last_track_genre="Rock", last_track_year=1994)
+        self.assertIsNotNone(pick)
+        self.assertEqual(pick["artist"], "Queen")
+        self.assertEqual(pick["title"], "Bohemian Rhapsody")
+
+    def test_starter_filler_crate_manifest(self):
+        from scripts.seed_filler_crate import STARTER_FILLER_TRACKS
+        self.assertEqual(len(STARTER_FILLER_TRACKS), 15)
+        for t in STARTER_FILLER_TRACKS:
+            self.assertTrue(t["video_id"])
+            self.assertTrue(t["artist"])
+            self.assertTrue(t["title"])
+            self.assertTrue(t["genre"])
+            self.assertGreater(t["release_year"], 1960)
+
+    def test_ytdlp_status_endpoint(self):
+        from app import host_get_ytdlp_status
+        from config import HOST_TOKEN
+        from starlette.requests import Request
+        import asyncio
+
+        scope = {
+            "type": "http",
+            "method": "GET",
+            "path": "/api/host/system/ytdlp-status",
+            "headers": [(b"cookie", f"tiki_host={HOST_TOKEN}".encode())],
+        }
+        req = Request(scope)
+        res = asyncio.run(host_get_ytdlp_status(req))
+        self.assertEqual(res["status"], "ok")
+        self.assertTrue(bool(res["current_version"]))
+
+    def test_av_sync_endpoints(self):
+        from app import host_get_av_sync, host_set_av_sync, AVSyncPayload
+        from config import HOST_TOKEN
+        from starlette.requests import Request
+        import asyncio
+
+        # 1. Test GET av-sync default
+        scope_get = {
+            "type": "http",
+            "method": "GET",
+            "path": "/api/host/av-sync",
+            "headers": [(b"cookie", f"tiki_host={HOST_TOKEN}".encode())],
+        }
+        res_get = asyncio.run(host_get_av_sync(Request(scope_get)))
+        self.assertEqual(res_get["status"], "ok")
+        self.assertIsInstance(res_get["offset_ms"], int)
+
+        # 2. Test POST av-sync set offset
+        scope_post = {
+            "type": "http",
+            "method": "POST",
+            "path": "/api/host/av-sync",
+            "headers": [(b"cookie", f"tiki_host={HOST_TOKEN}".encode())],
+        }
+        res_post = asyncio.run(host_set_av_sync(AVSyncPayload(offset_ms=80), Request(scope_post)))
+        self.assertEqual(res_post["status"], "ok")
+        self.assertEqual(res_post["offset_ms"], 80)
+
+        # Verify persisted
+        res_get2 = asyncio.run(host_get_av_sync(Request(scope_get)))
+        self.assertEqual(res_get2["offset_ms"], 80)
+
+        # 3. Test clamping boundary (e.g. 999 -> clamped to 500)
+        res_clamp = asyncio.run(host_set_av_sync(AVSyncPayload(offset_ms=999), Request(scope_post)))
+        self.assertEqual(res_clamp["offset_ms"], 500)
+
+    def test_notify_on_deck_endpoint(self):
+        from app import api_notify_on_deck
+        from database import save_track, enqueue_song, get_or_create_singer
+        import asyncio
+
+        singer = get_or_create_singer("token_ondeck_test", "OnDeckSinger", "🍹")
+        track_id = save_track("v_ondeck_1", "OnDeck Song", "OnDeck Artist", "OnDeck Artist - OnDeck Song")
+        qid = enqueue_song(track_id, singer["id"])
+
+        res = asyncio.run(api_notify_on_deck(qid))
+        self.assertEqual(res["status"], "ok")
+
+    def test_system_health_endpoint(self):
+        from app import api_get_state, api_host_health
+        from config import HOST_TOKEN
+        from starlette.requests import Request
+        import asyncio
+
+        # 1. Verify system_health and network included in api_get_state
+        state = asyncio.run(api_get_state())
+        self.assertIn("system_health", state)
+        self.assertIn("ffmpeg_installed", state["system_health"])
+        self.assertIn("port", state["system_health"])
+        self.assertIn("network", state)
+        self.assertIn("base_url", state["network"])
+        self.assertIn("remote_mode", state["network"])
+        self.assertIn("is_https", state["network"])
+
+        # 2. Verify api_host_health
+        scope = {
+            "type": "http",
+            "method": "GET",
+            "path": "/api/host/health",
+            "headers": [(b"cookie", f"tiki_host={HOST_TOKEN}".encode())]
+        }
+        health = asyncio.run(api_host_health(Request(scope)))
+        self.assertEqual(health["status"], "ok")
+        self.assertIn("ffmpeg_installed", health)
+        self.assertIn("port", health)
 
 if __name__ == "__main__":
     unittest.main()
