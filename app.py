@@ -25,7 +25,7 @@ import qrcode
 
 from config import (
     STATIC_DIR, TEMPLATES_DIR, TRACKS_DIR, HOST_TOKEN, HOST_PIN,
-    PORT, DEFAULT_INTERMISSION_SECONDS, PUBLIC_HOST, REMOTE_MODE,
+    PORT, DEFAULT_INTERMISSION_SECONDS, PUBLIC_HOST, REMOTE_MODE, BAR_NAME,
     load_config, save_config, is_configured,
     get_library_dir, get_tracks_dir, get_playlists_dir, get_data_dir,
     get_db_path, get_path_info, ensure_storage_dirs, get_storage_status,
@@ -79,25 +79,23 @@ def get_public_ip() -> str:
     host = get_public_host()
     if host:
         return host
-    try:
-        import urllib.request
-        return urllib.request.urlopen("https://api.ipify.org", timeout=2).read().decode("utf-8").strip()
-    except Exception:
-        return get_local_ip()
+    return get_local_ip()
 
 LOCAL_IP = get_local_ip()
 PUBLIC_IP = get_public_ip()
 
 def get_base_url() -> str:
+    from config import PORT, REMOTE_MODE
+    cfg = load_config()
+    mode = cfg.get("remote_mode", REMOTE_MODE)
     host = get_public_host()
-    if host:
+    if mode != "local" and host:
         if host.startswith("http://") or host.startswith("https://"):
             return host
         if os.getenv("TIKI_USE_HTTPS") == "1" or "trycloudflare.com" in host or ".ts.net" in host:
             return f"https://{host}"
         return f"http://{host}"
-    from config import PORT
-    return f"http://{get_public_ip()}:{PORT}"
+    return f"http://{get_local_ip()}:{PORT}"
 
 # WebSocket Connection Hub
 class ConnectionManager:
@@ -887,13 +885,17 @@ async def print_table_tents(request: Request):
     if not (is_host_request(request) or is_local_request(request)):
         raise HTTPException(status_code=403, detail="Host DJ authorization required")
     cfg = load_config()
-    bar_name = get_setting("bar_name", cfg.get("bar_name", BAR_NAME))
-    return templates.TemplateResponse("print_tents.html", {
-        "request": request,
-        "bar_name": bar_name,
-        "base_url": get_base_url(),
-        "join_url": f"{get_base_url()}/join"
-    })
+    default_bar = cfg.get("bar_name") or BAR_NAME or "The Tiki Hut Karaoke Lounge"
+    bar_name = get_setting("bar_name", default_bar)
+    return templates.TemplateResponse(
+        request=request,
+        name="print_tents.html",
+        context={
+            "bar_name": bar_name,
+            "base_url": get_base_url(),
+            "join_url": f"{get_base_url()}/join"
+        }
+    )
 
 # QR Code Generators (Point directly to Public IP)
 @app.get("/qr/public")

@@ -97,6 +97,19 @@ if command -v update-desktop-database >/dev/null 2>&1; then
 fi
 echo "  ✅ Desktop launcher installed to: $DESKTOP_FILE"
 
+# Check Linux Firewall (UFW / Firewalld) for LAN device access
+echo ""
+echo "🛡️ Checking Linux local network firewall for mobile/LAN access..."
+if command -v ufw >/dev/null 2>&1; then
+    if sudo -n true 2>/dev/null && sudo ufw status 2>/dev/null | grep -q "Status: active"; then
+        sudo ufw allow 8000/tcp comment "Tiki Karaoke" >/dev/null 2>&1 || true
+        echo "  ✅ UFW firewall rule added for port 8000/tcp."
+    else
+        echo "  ℹ️  If mobile devices on your Wi-Fi cannot connect, open port 8000 in UFW:"
+        echo -e "     \033[1;33msudo ufw allow 8000/tcp comment 'Tiki Karaoke'\033[0m"
+    fi
+fi
+
 echo ""
 echo "=========================================================="
 echo "🎉 INSTALLATION COMPLETE! Your Karaoke Lounge is ready."
