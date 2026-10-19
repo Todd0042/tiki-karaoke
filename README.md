@@ -181,3 +181,10 @@ This project is licensed under the **PolyForm Noncommercial License 1.0.0** ([LI
 
 * **Permitted**: Free personal use, hobbyist use, private house parties, educational use, and beta testing/modification on Linux.
 * **Prohibited**: Commercial exploitation, charging entry/subscriptions, or resale without written commercial licensing from the author.
+
+---
+
+## ⚖️ Legal Disclaimer
+
+> [!IMPORTANT]
+> **Tiki-Karaoke** is an open-source media player and queue management utility for personal and hobbyist use. It does not contain, host, or distribute any copyrighted music, videos, or karaoke tracks. Users are responsible for supplying their own media and ensuring compliance with local copyright regulations and public performance licensing (e.g., ASCAP, BMI, SESAC) for venue use.
