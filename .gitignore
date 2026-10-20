@@ -48,3 +48,4 @@ social_post*.md
 Thumbs.db
 # User analytics and traffic snapshots
 traffic_stats*.json
+screenshots/

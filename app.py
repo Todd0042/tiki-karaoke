@@ -10,6 +10,7 @@ import subprocess
 import signal
 import threading
 import shutil
+import tempfile
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -29,7 +30,7 @@ from config import (
     load_config, save_config, is_configured,
     get_library_dir, get_tracks_dir, get_playlists_dir, get_data_dir,
     get_db_path, get_path_info, ensure_storage_dirs, get_storage_status,
-    get_available_displays, get_available_audio_sinks
+    get_available_displays, get_available_audio_sinks, get_bundled_binary_path
 )
 from database import (
     init_db, get_or_create_singer, get_singer_by_token,
@@ -406,12 +407,26 @@ def is_host_request(request: Request) -> bool:
         return True
     return False
 
+STAGE_TOKEN = secrets.token_hex(16)
+
+def is_stage_request(request: Request) -> bool:
+    cookie_stage = request.cookies.get("tiki_stage")
+    if cookie_stage and cookie_stage == STAGE_TOKEN:
+        return True
+    stage_header = request.headers.get("X-Stage-Token")
+    if stage_header and stage_header == STAGE_TOKEN:
+        return True
+    disp_id = request.headers.get("X-Display-Id") or request.query_params.get("display_id")
+    if disp_id and disp_id in manager.stage_displays:
+        return True
+    return False
+
 def is_local_request(request: Request) -> bool:
     """Returns True if the request originates from localhost or the host machine itself."""
     if not request.client:
-        return True
+        return False
     h = request.client.host
-    return h in ("127.0.0.1", "::1", "localhost", "testclient")
+    return h in ("127.0.0.1", "::1", "localhost")
 
 class PinAuthRequest(BaseModel):
     pin: str
@@ -549,7 +564,8 @@ async def api_test_display(payload: Dict[str, Any], request: Request):
     firefox_bin = shutil.which("firefox")
     if firefox_bin:
         try:
-            profile_dir = Path(f"/tmp/tiki_identify_profile_{disp_id}")
+            temp_root = Path(tempfile.gettempdir())
+            profile_dir = temp_root / f"tiki_identify_profile_{disp_id}"
             profile_dir.mkdir(parents=True, exist_ok=True)
             port = int(payload.get("port", PORT))
             encoded_name = urllib.parse.quote(disp_name)
@@ -563,11 +579,19 @@ async def api_test_display(payload: Dict[str, Any], request: Request):
                 f"--kiosk-monitor={disp_id}",
                 ident_url
             ]
-            proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, preexec_fn=os.setsid)
+            kwargs = {}
+            if sys.platform == "win32":
+                kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+            else:
+                kwargs["preexec_fn"] = os.setsid
+            proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **kwargs)
             
             def close_ident():
                 try:
-                    os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+                    if sys.platform == "win32":
+                        subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    else:
+                        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
                 except Exception:
                     pass
                 try:
@@ -868,6 +892,7 @@ async def stage_page(request: Request, token: str = ""):
         "port": PORT,
         "host_pin": pin
     })
+    response.set_cookie("tiki_stage", STAGE_TOKEN, max_age=86400 * 30, httponly=False)
     if (token and token == HOST_TOKEN) or is_host_request(request) or is_local_request(request):
         response.set_cookie("tiki_host", HOST_TOKEN, max_age=86400 * 30, httponly=False)
     return response
@@ -1297,8 +1322,14 @@ async def api_enqueue_song(req: QueueSongRequest, request: Request):
 
 @app.delete("/api/queue/{queue_id}")
 async def api_remove_queue(queue_id: int, request: Request, token: str = ""):
-    singer = get_singer_by_token(token)
-    singer_id = singer["id"] if singer and not is_host_request(request) else None
+    is_host = is_host_request(request) or is_local_request(request)
+    if not is_host:
+        singer = get_singer_by_token(token)
+        if not singer:
+            raise HTTPException(status_code=401, detail="Authentication required to remove song")
+        singer_id = singer["id"]
+    else:
+        singer_id = None
     deleted = remove_from_queue(queue_id, singer_id=singer_id)
     if deleted:
         await manager.broadcast({
@@ -1309,7 +1340,7 @@ async def api_remove_queue(queue_id: int, request: Request, token: str = ""):
 
 @app.post("/api/queue/{queue_id}/play")
 async def api_play_queue_item(queue_id: int, request: Request):
-    if not is_host_request(request) and not is_local_request(request):
+    if not is_host_request(request) and not is_local_request(request) and not is_stage_request(request):
         raise HTTPException(status_code=403, detail="Host DJ authorization required")
     global current_intermission_end
     current_intermission_end = None
@@ -1327,7 +1358,7 @@ async def api_play_queue_item(queue_id: int, request: Request):
 
 @app.post("/api/queue/{queue_id}/complete")
 async def api_complete_queue_item(queue_id: int, request: Request):
-    if not is_host_request(request) and not is_local_request(request):
+    if not is_host_request(request) and not is_local_request(request) and not is_stage_request(request):
         raise HTTPException(status_code=403, detail="Host DJ authorization required")
     global current_intermission_end
     queue_list = get_queue()
@@ -1422,7 +1453,7 @@ async def api_get_state():
         },
         "av_sync_offset_ms": int(get_setting("av_sync_offset_ms", "0")),
         "system_health": {
-            "ffmpeg_installed": bool(shutil.which("ffmpeg")),
+            "ffmpeg_installed": bool(shutil.which("ffmpeg") or get_bundled_binary_path("ffmpeg").exists()),
             "port": int(os.getenv("TIKI_PORT", str(PORT)))
         },
         "network": {
@@ -1441,8 +1472,8 @@ async def api_host_health(request: Request):
     effective_port = int(os.getenv("TIKI_PORT", str(PORT)))
     return {
         "status": "ok",
-        "ffmpeg_installed": bool(shutil.which("ffmpeg")),
-        "ffprobe_installed": bool(shutil.which("ffprobe")),
+        "ffmpeg_installed": bool(shutil.which("ffmpeg") or get_bundled_binary_path("ffmpeg").exists()),
+        "ffprobe_installed": bool(shutil.which("ffprobe") or get_bundled_binary_path("ffprobe").exists()),
         "port": effective_port,
         "python_version": sys.version.split()[0],
         "platform": sys.platform
@@ -1489,7 +1520,7 @@ async def host_download_track(track_id: int, request: Request):
 
 @app.post("/api/host/skip")
 async def host_skip_action(request: Request):
-    if not is_host_request(request):
+    if not is_host_request(request) and not is_local_request(request) and not is_stage_request(request):
         raise HTTPException(status_code=403, detail="Host DJ authorization required")
     global current_intermission_end
     current = get_current_playing()

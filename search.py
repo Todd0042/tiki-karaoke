@@ -202,6 +202,8 @@ def query_youtube_karaoke(query: str, max_results: int = 15) -> List[Dict[str, A
         "skip_download": True,
         "extract_flat": True,
         "no_warnings": True,
+        "socket_timeout": 8,
+        "retries": 2,
     }
     # Query more candidates so we have plenty after strict filtering
     fetch_count = max(max_results * 2, 20)
@@ -278,6 +280,8 @@ def query_youtube_music_videos(query: str, max_results: int = 15) -> List[Dict[s
         "skip_download": True,
         "extract_flat": True,
         "no_warnings": True,
+        "socket_timeout": 8,
+        "retries": 2,
     }
 
     # If query does not specify 'video' or 'official', append 'official music video'

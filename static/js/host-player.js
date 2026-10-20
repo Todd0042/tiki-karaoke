@@ -12,7 +12,9 @@ let currentTrack = null;
 let intermissionTimer = null;
 let intermissionRemaining = 20;
 let isIntermission = false;
-let isMutedViewer = false;
+let isSpectatorViewer = false;
+let isMutedAudio = false;
+let isMutedViewer = false; // Kept for backward compatibility
 let configuredAudioSink = null;
 let bgmPlaylist = [];
 let currentBgmIndex = -1;
@@ -44,10 +46,12 @@ document.addEventListener("DOMContentLoaded", () => {
 
 function initAudio() {
     const urlParams = new URLSearchParams(window.location.search);
-    isMutedViewer = urlParams.has("mute") || urlParams.has("muted") || urlParams.has("view_only");
+    isSpectatorViewer = urlParams.has("mute") || urlParams.has("muted") || urlParams.has("view_only") || urlParams.has("handheld");
+    isMutedAudio = isSpectatorViewer;
+    isMutedViewer = isMutedAudio;
 
     const videoEl = document.getElementById("localVideo");
-    if (isMutedViewer) {
+    if (isSpectatorViewer) {
         if (videoEl) videoEl.muted = true;
         const bgm = document.getElementById("bgmPlayer");
         if (bgm) bgm.muted = true;
@@ -71,6 +75,7 @@ function initAudio() {
         }
     } else {
         audioDSP = new AudioDSPPipeline();
+        window.audioDSP = audioDSP;
     }
 
     applyAudioSink();
@@ -82,7 +87,7 @@ function initAudio() {
 
 function resumeStagePlayback() {
     const videoEl = document.getElementById("localVideo");
-    if (isMutedViewer) {
+    if (isMutedAudio) {
         if (videoEl) videoEl.muted = true;
         const bgm = document.getElementById("bgmPlayer");
         if (bgm) bgm.muted = true;
@@ -91,21 +96,21 @@ function resumeStagePlayback() {
         audioDSP.resume();
     }
     const bgm = document.getElementById("bgmPlayer");
-    if (bgm && bgm.paused && isIntermission && !isMutedViewer) {
+    if (bgm && bgm.paused && isIntermission && !isMutedAudio) {
         bgm.play().catch(() => {});
     }
     if (videoEl && videoEl.style.display !== "none") {
         if (currentTrack && currentTrack.elapsed_seconds && videoEl.currentTime < currentTrack.elapsed_seconds - 3) {
             videoEl.currentTime = currentTrack.elapsed_seconds;
         }
-        if (isMutedViewer) videoEl.muted = true;
+        if (isMutedAudio) videoEl.muted = true;
         videoEl.play().then(() => {
             const unmute = document.getElementById("unmuteOverlay");
             if (unmute) unmute.style.display = "none";
         }).catch(e => console.log(e));
     }
     if (ytPlayer && ytPlayer.playVideo) {
-        if (isMutedViewer && ytPlayer.mute) ytPlayer.mute();
+        if (isMutedAudio && ytPlayer.mute) ytPlayer.mute();
         ytPlayer.playVideo();
     }
     const unmute = document.getElementById("unmuteOverlay");
@@ -139,7 +144,8 @@ function initWebSocket() {
             type: "stage_register",
             display_id: myDisplayId,
             name: myDisplayName,
-            is_muted: isMutedViewer
+            is_muted: isMutedAudio,
+            is_spectator: isSpectatorViewer
         }));
 
         // Keepalive heartbeat every 10s to prevent router/tunnel idle drops
@@ -294,7 +300,7 @@ function initYouTubeAPI() {
 function onYouTubeStateChange(event) {
     if (event.data === YT.PlayerState.ENDED) {
         if (isFillerPlaying) {
-            if (!isMutedViewer) {
+            if (!isSpectatorViewer) {
                 fetch("/api/host/filler-tracks/finished", { method: "POST" }).catch(() => {});
             }
         } else {
@@ -340,7 +346,7 @@ function startTrackPlayback(track) {
             localVideo.currentTime = 0;
         }
 
-        if (isMutedViewer) {
+        if (isMutedAudio) {
             localVideo.muted = true;
         } else if (audioDSP) {
             audioDSP.init(localVideo);
@@ -376,7 +382,7 @@ function startTrackPlayback(track) {
                 videoId: track.video_id,
                 startSeconds: seekTime
             });
-            if (isMutedViewer && ytPlayer.mute) ytPlayer.mute();
+            if (isMutedAudio && ytPlayer.mute) ytPlayer.mute();
             ytPlayer.playVideo();
         }
     }
@@ -384,14 +390,14 @@ function startTrackPlayback(track) {
 
 function onPlaybackFailure(reason, failedTrack) {
     console.warn(`[Host Playback] Failure: ${reason}. Auto-skipping to avoid freeze...`);
-    if (isMutedViewer) return;
+    if (isSpectatorViewer) return;
     fetch("/api/host/skip", { method: "POST" })
         .catch(err => console.error("[Host] Auto-skip call failed:", err));
 }
 
 function onSongFinished() {
     if (!currentTrack) return;
-    if (isMutedViewer) return;
+    if (isSpectatorViewer) return;
     fetch(`/api/queue/${currentTrack.queue_id}/complete`, { method: "POST" });
     currentTrack = null;
     fadeInBGM();
@@ -517,7 +523,7 @@ function triggerIntermission(nextTrack, duration = 20) {
         updateCountdownDisplay();
         if (intermissionRemaining <= 0) {
             clearInterval(intermissionTimer);
-            if (nextTrack && !isMutedViewer) {
+            if (nextTrack && !isSpectatorViewer) {
                 fetch(`/api/queue/${nextTrack.queue_id}/play`, { method: "POST" });
             }
         }
@@ -650,7 +656,7 @@ function playNextBGM() {
     const bgm = document.getElementById("bgmPlayer");
     if (bgm) {
         bgm.src = nextSrc;
-        if (isIntermission && !isMutedViewer) {
+        if (isIntermission && !isMutedAudio) {
             bgm.volume = 0.25;
             bgm.play().catch(() => {});
         }
@@ -676,7 +682,7 @@ function fadeOutBGM() {
 function fadeInBGM() {
     const bgm = document.getElementById("bgmPlayer");
     if (!bgm) return;
-    if (isMutedViewer) {
+    if (isMutedAudio) {
         bgm.muted = true;
         return;
     }
@@ -854,7 +860,7 @@ function setupEventListeners() {
             if (overlay) overlay.style.display = "none";
         });
         localV.addEventListener("timeupdate", () => {
-            if (!currentTrack || isMutedViewer || !currentNextTrack) return;
+            if (!currentTrack || isSpectatorViewer || !currentNextTrack) return;
             const dur = localV.duration;
             const cur = localV.currentTime;
             if (!dur || isNaN(dur) || dur < 35) return;
@@ -875,15 +881,20 @@ function setupEventListeners() {
 }
 
 function applyStageAudioMute(muted) {
+    isMutedAudio = muted;
     isMutedViewer = muted;
+    window.isMutedAudio = muted;
     const btn = document.getElementById("stageAudioToggleBtn");
     const videoEl = document.getElementById("localVideo");
     const bgm = document.getElementById("bgmPlayer");
+    const fillerVideo = document.getElementById("fillerVideo");
 
-    if (isMutedViewer) {
+    if (isMutedAudio) {
         if (videoEl) videoEl.muted = true;
         if (bgm) bgm.muted = true;
+        if (fillerVideo) fillerVideo.muted = true;
         if (ytPlayer && ytPlayer.mute) ytPlayer.mute();
+        if (audioDSP) audioDSP.setMasterVolume(0.0);
         if (btn) {
             btn.innerText = "🔇 Muted";
             btn.style.color = "#ff5555";
@@ -892,23 +903,28 @@ function applyStageAudioMute(muted) {
     } else {
         if (videoEl) videoEl.muted = false;
         if (bgm) bgm.muted = false;
+        if (fillerVideo) fillerVideo.muted = false;
         if (ytPlayer && ytPlayer.unMute) ytPlayer.unMute();
         if (btn) {
             btn.innerText = "🔊 Audio Active (Master)";
             btn.style.color = "var(--neon-cyan)";
             btn.style.borderColor = "var(--neon-cyan)";
         }
-        if (audioDSP) audioDSP.resume();
+        if (audioDSP) {
+            audioDSP.setMasterVolume(1.0);
+            audioDSP.resume();
+        }
     }
 }
+window.applyStageAudioMute = applyStageAudioMute;
 
 function toggleStageAudioMute() {
-    applyStageAudioMute(!isMutedViewer);
+    applyStageAudioMute(!isMutedAudio);
     if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({
             type: "stage_audio_state",
             display_id: myDisplayId,
-            is_muted: isMutedViewer
+            is_muted: isMutedAudio
         }));
     }
 }
@@ -1080,7 +1096,7 @@ function startFillerPlayback(track) {
             fillerVideo.style.display = "block";
             fillerVideo.src = `/stream/filler/${track.id}`;
             fillerVideo.volume = 1.0;
-            if (isMutedViewer) {
+            if (isMutedAudio) {
                 fillerVideo.muted = true;
             } else {
                 fillerVideo.muted = false;
@@ -1089,7 +1105,7 @@ function startFillerPlayback(track) {
                 }
             }
             fillerVideo.onended = () => {
-                if (!isMutedViewer) {
+                if (!isSpectatorViewer) {
                     fetch("/api/host/filler-tracks/finished", { method: "POST" }).catch(() => {});
                 }
             };
@@ -1110,7 +1126,7 @@ function startFillerPlayback(track) {
 
         if (ytPlayer && ytPlayer.loadVideoById) {
             ytPlayer.loadVideoById({ videoId: track.video_id });
-            if (isMutedViewer && ytPlayer.mute) ytPlayer.mute();
+            if (isMutedAudio && ytPlayer.mute) ytPlayer.mute();
             ytPlayer.playVideo();
         }
     }

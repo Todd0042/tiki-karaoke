@@ -6,7 +6,7 @@ from config import get_db_path, get_data_dir, ensure_storage_dirs, DB_PATH
 
 def get_db():
     ensure_storage_dirs()
-    conn = sqlite3.connect(get_db_path())
+    conn = sqlite3.connect(get_db_path(), timeout=15.0)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
@@ -440,8 +440,9 @@ def purge_all_singers(include_history: bool = True) -> Dict[str, int]:
     with conn:
         q_cnt = conn.execute("DELETE FROM queue").rowcount
         h_cnt = conn.execute("DELETE FROM history").rowcount if include_history else 0
+        conn.execute("DELETE FROM singer_song_log")
         s_cnt = conn.execute("DELETE FROM singers").rowcount
-        conn.execute("DELETE FROM sqlite_sequence WHERE name IN ('queue', 'history', 'singers')")
+        conn.execute("DELETE FROM sqlite_sequence WHERE name IN ('queue', 'history', 'singers', 'singer_song_log')")
     conn.close()
     return {"singers_deleted": s_cnt, "queue_deleted": q_cnt, "history_deleted": h_cnt}
 
@@ -453,8 +454,8 @@ def save_track(video_id: str, title: str, artist: str, original_title: str, chan
             INSERT INTO tracks (video_id, title, artist, original_title, channel, duration)
             VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(video_id) DO UPDATE SET
-                title = excluded.title,
-                artist = excluded.artist,
+                title = CASE WHEN tracks.is_downloaded = 1 THEN tracks.title ELSE excluded.title END,
+                artist = CASE WHEN tracks.is_downloaded = 1 THEN tracks.artist ELSE excluded.artist END,
                 original_title = excluded.original_title,
                 channel = excluded.channel,
                 duration = CASE WHEN excluded.duration > 0 THEN excluded.duration ELSE tracks.duration END

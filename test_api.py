@@ -18,6 +18,8 @@ class TestAPIEndpoints(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         init_db()
+        from config import save_config
+        save_config({"configured": True})
         cls.client = TestClient(app)
 
     @classmethod
@@ -710,6 +712,66 @@ class TestAPIEndpoints(unittest.TestCase):
         self.assertEqual(r_state.status_code, 200)
         self.assertIn("filler", r_state.json())
         self.assertEqual(r_state.json()["filler"]["transition_policy"], "finish")
+
+    def test_queue_deletion_security(self):
+        from config import HOST_TOKEN
+        # 1. Register Singer 1 and Singer 2
+        r1 = self.client.post("/api/singer/register", json={"name": "Singer1", "token": "tok_del_1"})
+        self.assertEqual(r1.status_code, 200)
+        r2 = self.client.post("/api/singer/register", json={"name": "Singer2", "token": "tok_del_2"})
+        self.assertEqual(r2.status_code, 200)
+
+        # 2. Singer 1 queues a track
+        r_q = self.client.post("/api/queue", json={
+            "video_id": "del_test_song",
+            "title": "Song for Deletion",
+            "artist": "Del Artist",
+            "singer_name": "Singer1",
+            "singer_token": "tok_del_1",
+            "pitch_shift": 0
+        })
+        self.assertEqual(r_q.status_code, 200)
+        queue_id = r_q.json()["queue_id"]
+
+        # 3. Unauthenticated request without token must fail with 401
+        r_unauth = self.client.delete(f"/api/queue/{queue_id}")
+        self.assertEqual(r_unauth.status_code, 401)
+
+        # 4. Another singer cannot delete Singer 1's track (returns {"deleted": False})
+        r_wrong_singer = self.client.delete(f"/api/queue/{queue_id}?token=tok_del_2")
+        self.assertEqual(r_wrong_singer.status_code, 200)
+        self.assertFalse(r_wrong_singer.json()["deleted"])
+
+        # Verify track is still in queue
+        q_list = self.client.get("/api/queue").json()
+        self.assertTrue(any(q["queue_id"] == queue_id for q in q_list))
+
+        # 5. Singer 1 can delete their own track
+        r_own = self.client.delete(f"/api/queue/{queue_id}?token=tok_del_1")
+        self.assertEqual(r_own.status_code, 200)
+        self.assertTrue(r_own.json()["deleted"])
+
+        # Verify track is gone
+        q_list2 = self.client.get("/api/queue").json()
+        self.assertFalse(any(q["queue_id"] == queue_id for q in q_list2))
+
+        # 6. Host can delete any track
+        from app import last_queue_time_by_singer
+        last_queue_time_by_singer.clear()
+        r_q2 = self.client.post("/api/queue", json={
+            "video_id": "del_test_song_2",
+            "title": "Song 2 for Host Deletion",
+            "artist": "Del Artist 2",
+            "singer_name": "Singer1",
+            "singer_token": "tok_del_1",
+            "pitch_shift": 0
+        })
+        self.assertEqual(r_q2.status_code, 200)
+        queue_id_2 = r_q2.json()["queue_id"]
+
+        r_host_del = self.client.delete(f"/api/queue/{queue_id_2}", headers={"X-Host-Token": HOST_TOKEN})
+        self.assertEqual(r_host_del.status_code, 200)
+        self.assertTrue(r_host_del.json()["deleted"])
 
 if __name__ == "__main__":
     unittest.main()

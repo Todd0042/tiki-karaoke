@@ -9,7 +9,9 @@ import webbrowser
 import threading
 import subprocess
 import re
+import tempfile
 from pathlib import Path
+from typing import Optional, Tuple, Dict, Any
 
 import shutil
 
@@ -19,7 +21,7 @@ sys.path.insert(0, str(BASE_DIR))
 
 from config import (
     DATA_DIR, HOST_TOKEN, HOST_PIN, PORT, TARGET_LUFS,
-    load_config, is_configured
+    load_config, is_configured, get_bundled_binary_path
 )
 from app import LOCAL_IP, PUBLIC_IP, get_base_url, get_public_host
 
@@ -36,6 +38,76 @@ TIKI_BANNER = r"""
 PID_FILE = DATA_DIR / "karaoke.pid"
 active_tunnel_proc = None
 is_shutting_down = False
+
+def get_process_group_kwargs() -> dict:
+    """Returns subprocess kwargs to isolate process groups across Unix and Windows."""
+    if sys.platform == "win32":
+        return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+    return {"preexec_fn": os.setsid}
+
+def kill_process_tree(proc: Optional[subprocess.Popen], timeout: float = 2.0):
+    """Gracefully terminates proc and its child processes across Unix and Windows."""
+    if not proc or proc.poll() is not None:
+        return
+    if sys.platform == "win32":
+        try:
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=timeout,
+                check=False
+            )
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+    else:
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            proc.wait(timeout=timeout)
+        except Exception:
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except Exception:
+                pass
+
+def find_system_browser(name: str) -> Optional[str]:
+    """Finds browser executable across Linux and Windows systems."""
+    sys_path = shutil.which(name)
+    if sys_path:
+        return sys_path
+
+    if sys.platform == "win32":
+        prog_x86 = os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")
+        prog_64 = os.environ.get("ProgramFiles", r"C:\Program Files")
+        local_app = os.environ.get("LocalAppData", "")
+
+        candidates = {
+            "microsoft-edge": [
+                Path(prog_x86) / "Microsoft" / "Edge" / "Application" / "msedge.exe",
+                Path(prog_64) / "Microsoft" / "Edge" / "Application" / "msedge.exe",
+            ],
+            "google-chrome": [
+                Path(prog_64) / "Google" / "Chrome" / "Application" / "chrome.exe",
+                Path(prog_x86) / "Google" / "Chrome" / "Application" / "chrome.exe",
+                Path(local_app) / "Google" / "Chrome" / "Application" / "chrome.exe",
+            ],
+            "firefox": [
+                Path(prog_64) / "Mozilla Firefox" / "firefox.exe",
+                Path(prog_x86) / "Mozilla Firefox" / "firefox.exe",
+            ],
+            "brave-browser": [
+                Path(prog_64) / "BraveSoftware" / "Brave-Browser" / "Application" / "brave.exe",
+                Path(local_app) / "BraveSoftware" / "Brave-Browser" / "Application" / "brave.exe",
+            ]
+        }
+        for path in candidates.get(name, []):
+            if path.exists():
+                return str(path)
+
+    return None
 
 def print_terminal_qr(url: str, label: str):
     print(f"\n--- {label} ---")
@@ -59,15 +131,7 @@ def cleanup_all_services():
 
     if active_tunnel_proc and active_tunnel_proc.poll() is None:
         print("[Shutdown] Stopping remote tunnel process...")
-        try:
-            # Terminate the entire process group
-            os.killpg(os.getpgid(active_tunnel_proc.pid), signal.SIGTERM)
-            active_tunnel_proc.wait(timeout=2.0)
-        except Exception:
-            try:
-                os.killpg(os.getpgid(active_tunnel_proc.pid), signal.SIGKILL)
-            except Exception:
-                pass
+        kill_process_tree(active_tunnel_proc)
         active_tunnel_proc = None
 
     if PID_FILE.exists():
@@ -119,7 +183,8 @@ def open_browser_delayed(stage_url: str, host_url: str = "", delay: float = 1.5)
     mode_label = "Fullscreen Kiosk" if stage_kiosk else "Windowed"
     print(f"[Launcher] Opening Stage Display on Monitor {stage_disp_idx} ({stage_disp_name}, {mode_label}): {stage_url}")
 
-    firefox_bin = shutil.which("firefox")
+    firefox_bin = find_system_browser("firefox")
+    temp_root = Path(tempfile.gettempdir())
     audio_device = cfg.get("audio_output_device", "default")
     env = os.environ.copy()
     if audio_device and audio_device != "default":
@@ -129,7 +194,7 @@ def open_browser_delayed(stage_url: str, host_url: str = "", delay: float = 1.5)
     stage_launched = False
     if firefox_bin:
         try:
-            stage_profile = Path(f"/tmp/tiki_stage_firefox_profile_{stage_disp_idx}")
+            stage_profile = temp_root / f"tiki_stage_firefox_profile_{stage_disp_idx}"
             configure_firefox_profile(stage_profile)
             cmd = [
                 firefox_bin,
@@ -142,21 +207,21 @@ def open_browser_delayed(stage_url: str, host_url: str = "", delay: float = 1.5)
             else:
                 cmd.append("--new-window")
             cmd.append(stage_url)
-            subprocess.Popen(cmd, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, preexec_fn=os.setsid)
+            subprocess.Popen(cmd, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **get_process_group_kwargs())
             print(f"[Launcher] ✅ Dedicated Stage Window launched via Firefox on monitor {stage_disp_idx} ({stage_disp_name})!")
             stage_launched = True
         except Exception as e:
             print(f"[Launcher] Firefox launch error: {e}")
 
     if not stage_launched:
-        for b_name in ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "brave-browser", "microsoft-edge"]:
-            c_bin = shutil.which(b_name)
+        for b_name in ["microsoft-edge", "google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "brave-browser"]:
+            c_bin = find_system_browser(b_name)
             if c_bin:
                 try:
                     cmd = [c_bin, f"--app={stage_url}", f"--window-position={stage_disp_x},{stage_disp_y}"]
                     if stage_kiosk:
                         cmd.append("--start-fullscreen")
-                    subprocess.Popen(cmd, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, preexec_fn=os.setsid)
+                    subprocess.Popen(cmd, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **get_process_group_kwargs())
                     print(f"[Launcher] ✅ Dedicated Stage Window launched via {b_name} on monitor {stage_disp_idx} ({stage_disp_x},{stage_disp_y})!")
                     stage_launched = True
                     break
@@ -186,7 +251,7 @@ def open_browser_delayed(stage_url: str, host_url: str = "", delay: float = 1.5)
         host_launched = False
         if firefox_bin:
             try:
-                host_profile = Path(f"/tmp/tiki_host_firefox_profile_{host_disp_idx}")
+                host_profile = temp_root / f"tiki_host_firefox_profile_{host_disp_idx}"
                 configure_firefox_profile(host_profile)
                 cmd = [
                     firefox_bin,
@@ -199,21 +264,21 @@ def open_browser_delayed(stage_url: str, host_url: str = "", delay: float = 1.5)
                 else:
                     cmd.extend([f"--kiosk-monitor={host_disp_idx}", "--new-window"])
                 cmd.append(host_url)
-                subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, preexec_fn=os.setsid)
+                subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **get_process_group_kwargs())
                 print(f"[Launcher] ✅ Dedicated Host DJ Window launched via Firefox on monitor {host_disp_idx} ({host_disp_name})!")
                 host_launched = True
             except Exception as e:
                 print(f"[Launcher] Firefox host launch error: {e}")
 
         if not host_launched:
-            for b_name in ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "brave-browser", "microsoft-edge"]:
-                c_bin = shutil.which(b_name)
+            for b_name in ["microsoft-edge", "google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "brave-browser"]:
+                c_bin = find_system_browser(b_name)
                 if c_bin:
                     try:
                         cmd = [c_bin, f"--app={host_url}", f"--window-position={host_disp_x},{host_disp_y}"]
                         if host_kiosk:
                             cmd.append("--start-fullscreen")
-                        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, preexec_fn=os.setsid)
+                        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **get_process_group_kwargs())
                         print(f"[Launcher] ✅ Dedicated Host DJ Window launched via {b_name} on monitor {host_disp_idx} ({host_disp_x},{host_disp_y})!")
                         host_launched = True
                         break
@@ -221,9 +286,9 @@ def open_browser_delayed(stage_url: str, host_url: str = "", delay: float = 1.5)
                         print(f"[Launcher] {b_name} host launch error: {e}")
 
 def start_cloudflare_quick_tunnel(port: int):
-    bin_path = BASE_DIR / "bin" / "cloudflared"
+    bin_path = get_bundled_binary_path("cloudflared")
     if not bin_path.exists():
-        print("[Tunnel] ⚠️ cloudflared binary not found in bin/. Remote tunnel unavailable.")
+        print("[Tunnel] ⚠️ cloudflared binary not found. Remote tunnel unavailable.")
         return None, None
 
     print("[Tunnel] 🔒 Establishing secure Cloudflare Quick Tunnel (Trusted HTTPS)...")
@@ -233,7 +298,7 @@ def start_cloudflare_quick_tunnel(port: int):
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
-            preexec_fn=os.setsid
+            **get_process_group_kwargs()
         )
     except Exception as e:
         print(f"[Tunnel Error] Failed to launch cloudflared: {e}")
@@ -260,9 +325,9 @@ def start_cloudflare_quick_tunnel(port: int):
     return url, proc
 
 def start_cloudflare_named_tunnel(token: str, custom_domain: str):
-    bin_path = BASE_DIR / "bin" / "cloudflared"
+    bin_path = get_bundled_binary_path("cloudflared")
     if not bin_path.exists():
-        print("[Tunnel] ⚠️ cloudflared binary not found in bin/")
+        print("[Tunnel] ⚠️ cloudflared binary not found")
         return None, None
 
     if not token:
@@ -276,7 +341,7 @@ def start_cloudflare_named_tunnel(token: str, custom_domain: str):
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
-            preexec_fn=os.setsid
+            **get_process_group_kwargs()
         )
     except Exception as e:
         print(f"[Tunnel Error] Failed to launch named tunnel: {e}")
@@ -328,14 +393,17 @@ def start_tailscale_funnel(port: int, tailnet_domain: str = ""):
 
 def start_permanent_tunnel(port: int, remote_port: int = 38480):
     global active_tunnel_proc
-    bin_path = BASE_DIR / "bin" / "bore"
+    bin_path = get_bundled_binary_path("bore")
     if not bin_path.exists():
-        print("[Remote] bore binary not found in bin/")
+        print("[Remote] bore binary not found")
         return None, None
 
     # Kill any stale local bore processes to free up remote static port
     try:
-        subprocess.run(["pkill", "-9", "-f", "bore local"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if sys.platform == "win32":
+            subprocess.run(["taskkill", "/F", "/IM", "bore.exe"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        else:
+            subprocess.run(["pkill", "-9", "-f", "bore local"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         time.sleep(0.4)
     except Exception:
         pass
@@ -347,7 +415,7 @@ def start_permanent_tunnel(port: int, remote_port: int = 38480):
         stderr=subprocess.STDOUT,
         text=True,
         bufsize=1,
-        preexec_fn=os.setsid
+        **get_process_group_kwargs()
     )
     active_tunnel_proc = proc
 
@@ -364,7 +432,10 @@ def start_permanent_tunnel(port: int, remote_port: int = 38480):
     if proc.poll() is not None:
         print("[Remote Warning] bore process exited early. Retrying once...")
         try:
-            subprocess.run(["pkill", "-9", "-f", "bore local"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if sys.platform == "win32":
+                subprocess.run(["taskkill", "/F", "/IM", "bore.exe"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            else:
+                subprocess.run(["pkill", "-9", "-f", "bore local"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             time.sleep(1.0)
             proc = subprocess.Popen(
                 [str(bin_path), "local", str(port), "--to", "bore.pub", "--port", str(remote_port)],
@@ -372,7 +443,7 @@ def start_permanent_tunnel(port: int, remote_port: int = 38480):
                 stderr=subprocess.STDOUT,
                 text=True,
                 bufsize=1,
-                preexec_fn=os.setsid
+                **get_process_group_kwargs()
             )
             active_tunnel_proc = proc
             threading.Thread(target=_drain, args=(proc.stdout,), daemon=True).start()
@@ -424,10 +495,7 @@ def start_tunnel_watchdog(mode: str, local_port: int, remote_port: int = 38480, 
 
             if needs_restart and not is_shutting_down:
                 if active_tunnel_proc:
-                    try:
-                        os.killpg(os.getpgid(active_tunnel_proc.pid), signal.SIGKILL)
-                    except Exception:
-                        pass
+                    kill_process_tree(active_tunnel_proc)
                     active_tunnel_proc = None
 
                 time.sleep(1.0)

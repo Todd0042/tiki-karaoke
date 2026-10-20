@@ -105,9 +105,9 @@ def fetch_wikipedia_metadata(artist: str, title: str) -> Optional[Dict[str, Any]
             summary_data = json.loads(resp.read().decode("utf-8", errors="replace"))
             extract = summary_data.get("extract", "")
 
-            # Look for 4-digit release year (1950 - 2029)
+            # Look for 4-digit release year (1920 - 2029)
             year = 0
-            year_match = re.search(r"\b(19[5-9]\d|20[0-2]\d)\b", extract)
+            year_match = re.search(r"\b(19[2-9]\d|20[0-2]\d)\b", extract)
             if year_match:
                 year = int(year_match.group(1))
 

@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Optional, Callable
 import yt_dlp
 
-from config import get_tracks_dir, get_playlists_dir, get_filler_dir, TRACKS_DIR, PLAYLISTS_DIR, TARGET_LUFS, load_config
+from config import get_tracks_dir, get_playlists_dir, get_filler_dir, TRACKS_DIR, PLAYLISTS_DIR, TARGET_LUFS, load_config, get_bundled_binary_path
 from database import (
     get_track_by_id, update_track_download_status,
     get_filler_track_by_id, update_filler_track_status, update_filler_track_metadata
@@ -40,8 +40,9 @@ def get_ydl_video_format() -> str:
     return "bestvideo[height<=1080][vcodec^=avc1]+bestaudio[ext=m4a]/bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"
 
 def normalize_audio_loudness(input_path: Path, output_path: Path, target_lufs: float = TARGET_LUFS) -> bool:
+    ffmpeg_bin = str(get_bundled_binary_path("ffmpeg")) if get_bundled_binary_path("ffmpeg").exists() else "ffmpeg"
     cmd = [
-        "ffmpeg", "-y",
+        ffmpeg_bin, "-y",
         "-i", str(input_path),
         "-c:v", "copy",
         "-af", f"loudnorm=I={target_lufs}:TP=-1.5:LRA=11",
@@ -86,8 +87,15 @@ def download_and_normalize_track(track_id: int) -> Optional[str]:
         "quiet": True,
         "no_warnings": True,
         "merge_output_format": "mp4",
-        "match_filter": yt_dlp.utils.match_filter_func("duration <= 600")
+        "match_filter": yt_dlp.utils.match_filter_func("duration <= 600"),
+        "socket_timeout": 15,
+        "retries": 3,
+        "fragment_retries": 3,
+        "skip_unavailable_fragments": True
     }
+    ffmpeg_bin = get_bundled_binary_path("ffmpeg")
+    if ffmpeg_bin.exists():
+        ydl_opts["ffmpeg_location"] = str(ffmpeg_bin.parent)
 
     url = f"https://www.youtube.com/watch?v={video_id}"
     try:
@@ -143,7 +151,16 @@ async def downloader_worker():
 
         try:
             loop = asyncio.get_event_loop()
-            local_path = await loop.run_in_executor(None, download_and_normalize_track, track_id)
+            try:
+                local_path = await asyncio.wait_for(
+                    loop.run_in_executor(None, download_and_normalize_track, track_id),
+                    timeout=300
+                )
+            except asyncio.TimeoutError:
+                print(f"[Downloader] Track download timed out after 300s for track_id={track_id}")
+                update_track_download_status(track_id, "failed")
+                local_path = None
+
             if local_path and singer_name:
                 update_singer_m3u_playlist(singer_name, local_path, title, artist)
 
@@ -213,8 +230,15 @@ def download_and_normalize_filler_track(filler_id: int) -> Optional[str]:
         "quiet": True,
         "no_warnings": True,
         "merge_output_format": "mp4",
-        "match_filter": yt_dlp.utils.match_filter_func("duration <= 600")
+        "match_filter": yt_dlp.utils.match_filter_func("duration <= 600"),
+        "socket_timeout": 15,
+        "retries": 3,
+        "fragment_retries": 3,
+        "skip_unavailable_fragments": True
     }
+    ffmpeg_bin = get_bundled_binary_path("ffmpeg")
+    if ffmpeg_bin.exists():
+        ydl_opts["ffmpeg_location"] = str(ffmpeg_bin.parent)
 
     url = f"https://www.youtube.com/watch?v={video_id}"
     try:
@@ -257,7 +281,16 @@ async def filler_downloader_worker():
         filler_id = await filler_download_queue.get()
         try:
             loop = asyncio.get_event_loop()
-            local_path = await loop.run_in_executor(None, download_and_normalize_filler_track, filler_id)
+            try:
+                local_path = await asyncio.wait_for(
+                    loop.run_in_executor(None, download_and_normalize_filler_track, filler_id),
+                    timeout=300
+                )
+            except asyncio.TimeoutError:
+                print(f"[Filler Downloader] Download timed out after 300s for filler_id={filler_id}")
+                update_filler_track_status(filler_id, "failed", error_message="Download timed out after 300s")
+                local_path = None
+
             for cb in filler_callbacks:
                 try:
                     await cb(filler_id, local_path)

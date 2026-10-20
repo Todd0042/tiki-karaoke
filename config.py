@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 import secrets
 import shutil
@@ -11,6 +12,36 @@ BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
 TEMPLATES_DIR = BASE_DIR / "templates"
 CONFIG_FILE = BASE_DIR / "config.json"
+
+def get_bundled_binary_path(binary_name: str) -> Path:
+    """
+    Returns the resolved Path to a bundled binary (e.g. cloudflared, bore, ffmpeg).
+    Supports PyInstaller bundle directory (_MEIPASS) and Windows .exe extensions.
+    """
+    ext = ".exe" if sys.platform == "win32" else ""
+    full_name = f"{binary_name}{ext}" if not binary_name.endswith(ext) else binary_name
+
+    # 1. Check PyInstaller runtime temp dir if packaged
+    if hasattr(sys, "_MEIPASS"):
+        meipass_path = Path(sys._MEIPASS) / "bin" / full_name
+        if meipass_path.exists():
+            return meipass_path
+        meipass_root = Path(sys._MEIPASS) / full_name
+        if meipass_root.exists():
+            return meipass_root
+
+    # 2. Check project bin directory
+    local_bin = BASE_DIR / "bin" / full_name
+    if local_bin.exists():
+        return local_bin
+
+    # 3. Fallback to system PATH lookup
+    sys_which = shutil.which(full_name) or shutil.which(binary_name)
+    if sys_which:
+        return Path(sys_which)
+
+    return local_bin
+
 
 DEFAULT_CONFIG = {
     "configured": False,
@@ -25,7 +56,7 @@ DEFAULT_CONFIG = {
     "tailscale_domain": "",
     "duckdns_domain": "",
     "duckdns_token": "",
-    "target_lufs": -23.0,
+    "target_lufs": -16.0,
     "intermission_seconds": 20,
     "tts_enabled": False,
     "bgm_enabled": True,
@@ -83,7 +114,8 @@ def get_available_displays() -> List[Dict[str, Any]]:
 
     # Try enriching with monitor model names from GDK
     try:
-        cmd = ["/usr/bin/python", "-c", "import gi; gi.require_version('Gdk', '3.0'); from gi.repository import Gdk; Gdk.init([]); d = Gdk.Display.get_default(); print([(i, d.get_monitor(i).get_model() or '') for i in range(d.get_n_monitors())])"]
+        py_bin = sys.executable or shutil.which("python3") or "/usr/bin/python3"
+        cmd = [py_bin, "-c", "import gi; gi.require_version('Gdk', '3.0'); from gi.repository import Gdk; Gdk.init([]); d = Gdk.Display.get_default(); print([(i, d.get_monitor(i).get_model() or '') for i in range(d.get_n_monitors())])"]
         res = subprocess.run(cmd, capture_output=True, text=True, timeout=1.5)
         if res.returncode == 0:
             import ast
@@ -96,6 +128,67 @@ def get_available_displays() -> List[Dict[str, Any]]:
                     m["label"] = f"Monitor {m['id']}: {m['name']} [{m['width']}x{m['height']}]{prim_str}"
     except Exception:
         pass
+
+    # 2. Windows display detection via user32.EnumDisplayMonitors (Zero external dependencies)
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            CCHDEVICENAME = 32
+
+            class MONITORINFOEXW(ctypes.Structure):
+                _fields_ = [
+                    ("cbSize", wintypes.DWORD),
+                    ("rcMonitor", wintypes.RECT),
+                    ("rcWork", wintypes.RECT),
+                    ("dwFlags", wintypes.DWORD),
+                    ("szDevice", wintypes.WCHAR * CCHDEVICENAME)
+                ]
+
+            user32 = ctypes.windll.user32
+            try:
+                user32.SetProcessDPIAware()
+            except Exception:
+                pass
+
+            MonitorEnumProc = ctypes.WINFUNCTYPE(
+                wintypes.BOOL,
+                wintypes.HMONITOR,
+                wintypes.HDC,
+                ctypes.POINTER(wintypes.RECT),
+                wintypes.LPARAM
+            )
+
+            raw_monitors = []
+
+            def _enum_callback(hMonitor, hdcMonitor, lprcMonitor, dwData):
+                info = MONITORINFOEXW()
+                info.cbSize = ctypes.sizeof(MONITORINFOEXW)
+                if user32.GetMonitorInfoW(hMonitor, ctypes.byref(info)):
+                    raw_monitors.append(info)
+                return True
+
+            cb = MonitorEnumProc(_enum_callback)
+            user32.EnumDisplayMonitors(None, None, cb, 0)
+
+            for idx, mon in enumerate(raw_monitors):
+                is_prim = bool(mon.dwFlags & 1)  # MONITORINFOF_PRIMARY = 1
+                w = mon.rcMonitor.right - mon.rcMonitor.left
+                h = mon.rcMonitor.bottom - mon.rcMonitor.top
+                dev_name = mon.szDevice or f"Display {idx}"
+                monitors.append({
+                    "id": idx,
+                    "name": dev_name,
+                    "label": f"Monitor {idx}: {dev_name} [{w}x{h}]" + (" ★ Primary" if is_prim else ""),
+                    "is_primary": is_prim,
+                    "width": int(w),
+                    "height": int(h),
+                    "x": int(mon.rcMonitor.left),
+                    "y": int(mon.rcMonitor.top)
+                })
+        except Exception as e:
+            print(f"[Display Detection] Windows EnumDisplayMonitors error: {e}")
 
     # Fallback to primary default if no monitors found
     if not monitors:

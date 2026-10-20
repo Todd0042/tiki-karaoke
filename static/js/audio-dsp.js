@@ -81,6 +81,8 @@ class AudioDSPPipeline {
         this.trebleFilter.connect(this.pitchShifter.input);
         this.pitchShifter.output.connect(this.limiter);
         this.limiter.connect(this.dspGain);
+        this.dspGain.connect(this.masterGain);
+
         // 7. Venue A/V Sync Delay Node
         this.avDelayNode = this.ctx.createDelay(1.0);
         this.avDelayNode.delayTime.value = Math.max(0, this.currentSyncOffsetMs) / 1000.0;
@@ -151,79 +153,155 @@ class WebAudioPitchShifter {
 
         this.pitchOffset = 0; // in semitones
         this.bufferTime = 0.100; // 100ms delay buffer
-
-        this.mod1 = context.createBufferSource();
-        this.mod2 = context.createBufferSource();
-        this.mod3 = context.createBufferSource();
-        this.mod4 = context.createBufferSource();
-
-        this.delay1 = context.createDelay();
-        this.delay2 = context.createDelay();
-
-        this.fade1 = context.createGain();
-        this.fade2 = context.createGain();
+        this.fadeTime = 0.050; // 50ms crossfade
+        this.delayTime = 0.100;
 
         this.init();
     }
 
-    init() {
-        const length = Math.floor(this.bufferTime * this.context.sampleRate);
+    createFadeBuffer(activeTime, fadeTime) {
+        const length1 = Math.floor(activeTime * this.context.sampleRate);
+        const length2 = Math.floor((activeTime - 2 * fadeTime) * this.context.sampleRate);
+        const length = length1 + Math.max(0, length2);
         const buffer = this.context.createBuffer(1, length, this.context.sampleRate);
-        const data = buffer.getChannelData(0);
+        const p = buffer.getChannelData(0);
 
-        // Linear saw ramp for delay modulation
-        for (let i = 0; i < length; i++) {
-            data[i] = (i / length) * this.bufferTime;
+        const fadeLength = Math.floor(fadeTime * this.context.sampleRate);
+        const fadeIndex1 = fadeLength;
+        const fadeIndex2 = length1 - fadeLength;
+
+        for (let i = 0; i < length1; ++i) {
+            let value;
+            if (i < fadeIndex1) {
+                value = Math.sqrt(i / fadeLength);
+            } else if (i >= fadeIndex2) {
+                value = Math.sqrt(1 - (i - fadeIndex2) / fadeLength);
+            } else {
+                value = 1;
+            }
+            p[i] = value;
         }
 
-        const fadeBuffer = this.context.createBuffer(1, length, this.context.sampleRate);
-        const fadeData = fadeBuffer.getChannelData(0);
-
-        // Triangular cross-fade envelope
-        for (let i = 0; i < length; i++) {
-            fadeData[i] = Math.sin((i / length) * Math.PI);
+        for (let i = length1; i < length; ++i) {
+            p[i] = 0;
         }
 
-        this.mod1.buffer = buffer;
-        this.mod2.buffer = buffer;
-        this.mod1.loop = true;
-        this.mod2.loop = true;
+        return buffer;
+    }
 
-        this.mod3.buffer = fadeBuffer;
-        this.mod4.buffer = fadeBuffer;
-        this.mod3.loop = true;
-        this.mod4.loop = true;
+    createDelayTimeBuffer(activeTime, fadeTime, shiftUp) {
+        const length1 = Math.floor(activeTime * this.context.sampleRate);
+        const length2 = Math.floor((activeTime - 2 * fadeTime) * this.context.sampleRate);
+        const length = length1 + Math.max(0, length2);
+        const buffer = this.context.createBuffer(1, length, this.context.sampleRate);
+        const p = buffer.getChannelData(0);
 
-        // Modulate Delay Times
-        const modGain1 = this.context.createGain();
-        const modGain2 = this.context.createGain();
+        for (let i = 0; i < length1; ++i) {
+            if (shiftUp) {
+                p[i] = (length1 - i) / length;
+            } else {
+                p[i] = i / length1;
+            }
+        }
 
-        this.mod1.connect(modGain1);
-        this.mod2.connect(modGain2);
-        modGain1.connect(this.delay1.delayTime);
-        modGain2.connect(this.delay2.delayTime);
+        for (let i = length1; i < length; ++i) {
+            p[i] = 0;
+        }
 
-        // Modulate Volume Crossfade
-        this.mod3.connect(this.fade1.gain);
-        this.mod4.connect(this.fade2.gain);
+        return buffer;
+    }
 
-        // Signal Path
+    init() {
+        const mod1 = this.context.createBufferSource();
+        const mod2 = this.context.createBufferSource();
+        const mod3 = this.context.createBufferSource();
+        const mod4 = this.context.createBufferSource();
+
+        this.shiftDownBuffer = this.createDelayTimeBuffer(this.bufferTime, this.fadeTime, false);
+        this.shiftUpBuffer = this.createDelayTimeBuffer(this.bufferTime, this.fadeTime, true);
+
+        mod1.buffer = this.shiftDownBuffer;
+        mod2.buffer = this.shiftDownBuffer;
+        mod3.buffer = this.shiftUpBuffer;
+        mod4.buffer = this.shiftUpBuffer;
+
+        mod1.loop = true;
+        mod2.loop = true;
+        mod3.loop = true;
+        mod4.loop = true;
+
+        this.mod1Gain = this.context.createGain();
+        this.mod2Gain = this.context.createGain();
+        this.mod3Gain = this.context.createGain();
+        this.mod4Gain = this.context.createGain();
+
+        this.mod3Gain.gain.value = 0;
+        this.mod4Gain.gain.value = 0;
+
+        mod1.connect(this.mod1Gain);
+        mod2.connect(this.mod2Gain);
+        mod3.connect(this.mod3Gain);
+        mod4.connect(this.mod4Gain);
+
+        this.modGain1 = this.context.createGain();
+        this.modGain2 = this.context.createGain();
+
+        this.delay1 = this.context.createDelay();
+        this.delay2 = this.context.createDelay();
+
+        this.mod1Gain.connect(this.modGain1);
+        this.mod2Gain.connect(this.modGain2);
+        this.mod3Gain.connect(this.modGain1);
+        this.mod4Gain.connect(this.modGain2);
+
+        this.modGain1.connect(this.delay1.delayTime);
+        this.modGain2.connect(this.delay2.delayTime);
+
+        const fade1 = this.context.createBufferSource();
+        const fade2 = this.context.createBufferSource();
+        const fadeBuffer = this.createFadeBuffer(this.bufferTime, this.fadeTime);
+
+        fade1.buffer = fadeBuffer;
+        fade2.buffer = fadeBuffer;
+        fade1.loop = true;
+        fade2.loop = true;
+
+        const mix1 = this.context.createGain();
+        const mix2 = this.context.createGain();
+        mix1.gain.value = 0;
+        mix2.gain.value = 0;
+
+        fade1.connect(mix1.gain);
+        fade2.connect(mix2.gain);
+
         this.input.connect(this.delay1);
         this.input.connect(this.delay2);
-        this.delay1.connect(this.fade1);
-        this.delay2.connect(this.fade2);
-        this.fade1.connect(this.output);
-        this.fade2.connect(this.output);
+        this.delay1.connect(mix1);
+        this.delay2.connect(mix2);
+        mix1.connect(this.output);
+        mix2.connect(this.output);
 
-        this.modGain1 = modGain1;
-        this.modGain2 = modGain2;
+        const t = this.context.currentTime + 0.050;
+        const t2 = t + this.bufferTime - this.fadeTime;
 
-        this.mod1.start(0);
-        this.mod2.start(this.bufferTime / 2);
-        this.mod3.start(0);
-        this.mod4.start(this.bufferTime / 2);
+        mod1.start(t);
+        mod2.start(t2);
+        mod3.start(t);
+        mod4.start(t2);
+        fade1.start(t);
+        fade2.start(t2);
 
         this.setPitchOffset(0);
+    }
+
+    setDelay(delayAmount) {
+        try {
+            this.modGain1.gain.setTargetAtTime(0.5 * delayAmount, this.context.currentTime, 0.010);
+            this.modGain2.gain.setTargetAtTime(0.5 * delayAmount, this.context.currentTime, 0.010);
+        } catch (e) {
+            this.modGain1.gain.value = 0.5 * delayAmount;
+            this.modGain2.gain.value = 0.5 * delayAmount;
+        }
     }
 
     setPitchOffset(semitones) {
@@ -234,12 +312,22 @@ class WebAudioPitchShifter {
             return;
         }
 
-        // pitch multiplier = 2^(semitones/12)
-        const mult = Math.pow(2, semitones / 12);
-        // speed delta: (1 - mult)
-        const delta = 1 - mult;
-        this.modGain1.gain.value = delta;
-        this.modGain2.gain.value = delta;
+        const pitchRatio = Math.pow(2, semitones / 12);
+        const mult = pitchRatio - 1;
+
+        if (mult > 0) {
+            this.mod1Gain.gain.value = 0;
+            this.mod2Gain.gain.value = 0;
+            this.mod3Gain.gain.value = 1;
+            this.mod4Gain.gain.value = 1;
+        } else {
+            this.mod1Gain.gain.value = 1;
+            this.mod2Gain.gain.value = 1;
+            this.mod3Gain.gain.value = 0;
+            this.mod4Gain.gain.value = 0;
+        }
+
+        this.setDelay(this.delayTime * Math.abs(mult));
     }
 }
 

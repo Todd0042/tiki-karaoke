@@ -413,20 +413,53 @@ function updateSingerHeader() {
 }
 
 // WebSocket Live Updates
+let wsPingInterval = null;
+let wsReconnectTimeout = null;
+
 function initWebSocket() {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const wsUrl = `${protocol}//${window.location.host}/ws`;
+
+    if (wsPingInterval) {
+        clearInterval(wsPingInterval);
+        wsPingInterval = null;
+    }
+    if (wsReconnectTimeout) {
+        clearTimeout(wsReconnectTimeout);
+        wsReconnectTimeout = null;
+    }
+
+    try {
+        if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+            ws.onclose = null;
+            ws.onerror = null;
+            ws.close();
+        }
+    } catch (e) {}
+
     ws = new WebSocket(wsUrl);
 
     ws.onopen = () => {
         const pill = document.getElementById("reconnectingPill");
         if (pill) pill.style.display = "none";
+
+        // Keepalive heartbeat every 10s to prevent router/tunnel drops on mobile
+        wsPingInterval = setInterval(() => {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: "ping" }));
+            }
+        }, 10000);
+
+        // Sync fresh queue upon connection or reconnection
+        loadLiveQueue();
     };
 
     ws.onmessage = (event) => {
         try {
             const data = JSON.parse(event.data);
-            if (data.type === "queue_updated" || data.type === "play_track") {
+            if (data.type === "pong") {
+                return;
+            } else if (data.type === "queue_updated" || data.type === "play_track") {
                 loadLiveQueue();
                 if (isHost) {
                     loadHostSingerRoster();
@@ -459,7 +492,16 @@ function initWebSocket() {
     ws.onclose = () => {
         const pill = document.getElementById("reconnectingPill");
         if (pill) pill.style.display = "flex";
-        setTimeout(initWebSocket, 2000);
+        if (wsPingInterval) {
+            clearInterval(wsPingInterval);
+            wsPingInterval = null;
+        }
+        if (!wsReconnectTimeout) {
+            wsReconnectTimeout = setTimeout(() => {
+                wsReconnectTimeout = null;
+                initWebSocket();
+            }, 2000);
+        }
     };
 
     ws.onerror = () => {
@@ -469,6 +511,10 @@ function initWebSocket() {
 }
 
 function reconnectWebSocket() {
+    if (wsReconnectTimeout) {
+        clearTimeout(wsReconnectTimeout);
+        wsReconnectTimeout = null;
+    }
     if (ws) {
         try {
             ws.onclose = null;
@@ -1016,7 +1062,7 @@ function renderQueue(queue) {
                     <div style="font-size: 1.8rem; flex-shrink: 0;">${item.singer_avatar || "🌺"}</div>
                     <div style="min-width: 0; overflow: hidden;">
                         <div style="font-size: 0.8rem; font-weight: 700; color: ${isPlaying ? 'var(--neon-pink)' : 'var(--neon-cyan)'};">
-                            ${isPlaying ? 'NOW SINGING' : `#${index} IN LINE`}
+                            ${isPlaying ? 'NOW SINGING' : `#${index + 1} IN LINE`}
                         </div>
                         <div style="font-weight: 700; font-size: 1.05rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
                             ${escapeHtml(item.singer_name)} ${item.duet_partner ? `& ${escapeHtml(item.duet_partner)}` : ''}
