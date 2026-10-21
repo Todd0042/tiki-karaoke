@@ -4,7 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>{{ bar_name }} - Mobile DJ</title>
-    <link rel="stylesheet" href="/static/css/tiki-theme.css">
+    <link rel="icon" type="image/x-icon" href="/favicon.ico">
+    <link rel="stylesheet" href="/static/css/tiki-theme.css?v=20261020_sing_along">
     <style>
         body {
             padding-bottom: 105px;
@@ -156,13 +157,28 @@
 
     <main style="padding: 16px;">
         <!-- TAB 1: Search & Request -->
-        <section id="searchTab" class="tab-view">
-            <div style="position: relative; margin-bottom: 16px;">
+        <section id="searchTab" class="tab-view" style="display: none;">
+            <div style="position: relative; margin-bottom: 12px;">
                 <input type="text" id="searchInput" placeholder="🔍 Search song title or artist..." 
                        style="width: 100%; padding: 14px 44px 14px 18px; border-radius: 14px; background: rgba(16, 28, 45, 0.9); border: 1px solid var(--border-neon); color: #fff; font-size: 1rem; outline: none; box-shadow: 0 0 15px rgba(0, 240, 255, 0.15);">
                 <button id="searchClearBtn" type="button" class="search-clear-btn" aria-label="Clear search" onclick="clearSearchInput()">
                     ✕
                 </button>
+            </div>
+
+            <!-- Sing-Along Mode Toggle -->
+            <div class="sing-along-toggle-row" style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; padding: 10px 14px; background: rgba(16, 28, 45, 0.7); border: 1px solid rgba(255, 183, 3, 0.25); border-radius: 12px;">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <span style="font-size: 1.25rem;">👥</span>
+                    <div>
+                        <div style="font-size: 0.88rem; font-weight: 700; color: #fff;">Sing-Along Mode</div>
+                        <div style="font-size: 0.74rem; color: var(--text-muted);">Lead vocals included with lyrics for shy singers</div>
+                    </div>
+                </div>
+                <label class="switch-toggle" title="Toggle Sing-Along Mode (Vocals Included)">
+                    <input type="checkbox" id="singAlongToggleSearch" onchange="onSingAlongToggleChange(this.checked)">
+                    <span class="slider-round"></span>
+                </label>
             </div>
 
             <div id="searchResults">
@@ -174,7 +190,7 @@
         </section>
 
         <!-- TAB: Instant Library (Browsable & Sorted) -->
-        <section id="libraryTab" class="tab-view" style="display: none;">
+        <section id="libraryTab" class="tab-view" style="display: block;">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
                 <h2 class="font-tiki neon-lime" style="font-size: 1.3rem; margin: 0;">⚡ Local Tiki Library</h2>
                 <span id="libraryTotalBadge" class="badge-local" style="font-size: 0.8rem;">0 songs</span>
@@ -182,6 +198,21 @@
             <p style="color: var(--text-muted); font-size: 0.8rem; margin: 0 0 12px 0;">
                 All songs saved on our local NVMe storage. Plays instantly with zero wait!
             </p>
+
+            <!-- Sing-Along Mode Toggle (Library View) -->
+            <div class="sing-along-toggle-row" style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; padding: 10px 14px; background: rgba(16, 28, 45, 0.7); border: 1px solid rgba(255, 183, 3, 0.25); border-radius: 12px;">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <span style="font-size: 1.25rem;">👥</span>
+                    <div>
+                        <div style="font-size: 0.88rem; font-weight: 700; color: #fff;">Sing-Along Library</div>
+                        <div style="font-size: 0.74rem; color: var(--text-muted);">Show downloaded sing-along tracks with lead vocals</div>
+                    </div>
+                </div>
+                <label class="switch-toggle" title="Toggle Sing-Along Mode (Vocals Included)">
+                    <input type="checkbox" id="singAlongToggleLibrary" onchange="onSingAlongToggleChange(this.checked)">
+                    <span class="slider-round"></span>
+                </label>
+            </div>
 
             <!-- Search & Artist Filter -->
             <div style="display: flex; gap: 8px; margin-bottom: 12px;">
@@ -383,12 +414,80 @@
                     </div>
                 </div>
 
-                <div style="margin: 16px 0;">
-                    <button onmousedown="hostDuckBGM(true)" onmouseup="hostDuckBGM(false)" 
-                            ontouchstart="hostDuckBGM(true)" ontouchend="hostDuckBGM(false)"
-                            class="btn-ghost" style="width: 100%; padding: 12px; font-weight: 700; background: rgba(255, 183, 3, 0.15); border-color: var(--neon-gold); color: var(--neon-gold);">
-                        🎤 Hold to Duck BGM (Speak on Mic)
-                    </button>
+                <!-- Live Stage Microphone & Audio Mixing Control -->
+                <div class="tiki-card" style="margin: 16px 0; padding: 14px; border-left: 4px solid var(--neon-cyan);">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                        <span style="font-weight: 700; font-size: 0.88rem; color: #fff;">🎤 Stage Microphone & Mixing</span>
+                        <span id="mobileHostMicBadge" style="font-size: 0.78rem; font-weight: 700; padding: 3px 8px; border-radius: 6px; background: rgba(255, 85, 85, 0.2); color: #ff5555; border: 1px solid rgba(255, 85, 85, 0.4);">MUTED</span>
+                    </div>
+
+                    <!-- Audio Input Source Selector -->
+                    <div style="margin-bottom: 12px;">
+                        <label for="mobileHostMicDeviceSelect" style="display: block; font-size: 0.74rem; font-weight: 700; color: var(--text-muted); margin-bottom: 4px;">Host PC Input Device (Mic / Line-In):</label>
+                        <select id="mobileHostMicDeviceSelect" onchange="hostSetMicDevice(this.value)" style="width: 100%; padding: 8px 10px; border-radius: 8px; background: rgba(16, 28, 45, 0.95); border: 1px solid var(--border-neon); color: #fff; font-size: 0.8rem; outline: none;">
+                            <option value="default">System Default Input</option>
+                        </select>
+                    </div>
+
+                    <!-- Master Mic Toggle -->
+                    <div style="margin-bottom: 12px;">
+                        <button id="mobileHostMicToggleBtn" onclick="hostToggleMic()" type="button" class="btn-ghost" style="width: 100%; padding: 11px; font-weight: 700; font-size: 0.92rem; color: #ff5555; border-color: rgba(255,85,85,0.4); border-radius: 10px;">
+                            🔇 Stage Mic Muted (OFF)
+                        </button>
+                    </div>
+
+                    <!-- Mic Master Volume Slider -->
+                    <div style="margin-bottom: 14px;">
+                        <div style="display: flex; justify-content: space-between; font-size: 0.78rem; font-weight: 700; margin-bottom: 4px;">
+                            <span style="color: var(--text-muted);">Mic Volume</span>
+                            <span id="mobileHostMicVolText" style="color: var(--neon-cyan);">80%</span>
+                        </div>
+                        <input type="range" id="mobileHostMicSlider" min="0" max="150" value="80" oninput="hostSetMicVolume(this.value)" style="width: 100%; accent-color: var(--neon-cyan);">
+                    </div>
+
+                    <!-- Reverb & Ducking Toggles -->
+                    <div style="display: flex; flex-direction: column; gap: 10px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.08); margin-bottom: 12px;">
+                        <!-- Reverb Toggle -->
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <div>
+                                <div style="font-size: 0.82rem; font-weight: 700; color: #fff;">Vocal Ambience Reverb</div>
+                                <div style="font-size: 0.7rem; color: var(--text-muted);">Warm plate room effect</div>
+                            </div>
+                            <label class="switch-toggle">
+                                <input type="checkbox" id="mobileMicReverbToggle" checked onchange="hostToggleMicReverb(this.checked)">
+                                <span class="slider-round"></span>
+                            </label>
+                        </div>
+
+                        <!-- Intermission Ducking Toggle & Depth -->
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <div>
+                                <div style="font-size: 0.82rem; font-weight: 700; color: #fff;">Between-Song Ducking</div>
+                                <div style="font-size: 0.7rem; color: var(--text-muted);">Auto-lowers BGM when talking</div>
+                            </div>
+                            <div style="display: flex; align-items: center; gap: 6px;">
+                                <select id="mobileDuckingDbSelect" onchange="hostSetDuckingDb(this.value)" style="padding: 4px 6px; border-radius: 6px; background: rgba(16, 28, 45, 0.95); border: 1px solid var(--border-neon); color: #fff; font-size: 0.75rem; outline: none;">
+                                    <option value="-3">-3 dB</option>
+                                    <option value="-6" selected>-6 dB</option>
+                                    <option value="-9">-9 dB</option>
+                                    <option value="-12">-12 dB</option>
+                                </select>
+                                <label class="switch-toggle">
+                                    <input type="checkbox" id="mobileDuckingToggle" checked onchange="hostToggleDucking(this.checked)">
+                                    <span class="slider-round"></span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Instant Manual Ducking Hold Button -->
+                    <div>
+                        <button onmousedown="hostDuckBGM(true)" onmouseup="hostDuckBGM(false)" 
+                                ontouchstart="hostDuckBGM(true)" ontouchend="hostDuckBGM(false)"
+                                class="btn-ghost" style="width: 100%; padding: 10px; font-weight: 700; font-size: 0.82rem; background: rgba(255, 183, 3, 0.12); border-color: rgba(255,183,3,0.5); color: var(--neon-gold); border-radius: 8px;">
+                            🎤 Hold to Duck BGM (Manual)
+                        </button>
+                    </div>
                 </div>
 
                 <!-- Venue A/V Sync Latency Control -->
@@ -509,6 +608,79 @@
                     </div>
                 </div>
 
+                <!-- Bring Your Own Media (BYOM) Local Importer -->
+                <div style="margin-top: 20px; padding-top: 14px; border-top: 1px solid rgba(255,255,255,0.12);">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                        <span style="font-size: 0.85rem; color: var(--neon-cyan); font-weight: 700;">📂 IMPORT LOCAL KARAOKE MEDIA (BYOM)</span>
+                        <span style="font-size: 0.72rem; color: var(--neon-gold); font-weight: 600;">Offline Ready</span>
+                    </div>
+                    <div style="font-size: 0.78rem; color: var(--text-muted); margin-bottom: 10px;">
+                        Import your own karaoke videos (<code style="color: var(--neon-cyan);">.mp4</code>, <code style="color: var(--neon-cyan);">.mkv</code>, <code style="color: var(--neon-cyan);">.webm</code>, <code style="color: var(--neon-cyan);">.avi</code>) from your hard drive directly into the searchable songbook.
+                    </div>
+
+                    <!-- Folder Input -->
+                    <div style="margin-bottom: 8px;">
+                        <input type="text" id="hostImportFolderPath" placeholder="Folder path, e.g. C:\Users\...\Music\Karaoke\Tiki" style="width: 100%; box-sizing: border-box; padding: 10px 12px; background: rgba(16, 28, 45, 0.9); border: 1px solid var(--border-neon); border-radius: 8px; color: #fff; font-size: 0.82rem; outline: none;">
+                    </div>
+
+                    <!-- Preset Path Buttons -->
+                    <div style="display: flex; gap: 8px; margin-bottom: 10px;">
+                        <button type="button" onclick="useHostPathPreset('default')" class="btn-ghost" style="flex: 1; padding: 6px 8px; font-size: 0.74rem; border-color: rgba(0, 240, 255, 0.4); color: var(--neon-cyan);" title="Use default Tiki Karaoke folder">
+                            🌴 Default Tiki Folder
+                        </button>
+                        <button type="button" onclick="useHostPathPreset('parent')" class="btn-ghost" style="flex: 1; padding: 6px 8px; font-size: 0.74rem; border-color: rgba(255, 183, 3, 0.4); color: var(--neon-gold);" title="Scan parent Karaoke directory">
+                            📁 All Karaoke Folder
+                        </button>
+                    </div>
+
+                    <!-- Destination & Options -->
+                    <div style="margin-bottom: 10px;">
+                        <label style="display: block; font-size: 0.74rem; color: var(--neon-cyan); margin-bottom: 4px; font-weight: 600;">IMPORT DESTINATION</label>
+                        <select id="hostImportDestination" style="width: 100%; box-sizing: border-box; padding: 8px 10px; background: rgba(16, 28, 45, 0.9); border: 1px solid var(--border-neon); border-radius: 8px; color: #fff; font-size: 0.8rem; outline: none;">
+                            <option value="karaoke" selected>🌴 Main Karaoke Songbook (Instrumental Tracks)</option>
+                            <option value="sing_along">🎤 True Karaoke (Sing-Alongs with Lead Vocals)</option>
+                            <option value="filler">🎬 Intermission Music Videos (BGM Filler Crate)</option>
+                        </select>
+                    </div>
+
+                    <div style="display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; font-size: 0.78rem; color: #cbd5e1;">
+                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                            <input type="checkbox" id="hostImportRecursive" checked style="accent-color: var(--neon-cyan);">
+                            <span>Include all subfolders (recursive scan)</span>
+                        </label>
+                    </div>
+
+                    <!-- Submit Button -->
+                    <button type="button" id="hostImportSubmitBtn" onclick="submitLocalKaraokeImport()" class="btn-ghost" style="width: 100%; padding: 10px; font-weight: 700; font-size: 0.85rem; border-color: var(--neon-lime); color: var(--neon-lime); background: rgba(57, 255, 20, 0.08); border-radius: 8px;">
+                        🚀 Scan & Import Local Songs
+                    </button>
+
+                    <!-- Import Result Feedback Container -->
+                    <div id="hostImportResultContainer" style="display: none; margin-top: 10px; padding: 10px; border-radius: 8px; font-size: 0.78rem; line-height: 1.4;">
+                    </div>
+
+                    <!-- Strict Commercial / BYOM Only Mode (Disable Downloader) -->
+                    <div style="margin-top: 14px; padding: 12px; border-radius: 8px; background: rgba(255, 0, 127, 0.08); border: 1px solid rgba(255, 0, 127, 0.4);">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                            <span style="font-size: 0.85rem; color: #ff007f; font-weight: 700; display: flex; align-items: center; gap: 6px;">
+                                🔒 Strict Commercial Mode (Disable Downloader)
+                            </span>
+                            <label style="display: flex; align-items: center; cursor: pointer; margin: 0;">
+                                <input type="checkbox" id="hostStrictByomToggle" onchange="toggleStrictByomMode(this.checked)" style="transform: scale(1.4); accent-color: #ff007f; cursor: pointer;">
+                            </label>
+                        </div>
+                        <div style="font-size: 0.74rem; color: #cbd5e1; line-height: 1.4;">
+                            Locks down software for commercial bar/venue compliance: shuts down the online YouTube downloader, restricts singer searches solely to imported media, and blocks non-purchased stream tracks from being queued.
+                        </div>
+                    </div>
+
+                    <div style="margin-top: 10px; text-align: center;">
+                        <a href="/legal" target="_blank" rel="noopener noreferrer" style="font-size: 0.74rem; color: var(--neon-cyan); text-decoration: none; font-weight: 600;">
+                            🛒 Need karaoke songs? View Authorized Stores & Venue Rights Guide ↗
+                        </a>
+                    </div>
+                </div>
+
                 <!-- Singer Roster & Mass Queue Removal -->
                 <div style="margin-top: 20px; padding-top: 14px; border-top: 1px solid rgba(255,255,255,0.12);">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
@@ -521,6 +693,11 @@
                     <div style="margin-top: 14px; text-align: center;">
                         <button type="button" onclick="hostPurgeAllSingers()" class="btn-ghost" style="font-size: 0.75rem; color: #ff5555; border-color: rgba(255,85,85,0.3); padding: 6px 12px; border-radius: 8px; cursor: pointer;">
                             ⚠️ Reset Party / Purge All Singers
+                        </button>
+                    </div>
+                    <div style="margin-top: 12px; text-align: center; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 12px;">
+                        <button type="button" onclick="confirmHostServerShutdown()" class="btn-ghost" style="width: 100%; font-size: 0.85rem; color: #ff5555; border-color: rgba(255,85,85,0.4); padding: 10px 14px; border-radius: 10px; cursor: pointer; font-weight: 700;">
+                            🛑 Shut Down Tiki Karaoke App
                         </button>
                     </div>
                 </div>
@@ -556,11 +733,29 @@
                             </button>
                         </div>
                     </div>
+                    <!-- Intermission Vibe Mode Pills -->
+                    <div style="margin-top: 10px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 10px;">
+                        <div style="font-size: 0.8rem; font-weight: 700; color: var(--neon-cyan); margin-bottom: 6px;">INTERMISSION VIBE MODE:</div>
+                        <div style="display: flex; gap: 6px;">
+                            <button type="button" id="vibeModeFillerBtn" onclick="setIntermissionVibeMode('pure_filler')" class="lib-sort-btn" style="flex: 1; font-size: 0.74rem; padding: 6px 4px;">
+                                📼 Pure Filler
+                            </button>
+                            <button type="button" id="vibeModeSingAlongBtn" onclick="setIntermissionVibeMode('sing_along')" class="lib-sort-btn active" style="flex: 1; font-size: 0.74rem; padding: 6px 4px;">
+                                🎤 True Karaoke
+                            </button>
+                            <button type="button" id="vibeModeMashupBtn" onclick="setIntermissionVibeMode('intelligent_mashup')" class="lib-sort-btn" style="flex: 1; font-size: 0.74rem; padding: 6px 4px;">
+                                🧠 Smart Mashup
+                            </button>
+                        </div>
+                        <div id="vibeModeDesc" style="font-size: 0.72rem; color: var(--text-muted); margin-top: 5px; font-style: italic;">
+                            Crowd sing-alongs with lyrics & guide vocals between songs.
+                        </div>
+                    </div>
                 </div>
 
                 <!-- Starter Crate Seed Action -->
                 <div style="margin-bottom: 14px; display: flex; gap: 8px;">
-                    <button type="button" onclick="installStarterCrate()" class="btn-ghost" style="flex: 1; border-color: var(--neon-gold); color: var(--neon-gold); font-size: 0.82rem; padding: 10px; border-radius: 10px;">
+                    <button type="button" id="installStarterBtn" onclick="installStarterCrate(event)" class="btn-ghost" style="flex: 1; border-color: var(--neon-gold); color: var(--neon-gold); font-size: 0.82rem; padding: 10px; border-radius: 10px;">
                         🌴 Install Starter Crate (15 Classics)
                     </button>
                     <button type="button" onclick="switchTab('fillerSearchTab')" class="btn-ghost" style="flex: 1; border-color: var(--neon-cyan); color: var(--neon-cyan); font-size: 0.82rem; padding: 10px; border-radius: 10px;">
@@ -624,13 +819,13 @@
     <nav class="mobile-bottom-nav" id="mobileBottomNav" style="display: flex; flex-direction: column; padding: 0;">
         <!-- Row 1: Singer Navigation -->
         <div style="display: flex; justify-content: space-around; width: 100%; padding: 6px 6px 4px;">
-            <button class="nav-tab-btn active" data-tab="searchTab">
-                <span style="font-size: 1.25rem;">🔍</span>
-                <span>Search</span>
-            </button>
-            <button class="nav-tab-btn" data-tab="libraryTab" onclick="loadLibraryTracks()">
+            <button class="nav-tab-btn active" data-tab="libraryTab" onclick="loadLibraryTracks()">
                 <span style="font-size: 1.25rem;">🌴</span>
                 <span>Library</span>
+            </button>
+            <button class="nav-tab-btn" data-tab="searchTab">
+                <span style="font-size: 1.25rem;">🔍</span>
+                <span>Search</span>
             </button>
             <button class="nav-tab-btn" data-tab="queueTab">
                 <span style="font-size: 1.25rem;">📜</span>
@@ -648,6 +843,10 @@
 
         <!-- Row 2: Host DJ Navigation (Visible only when host authenticated) -->
         <div id="hostNavRow" style="display: none; justify-content: space-around; width: 100%; padding: 4px 6px 8px; border-top: 1px solid rgba(255, 42, 133, 0.35); background: rgba(14, 20, 32, 0.98);">
+            <button class="nav-tab-btn host-tab-btn" onclick="window.open('/legal', '_blank')" style="color: var(--neon-gold);" title="Buy Legal Media & Venue Licensing Guide">
+                <span style="font-size: 1.2rem;">🛒</span>
+                <span>Get Media</span>
+            </button>
             <button class="nav-tab-btn host-tab-btn" data-tab="hostTab" style="color: var(--neon-pink);">
                 <span style="font-size: 1.2rem;">👑</span>
                 <span>Host Desk</span>
@@ -942,6 +1141,6 @@
             }
         }
     </script>
-    <script src="/static/js/mobile-client.js?v=20261019_30s_top_banner"></script>
+    <script src="/static/js/mobile-client.js?v=20261020_byom_paths"></script>
 </body>
 </html>

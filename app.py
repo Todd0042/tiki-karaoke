@@ -1,5 +1,6 @@
 import os
 import io
+import re
 import sys
 import json
 import time
@@ -14,7 +15,7 @@ import tempfile
 import urllib.parse
 import urllib.request
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Callable, Tuple
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, Response, WebSocket, WebSocketDisconnect, HTTPException, Depends
@@ -30,7 +31,8 @@ from config import (
     load_config, save_config, is_configured,
     get_library_dir, get_tracks_dir, get_playlists_dir, get_data_dir,
     get_db_path, get_path_info, ensure_storage_dirs, get_storage_status,
-    get_available_displays, get_available_audio_sinks, get_bundled_binary_path
+    get_available_displays, get_available_audio_sinks, get_available_audio_sources, get_bundled_binary_path,
+    get_default_library_dir, get_default_data_dir
 )
 from database import (
     init_db, get_or_create_singer, get_singer_by_token,
@@ -49,7 +51,8 @@ from database import (
     add_filler_track, get_filler_tracks, get_filler_track_by_id,
     get_filler_track_by_video_id, update_filler_track_status,
     update_filler_track_metadata, delete_filler_track,
-    record_filler_play, get_next_vibe_filler_track, checkout_singer
+    record_filler_play, get_next_vibe_filler_track, checkout_singer,
+    set_track_sing_along, import_local_track, import_local_filler_track
 )
 from search import tiered_search, query_youtube_music_videos
 from downloader import (
@@ -57,6 +60,7 @@ from downloader import (
     filler_downloader_worker, enqueue_filler_download, register_filler_callback
 )
 from metadata import fetch_track_metadata
+from audio_router import audio_router
 from playlist_sync import (
     is_authenticated as is_yt_authenticated,
     get_auth_url, exchange_code, sync_played_song_to_youtube
@@ -197,24 +201,25 @@ async def on_filler_download_finished(filler_id: int, local_path: Optional[str])
 
 register_filler_callback(on_filler_download_finished)
 
-async def trigger_filler_sequence(last_artist: str = "", last_genre: str = "", last_year: int = 0):
+async def trigger_filler_sequence(last_artist: str = "", last_genre: str = "", last_year: int = 0, is_paused: bool = False):
     global filler_active, filler_transition_state, filler_buffer_end, filler_buffer_task, filler_current_track
     if get_setting("bgm_video_enabled", "true") != "true":
         return
 
-    next_track = get_next_vibe_filler_track(last_artist, last_genre, last_year)
+    vibe_mode = get_setting("intermission_vibe_mode", "sing_along")
+    next_track = get_next_vibe_filler_track(last_artist, last_genre, last_year, mode=vibe_mode, is_paused=is_paused)
     if not next_track:
         return
 
     # If queue is empty, start downloaded music video immediately without text countdown
     queue = get_queue()
     pending = [q for q in queue if q["status"] == "pending"]
-    if not pending:
+    if not pending or is_paused:
         filler_active = True
         filler_transition_state = "playing"
         filler_current_track = next_track
         filler_buffer_end = None
-        record_filler_play(next_track["id"])
+        record_filler_play(next_track["id"], is_sing_along=bool(next_track.get("is_sing_along")))
         await manager.broadcast({
             "type": "play_filler_track",
             "track": next_track
@@ -240,12 +245,12 @@ async def trigger_filler_sequence(last_artist: str = "", last_genre: str = "", l
             if filler_active and filler_transition_state == "buffer_15s":
                 queue = get_queue()
                 if not queue:
-                    pick = get_next_vibe_filler_track(last_artist, last_genre, last_year)
+                    pick = get_next_vibe_filler_track(last_artist, last_genre, last_year, mode=vibe_mode, is_paused=is_paused)
                     if pick:
                         filler_current_track = pick
                         filler_transition_state = "playing"
                         filler_buffer_end = None
-                        record_filler_play(pick["id"])
+                        record_filler_play(pick["id"], is_sing_along=bool(pick.get("is_sing_along")))
                         await manager.broadcast({
                             "type": "play_filler_track",
                             "track": pick
@@ -282,11 +287,12 @@ async def on_filler_track_ended():
     else:
         last_artist = filler_current_track.get("artist", "") if filler_current_track else ""
         last_genre = filler_current_track.get("genre", "") if filler_current_track else ""
-        next_track = get_next_vibe_filler_track(last_artist, last_genre)
+        vibe_mode = get_setting("intermission_vibe_mode", "sing_along")
+        next_track = get_next_vibe_filler_track(last_artist, last_genre, mode=vibe_mode, is_paused=False)
         if next_track:
             filler_current_track = next_track
             filler_transition_state = "playing"
-            record_filler_play(next_track["id"])
+            record_filler_play(next_track["id"], is_sing_along=bool(next_track.get("is_sing_along")))
             await manager.broadcast({
                 "type": "play_filler_track",
                 "track": next_track
@@ -332,6 +338,63 @@ async def intermission_watchdog_loop():
         except Exception as e:
             print(f"[Watchdog] Error: {e}")
 
+async def background_metadata_enricher():
+    """
+    Background worker that gently enriches tracks & filler tracks missing genre or release_year.
+    """
+    await asyncio.sleep(4)  # Let server boot and stabilize
+    try:
+        from database import get_db, update_track_metadata, update_filler_track_metadata
+        from metadata import fetch_track_metadata
+
+        conn = get_db()
+        missing_tracks = conn.execute("""
+            SELECT id, title, artist, is_sing_along FROM tracks
+            WHERE (genre = '' OR genre IS NULL OR release_year = 0 OR release_year IS NULL)
+              AND is_downloaded = 1
+            LIMIT 150
+        """).fetchall()
+        missing_tracks = [dict(r) for r in missing_tracks]
+
+        missing_filler = conn.execute("""
+            SELECT id, title, artist FROM filler_tracks
+            WHERE (genre = '' OR genre IS NULL OR release_year = 0 OR release_year IS NULL)
+            LIMIT 150
+        """).fetchall()
+        missing_filler = [dict(r) for r in missing_filler]
+        conn.close()
+
+        loop = asyncio.get_event_loop()
+        updated_count = 0
+
+        for t in missing_tracks:
+            try:
+                meta = await loop.run_in_executor(None, fetch_track_metadata, t["artist"], t["title"])
+                if meta and (meta.get("genre") or meta.get("release_year")):
+                    update_track_metadata(t["id"], genre=meta.get("genre", ""), release_year=meta.get("release_year", 0))
+                    updated_count += 1
+                await asyncio.sleep(0.3)
+            except Exception as e:
+                print(f"[Metadata Enricher] Error for track {t.get('id')}: {e}")
+
+        for f in missing_filler:
+            try:
+                meta = await loop.run_in_executor(None, fetch_track_metadata, f["artist"], f["title"])
+                if meta and (meta.get("genre") or meta.get("release_year")):
+                    update_filler_track_metadata(f["id"], genre=meta.get("genre", "Pop"), release_year=meta.get("release_year", 0))
+                    updated_count += 1
+                await asyncio.sleep(0.3)
+            except Exception as e:
+                print(f"[Metadata Enricher] Error for filler {f.get('id')}: {e}")
+
+        if updated_count > 0:
+            print(f"[Metadata Enricher] Auto-enriched metadata for {updated_count} tracks.")
+            await manager.broadcast({"type": "library_updated"})
+    except asyncio.CancelledError:
+        pass
+    except Exception as e:
+        print(f"[Metadata Enricher] Task exception: {e}")
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
@@ -339,6 +402,7 @@ async def lifespan(app: FastAPI):
     worker_task = asyncio.create_task(downloader_worker())
     filler_worker_task = asyncio.create_task(filler_downloader_worker())
     watchdog_task = asyncio.create_task(intermission_watchdog_loop())
+    enricher_task = asyncio.create_task(background_metadata_enricher())
     print("=" * 60)
     print("🌴 TIKI KARAOKE LOUNGE 🌴")
     print(f"👉 TV Main Stage Display: {get_base_url()}/stage")
@@ -350,6 +414,7 @@ async def lifespan(app: FastAPI):
     worker_task.cancel()
     filler_worker_task.cancel()
     watchdog_task.cancel()
+    enricher_task.cancel()
 
 app = FastAPI(title="Tiki Karaoke", lifespan=lifespan)
 
@@ -364,6 +429,16 @@ async def add_no_cache_headers(request: Request, call_next):
 
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    icon_path = STATIC_DIR / "favicon.ico"
+    if icon_path.exists():
+        return FileResponse(icon_path, media_type="image/x-icon")
+    svg_path = STATIC_DIR / "tiki-icon.svg"
+    if svg_path.exists():
+        return FileResponse(svg_path, media_type="image/svg+xml")
+    return Response(status_code=204)
 
 # Request Models
 class SingerRegisterRequest(BaseModel):
@@ -380,6 +455,7 @@ class QueueSongRequest(BaseModel):
     duet_partner: str = ""
     pitch_shift: int = 0
     force: bool = False
+    is_sing_along: bool = False
 
 class JoinDuetRequest(BaseModel):
     singer_token: str
@@ -470,7 +546,8 @@ async def setup_page(request: Request):
         "default_library_dir": str(get_library_dir()),
         "default_data_dir": str(get_data_dir()),
         "displays": get_available_displays(),
-        "audio_sinks": get_available_audio_sinks()
+        "audio_sinks": get_available_audio_sinks(),
+        "audio_sources": get_available_audio_sources()
     })
 
 @app.get("/api/setup/displays")
@@ -484,6 +561,12 @@ async def api_get_setup_audio_devices(request: Request):
     if is_configured() and not (is_host_request(request) or is_local_request(request)):
         raise HTTPException(status_code=403, detail="Host DJ authorization required")
     return get_available_audio_sinks()
+
+@app.get("/api/setup/audio-inputs")
+async def api_get_setup_audio_inputs(request: Request):
+    if is_configured() and not (is_host_request(request) or is_local_request(request)):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
+    return get_available_audio_sources()
 
 @app.get("/stage/identify", response_class=HTMLResponse)
 async def stage_identify_page(request: Request, id: int = 0, name: str = "Display", role: str = "stage"):
@@ -899,11 +982,11 @@ async def stage_page(request: Request, token: str = ""):
 
 @app.get("/host")
 async def host_pair_route(request: Request, token: str = ""):
-    if token and token == HOST_TOKEN:
-        response = RedirectResponse(url="/")
+    if (token and token == HOST_TOKEN) or is_host_request(request) or is_local_request(request):
+        response = RedirectResponse(url="/?tab=host")
         response.set_cookie("tiki_host", HOST_TOKEN, max_age=86400 * 7, httponly=False)
         return response
-    return HTMLResponse("<h3>Invalid Host Token!</h3><p>Scan the Host QR code from the main TV screen.</p>", status_code=403)
+    return HTMLResponse("<h3>Invalid Host Token!</h3><p>Scan the Host QR code from the main TV screen or enter the Host PIN on the singer screen.</p>", status_code=403)
 
 @app.get("/host/print-tents")
 async def print_table_tents(request: Request):
@@ -919,6 +1002,20 @@ async def print_table_tents(request: Request):
             "bar_name": bar_name,
             "base_url": get_base_url(),
             "join_url": f"{get_base_url()}/join"
+        }
+    )
+
+@app.get("/legal", response_class=HTMLResponse)
+async def legal_guide_page(request: Request):
+    cfg = load_config()
+    default_bar = cfg.get("bar_name") or BAR_NAME or "The Tiki Hut Karaoke Lounge"
+    bar_name = get_setting("bar_name", default_bar)
+    return templates.TemplateResponse(
+        request=request,
+        name="legal.html",
+        context={
+            "bar_name": bar_name,
+            "base_url": get_base_url()
         }
     )
 
@@ -954,7 +1051,9 @@ async def stream_local_video(track_id: int):
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="File missing on disk")
 
-    return FileResponse(file_path, media_type="video/mp4")
+    import mimetypes
+    mime, _ = mimetypes.guess_type(file_path)
+    return FileResponse(file_path, media_type=mime or "video/mp4")
 
 @app.get("/stream/filler/{filler_id}")
 async def stream_filler_video(filler_id: int):
@@ -972,7 +1071,7 @@ async def stream_filler_video(filler_id: int):
 search_requests_by_ip: Dict[str, List[float]] = {}
 
 @app.get("/api/search")
-async def api_search(request: Request, q: str = "", force_online: bool = False):
+async def api_search(request: Request, q: str = "", force_online: bool = False, sing_along: bool = False, page: int = 1):
     if not is_host_request(request):
         client_ip = request.client.host if request.client else "unknown"
         now = time.time()
@@ -986,7 +1085,7 @@ async def api_search(request: Request, q: str = "", force_online: bool = False):
         attempts.append(now)
         search_requests_by_ip[client_ip] = attempts
 
-    return tiered_search(q, force_online=force_online)
+    return tiered_search(q, force_online=force_online, sing_along=sing_along, page=page)
 
 # Library Browsing API
 @app.get("/api/library")
@@ -995,10 +1094,11 @@ async def api_get_library(
     limit: int = 25,
     sort: str = "popularity",
     artist: str = "",
-    q: str = ""
+    q: str = "",
+    sing_along: bool = False
 ):
-    data = get_browsable_tracks(page=page, limit=limit, sort=sort, artist=artist, search=q)
-    data["artists"] = get_unique_downloaded_artists()
+    data = get_browsable_tracks(page=page, limit=limit, sort=sort, artist=artist, search=q, sing_along=sing_along)
+    data["artists"] = get_unique_downloaded_artists(sing_along=sing_along)
     return data
 
 # Storage Management API
@@ -1217,6 +1317,21 @@ async def api_enqueue_song(req: QueueSongRequest, request: Request):
                 }
             )
 
+    # Strict Commercial / BYOM Mode Lockdown: Reject non-imported tracks
+    if get_setting("strict_byom_only", "false") == "true":
+        track_obj = get_track_by_id(req.track_id) if req.track_id else (get_track_by_video_id(req.video_id) if req.video_id else None)
+        is_imported = False
+        if track_obj:
+            is_imported = (track_obj.get("media_source") == "imported") or str(track_obj.get("video_id", "")).startswith("local_")
+        elif req.video_id and req.video_id.startswith("local_"):
+            is_imported = True
+
+        if not is_imported:
+            raise HTTPException(
+                status_code=403,
+                detail="🔒 Strict Commercial Mode Active: Online downloads and unpurchased tracks are disabled by the Host DJ. Only legally imported tracks in the venue library can be queued."
+            )
+
     # Ensure track is in DB
     track_id = req.track_id
     if not track_id:
@@ -1224,8 +1339,11 @@ async def api_enqueue_song(req: QueueSongRequest, request: Request):
             video_id=req.video_id,
             title=req.title,
             artist=req.artist,
-            original_title=f"{req.artist} - {req.title}"
+            original_title=f"{req.artist} - {req.title}",
+            is_sing_along=req.is_sing_along
         )
+    elif req.is_sing_along:
+        set_track_sing_along(track_id, True)
 
     queue_id = enqueue_song(
         track_id=track_id,
@@ -1495,6 +1613,10 @@ async def api_update_settings(settings: Dict[str, str], request: Request):
         set_setting(k, str(v))
     return {"status": "ok"}
 
+@app.get("/api/host/mic-state")
+async def api_get_host_mic_state():
+    return JSONResponse(audio_router.get_state())
+
 @app.get("/api/bgm-tracks")
 async def api_get_bgm_tracks():
     bgm_dir = STATIC_DIR / "bgm"
@@ -1573,7 +1695,7 @@ async def host_stop_action(request: Request):
     await manager.broadcast({"type": "queue_updated", "queue": queue})
 
     if get_setting("bgm_video_enabled", "true") == "true":
-        await trigger_filler_sequence()
+        await trigger_filler_sequence(is_paused=True)
 
     return {"status": "ok"}
 
@@ -1700,10 +1822,13 @@ async def api_install_starter_crate(request: Request):
     from scripts.seed_filler_crate import STARTER_FILLER_TRACKS
     existing = {t["video_id"]: t for t in get_filler_tracks()}
     added = []
+    requeued = []
     for track in STARTER_FILLER_TRACKS:
         vid = track["video_id"]
-        if vid in existing:
+        ex = existing.get(vid)
+        if ex and ex.get("is_downloaded") and ex.get("local_path") and Path(ex["local_path"]).exists():
             continue
+
         tid = add_filler_track(
             video_id=vid,
             title=track["title"],
@@ -1713,13 +1838,147 @@ async def api_install_starter_crate(request: Request):
             genre=track["genre"],
             release_year=track["release_year"]
         )
+        update_filler_track_status(tid, "pending", error_message="")
         enqueue_filler_download(tid)
-        added.append(track)
+        if ex:
+            requeued.append(track)
+        else:
+            added.append(track)
+
     await manager.broadcast({
         "type": "filler_tracks_updated",
         "tracks": get_filler_tracks()
     })
-    return {"status": "ok", "added_count": len(added), "tracks": added}
+    total_queued = len(added) + len(requeued)
+    return {
+        "status": "ok",
+        "added_count": len(added),
+        "requeued_count": len(requeued),
+        "total_queued": total_queued,
+        "tracks": added + requeued
+    }
+
+def parse_karaoke_filename(filename: str) -> Tuple[str, str]:
+    stem = Path(filename).stem
+    cleaned = re.sub(r'[\(\[\{]\s*(?:karaoke|instrumental|lyrics|karaoke version|sing-along)\s*[\)\]\}]', '', stem, flags=re.IGNORECASE).strip()
+    cleaned = re.sub(r'^\d+[\s\.\-_]+', '', cleaned).strip()
+    for delim in (' - ', ' _ ', ' – ', ' — ', ' ~ '):
+        if delim in cleaned:
+            parts = cleaned.split(delim, 1)
+            artist = parts[0].strip()
+            title = parts[1].strip()
+            if artist and title:
+                return artist, title
+    return "Karaoke Track", cleaned or stem
+
+def get_local_media_duration(file_path: str) -> int:
+    ffprobe_bin = "ffprobe" if shutil.which("ffprobe") else str(get_bundled_binary_path("ffprobe"))
+    if not (shutil.which("ffprobe") or os.path.exists(ffprobe_bin)):
+        return 210
+    try:
+        cmd = [
+            ffprobe_bin, "-v", "error", "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1", file_path
+        ]
+        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=5)
+        return int(float(res.stdout.strip()))
+    except Exception:
+        return 210
+
+@app.get("/api/host/default-paths")
+async def api_get_default_paths(request: Request):
+    if not (is_host_request(request) or is_local_request(request)):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
+    
+    lib_dir = get_library_dir()
+    default_lib = get_default_library_dir()
+    karaoke_parent = default_lib.parent
+    data_dir = get_data_dir()
+    
+    return {
+        "status": "ok",
+        "current_library_dir": str(lib_dir),
+        "default_music_dir": str(default_lib),
+        "user_karaoke_parent": str(karaoke_parent),
+        "db_dir": str(data_dir),
+        "is_windows": sys.platform == "win32"
+    }
+
+class ImportLocalMediaRequest(BaseModel):
+    folder_path: str
+    recursive: bool = True
+    is_sing_along: bool = False
+    target_destination: str = "karaoke"  # "karaoke", "sing_along", "filler"
+
+@app.post("/api/host/import-local-library")
+async def api_import_local_library(payload: ImportLocalMediaRequest, request: Request):
+    if not (is_host_request(request) or is_local_request(request)):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
+
+    folder_str = payload.folder_path.strip()
+    if not folder_str:
+        raise HTTPException(status_code=400, detail="Folder path cannot be empty")
+
+    folder = Path(folder_str).expanduser().resolve()
+    if not folder.exists() or not folder.is_dir():
+        raise HTTPException(status_code=400, detail=f"Directory does not exist or is not a folder: {folder_str}")
+
+    VALID_EXTS = {".mp4", ".mkv", ".webm", ".avi", ".mov", ".m4v"}
+    if payload.recursive:
+        candidate_files = [p for p in folder.rglob("*") if p.is_file() and p.suffix.lower() in VALID_EXTS]
+    else:
+        candidate_files = [p for p in folder.glob("*") if p.is_file() and p.suffix.lower() in VALID_EXTS]
+
+    if not candidate_files:
+        return {
+            "status": "ok",
+            "imported_count": 0,
+            "total_found": 0,
+            "message": "No supported video karaoke files found in folder (.mp4, .mkv, .webm, .avi)"
+        }
+
+    imported = []
+    is_filler = (payload.target_destination == "filler")
+    is_sa = payload.is_sing_along or (payload.target_destination == "sing_along")
+
+    for f in candidate_files:
+        artist, title = parse_karaoke_filename(f.name)
+        dur = get_local_media_duration(str(f))
+        try:
+            if is_filler:
+                fid = import_local_filler_track(
+                    file_path=str(f),
+                    title=title,
+                    artist=artist,
+                    duration=dur
+                )
+                imported.append({"id": fid, "title": title, "artist": artist, "file": f.name, "type": "filler"})
+            else:
+                tid = import_local_track(
+                    file_path=str(f),
+                    title=title,
+                    artist=artist,
+                    duration=dur,
+                    is_sing_along=is_sa
+                )
+                imported.append({"id": tid, "title": title, "artist": artist, "file": f.name, "type": "sing_along" if is_sa else "karaoke"})
+        except Exception as e:
+            print(f"[Import] Error importing {f.name}: {e}")
+
+    if is_filler:
+        await manager.broadcast({"type": "filler_tracks_updated"})
+    else:
+        await manager.broadcast({"type": "library_updated"})
+
+    dest_label = "intermission filler crate" if is_filler else ("sing-along library" if is_sa else "local karaoke library")
+    return {
+        "status": "ok",
+        "imported_count": len(imported),
+        "total_found": len(candidate_files),
+        "target_destination": payload.target_destination,
+        "message": f"Successfully imported {len(imported)} media tracks into {dest_label}!",
+        "tracks": imported[:50]
+    }
 
 @app.post("/api/host/filler/import-from-song/{track_id}")
 async def api_import_filler_from_song(track_id: int, request: Request):
@@ -1776,6 +2035,7 @@ async def api_get_filler_settings(request: Request):
         "bgm_transition_policy": get_setting("bgm_transition_policy", "fade"),
         "bgm_video_enabled": get_setting("bgm_video_enabled", "true") == "true",
         "bgm_mode": get_setting("bgm_mode", "vibe"),
+        "intermission_vibe_mode": get_setting("intermission_vibe_mode", "sing_along"),
         "bgm_buffer_seconds": int(get_setting("bgm_buffer_seconds", "15"))
     }
 
@@ -1790,6 +2050,8 @@ async def api_update_filler_settings(request: Request):
         set_setting("bgm_video_enabled", "true" if payload["bgm_video_enabled"] else "false")
     if "bgm_mode" in payload:
         set_setting("bgm_mode", str(payload["bgm_mode"]))
+    if "intermission_vibe_mode" in payload:
+        set_setting("intermission_vibe_mode", str(payload["intermission_vibe_mode"]))
     if "bgm_buffer_seconds" in payload:
         set_setting("bgm_buffer_seconds", str(payload["bgm_buffer_seconds"]))
 
@@ -1799,10 +2061,41 @@ async def api_update_filler_settings(request: Request):
             "bgm_transition_policy": get_setting("bgm_transition_policy", "fade"),
             "bgm_video_enabled": get_setting("bgm_video_enabled", "true") == "true",
             "bgm_mode": get_setting("bgm_mode", "vibe"),
+            "intermission_vibe_mode": get_setting("intermission_vibe_mode", "sing_along"),
             "bgm_buffer_seconds": int(get_setting("bgm_buffer_seconds", "15"))
         }
     })
     return {"status": "ok"}
+
+@app.get("/api/host/strict-mode")
+async def api_get_host_strict_mode(request: Request):
+    if not is_host_request(request):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
+    return {
+        "status": "ok",
+        "strict_byom_only": get_setting("strict_byom_only", "false") == "true"
+    }
+
+@app.post("/api/host/strict-mode")
+async def api_set_host_strict_mode(request: Request):
+    if not is_host_request(request):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
+    payload = await request.json()
+    enabled = bool(payload.get("enabled", False))
+    val = "true" if enabled else "false"
+    set_setting("strict_byom_only", val)
+    await manager.broadcast({
+        "type": "strict_mode_updated",
+        "strict_byom_only": enabled
+    })
+    return {"status": "ok", "strict_byom_only": enabled}
+
+@app.post("/api/host/metadata/refresh")
+async def api_refresh_metadata(request: Request):
+    if not is_host_request(request):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
+    asyncio.create_task(background_metadata_enricher())
+    return {"status": "ok", "message": "Metadata enrichment background task started"}
 
 @app.post("/api/host/toggle-pause")
 async def host_pause_action(request: Request):
@@ -2061,6 +2354,35 @@ async def host_set_av_sync(payload: AVSyncPayload, request: Request):
     })
     return {"status": "ok", "offset_ms": offset_ms}
 
+shutdown_trigger_callback: Optional[Callable] = None
+
+def register_shutdown_trigger(cb: Callable):
+    global shutdown_trigger_callback
+    shutdown_trigger_callback = cb
+
+@app.post("/api/host/shutdown")
+async def host_shutdown_action(request: Request):
+    if not (is_host_request(request) or is_local_request(request)):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
+    
+    await manager.broadcast({
+        "type": "server_shutting_down",
+        "message": "Host initiated server shutdown. Aloha! 🌺"
+    })
+    
+    def _delayed_exit():
+        time.sleep(0.6)
+        if shutdown_trigger_callback:
+            shutdown_trigger_callback()
+        else:
+            try:
+                os.kill(os.getpid(), signal.SIGTERM)
+            except Exception:
+                sys.exit(0)
+
+    threading.Thread(target=_delayed_exit, daemon=True).start()
+    return {"status": "ok", "message": "Tiki Karaoke is shutting down cleanly..."}
+
 @app.post("/api/stage/notify-on-deck")
 async def api_notify_on_deck(queue_id: int):
     queue = get_queue()
@@ -2168,6 +2490,15 @@ async def websocket_endpoint(websocket: WebSocket):
                         "type": "emoji_reaction",
                         "emoji": data.get("emoji", "🌺")
                     })
+            elif msg_type == "singer_joined":
+                name = str(data.get("name", "Guest Singer")).strip()
+                avatar = str(data.get("avatar", "🌴")).strip()
+                if name:
+                    await manager.broadcast({
+                        "type": "singer_joined",
+                        "name": name,
+                        "avatar": avatar
+                    })
             elif msg_type == "soundboard_play":
                 if websocket in manager.host_connections:
                     await manager.broadcast({
@@ -2186,6 +2517,29 @@ async def websocket_endpoint(websocket: WebSocket):
                         "type": "pitch_change",
                         "pitch": data.get("pitch", 0)
                     })
+            elif msg_type == "host_mic_settings":
+                if websocket in manager.host_connections:
+                    muted = data.get("muted")
+                    volume = data.get("volume")
+                    device = data.get("device")
+                    if muted is not None:
+                        audio_router.set_muted(bool(muted))
+                    if volume is not None:
+                        audio_router.set_volume(int(volume))
+                    if device is not None and str(device).strip():
+                        audio_router.set_device(str(device).strip())
+
+                    st = audio_router.get_state()
+                    msg = {
+                        "type": "host_mic_settings",
+                        "volume": st["volume"],
+                        "muted": st["muted"],
+                        "device": st["device"],
+                        "reverb": data.get("reverb", False),
+                        "ducking_enabled": data.get("ducking_enabled", True),
+                        "ducking_db": data.get("ducking_db", -6)
+                    }
+                    await manager.broadcast(msg)
     except WebSocketDisconnect:
         manager.disconnect(websocket)
         await manager.broadcast({

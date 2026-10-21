@@ -6,10 +6,14 @@ from pathlib import Path
 from typing import Optional, Callable
 import yt_dlp
 
-from config import get_tracks_dir, get_playlists_dir, get_filler_dir, TRACKS_DIR, PLAYLISTS_DIR, TARGET_LUFS, load_config, get_bundled_binary_path
+from config import (
+    get_tracks_dir, get_playlists_dir, get_filler_dir, get_sing_along_dir,
+    TRACKS_DIR, PLAYLISTS_DIR, TARGET_LUFS, load_config, get_bundled_binary_path
+)
 from database import (
     get_track_by_id, update_track_download_status,
-    get_filler_track_by_id, update_filler_track_status, update_filler_track_metadata
+    get_filler_track_by_id, update_filler_track_status, update_filler_track_metadata,
+    get_setting
 )
 from metadata import fetch_track_metadata
 
@@ -66,6 +70,10 @@ def download_and_normalize_track(track_id: int) -> Optional[str]:
     if track["is_downloaded"] and track["local_path"] and Path(track["local_path"]).exists():
         return track["local_path"]
 
+    if get_setting("strict_byom_only", "false") == "true":
+        print(f"[Downloader] Strict Commercial / BYOM mode active: refusing download for track_id={track_id}")
+        return None
+
     if track.get("duration") and track["duration"] > 600:
         print(f"[Downloader] Track {video_id} duration {track['duration']}s exceeds 600s limit. Aborting download.")
         update_track_download_status(track_id, "failed")
@@ -75,7 +83,8 @@ def download_and_normalize_track(track_id: int) -> Optional[str]:
 
     artist_clean = sanitize_filename(track["artist"])
     title_clean = sanitize_filename(track["title"])
-    artist_dir = get_tracks_dir() / artist_clean
+    base_tracks_dir = get_sing_along_dir() if track.get("is_sing_along") else get_tracks_dir()
+    artist_dir = base_tracks_dir / artist_clean
     artist_dir.mkdir(parents=True, exist_ok=True)
 
     temp_path = artist_dir / f"temp_{video_id}.mp4"
@@ -175,6 +184,9 @@ async def downloader_worker():
             download_queue.task_done()
 
 def enqueue_download(track_id: int, singer_name: str = "", title: str = "", artist: str = ""):
+    if get_setting("strict_byom_only", "false") == "true":
+        print(f"[Downloader] Strict Commercial / BYOM mode active: skipping download enqueue for track_id={track_id}")
+        return
     download_queue.put_nowait({
         "track_id": track_id,
         "singer_name": singer_name,

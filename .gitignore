@@ -49,3 +49,8 @@ Thumbs.db
 # User analytics and traffic snapshots
 traffic_stats*.json
 screenshots/
+
+# Packaging folder (commercial build scripts live in sibling repo)
+packaging/
+# Research & design notes
+VOCAL_AUTOTUNE_RESEARCH.md

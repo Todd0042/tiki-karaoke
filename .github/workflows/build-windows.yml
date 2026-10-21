@@ -1,0 +1,57 @@
+name: Build Windows Commercial Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version tag (e.g. 1.0.0)'
+        required: true
+        default: '1.0.0'
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install pyinstaller
+
+      - name: Stage Windows 64-bit Binaries (FFmpeg, Cloudflared, Bore)
+        run: |
+          python packaging/windows/fetch_windows_binaries.py packaging/windows/bin
+
+      - name: Build Executable with PyInstaller
+        run: |
+          pyinstaller --clean -y packaging/windows/tiki_karaoke.spec --distpath packaging/windows/dist --workpath packaging/windows/build
+
+      - name: Compile Inno Setup Installer
+        run: |
+          iscc packaging/windows/installer.iss
+
+      - name: Create Portable Zip Package
+        run: |
+          Compress-Archive -Path packaging/windows/dist/TikiKaraoke/* -DestinationPath packaging/windows/dist/TikiKaraoke-Windows-v${{ github.event.inputs.version }}-Portable.zip -Force
+
+      - name: Upload Installer Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TikiKaraoke-Setup-v${{ github.event.inputs.version }}
+          path: packaging/windows/dist_installer/*.exe
+
+      - name: Upload Portable Zip Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TikiKaraoke-Portable-v${{ github.event.inputs.version }}
+          path: packaging/windows/dist/*.zip

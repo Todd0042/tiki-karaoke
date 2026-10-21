@@ -2,13 +2,18 @@ import sqlite3
 import datetime
 from pathlib import Path
 from typing import List, Dict, Any, Optional
+import hashlib
 from config import get_db_path, get_data_dir, ensure_storage_dirs, DB_PATH
 
 def get_db():
     ensure_storage_dirs()
     conn = sqlite3.connect(get_db_path(), timeout=15.0)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+    except sqlite3.OperationalError:
+        # Fallback for network file shares (SMB/UNC) which do not support WAL shared memory locking
+        conn.execute("PRAGMA journal_mode=TRUNCATE")
     conn.execute("PRAGMA foreign_keys=ON")
     return conn
 
@@ -142,15 +147,54 @@ def init_db():
         INSERT OR IGNORE INTO settings (key, value) VALUES ('bgm_buffer_seconds', '15');
         INSERT OR IGNORE INTO settings (key, value) VALUES ('host_display_enabled', 'false');
         INSERT OR IGNORE INTO settings (key, value) VALUES ('host_display', '1');
-        INSERT OR IGNORE INTO settings (key, value) VALUES ('host_kiosk_mode', 'false');
+        INSERT OR IGNORE INTO settings (key, value) VALUES ('intermission_vibe_mode', 'sing_along');
+        INSERT OR IGNORE INTO settings (key, value) VALUES ('strict_byom_only', 'true');
         """)
 
-        # Ensure play_count and last_played exist on existing databases
+        # Ensure play_count, last_played, is_sing_along, genre, release_year, and media_source exist on tracks
         cols = [r["name"] for r in conn.execute("PRAGMA table_info(tracks)").fetchall()]
         if "play_count" not in cols:
             conn.execute("ALTER TABLE tracks ADD COLUMN play_count INTEGER DEFAULT 0")
         if "last_played" not in cols:
             conn.execute("ALTER TABLE tracks ADD COLUMN last_played TIMESTAMP")
+        if "is_sing_along" not in cols:
+            conn.execute("ALTER TABLE tracks ADD COLUMN is_sing_along INTEGER DEFAULT 0")
+        if "genre" not in cols:
+            conn.execute("ALTER TABLE tracks ADD COLUMN genre TEXT DEFAULT ''")
+        if "release_year" not in cols:
+            conn.execute("ALTER TABLE tracks ADD COLUMN release_year INTEGER DEFAULT 0")
+        if "media_source" not in cols:
+            conn.execute("ALTER TABLE tracks ADD COLUMN media_source TEXT DEFAULT 'youtube'")
+
+        # Ensure media_source exists on filler_tracks
+        cols_filler = [r["name"] for r in conn.execute("PRAGMA table_info(filler_tracks)").fetchall()]
+        if "media_source" not in cols_filler:
+            conn.execute("ALTER TABLE filler_tracks ADD COLUMN media_source TEXT DEFAULT 'youtube'")
+
+        # Auto-migration for media_source tagging:
+        # Imported BYOM files have video_id LIKE 'local_%'; all others are assumed YouTube
+        conn.execute("""
+            UPDATE tracks 
+            SET media_source = 'imported' 
+            WHERE video_id LIKE 'local_%';
+        """)
+        conn.execute("""
+            UPDATE tracks 
+            SET media_source = 'youtube' 
+            WHERE video_id NOT LIKE 'local_%' 
+              AND (media_source IS NULL OR media_source = '' OR media_source = 'stream');
+        """)
+        conn.execute("""
+            UPDATE filler_tracks 
+            SET media_source = 'imported' 
+            WHERE video_id LIKE 'local_%';
+        """)
+        conn.execute("""
+            UPDATE filler_tracks 
+            SET media_source = 'youtube' 
+            WHERE video_id NOT LIKE 'local_%' 
+              AND (media_source IS NULL OR media_source = '' OR media_source = 'stream');
+        """)
 
         # Backfill play counts and last_played from history if present
         conn.execute("""
@@ -173,6 +217,7 @@ def init_db():
         """)
 
         conn.execute("CREATE INDEX IF NOT EXISTS idx_tracks_library ON tracks(is_downloaded, play_count, last_played)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_tracks_sing_along ON tracks(is_sing_along, is_downloaded)")
     conn.close()
 
 # Session Tracking & Singer Operations
@@ -395,7 +440,8 @@ def get_singers_with_queue() -> List[Dict[str, Any]]:
                 t.id as track_id,
                 t.title,
                 t.artist,
-                t.duration
+                t.duration,
+                coalesce(t.is_sing_along, 0) as is_sing_along
             FROM queue q
             JOIN tracks t ON q.track_id = t.id
             WHERE q.singer_id = ? AND q.status IN ('pending', 'playing')
@@ -447,19 +493,23 @@ def purge_all_singers(include_history: bool = True) -> Dict[str, int]:
     return {"singers_deleted": s_cnt, "queue_deleted": q_cnt, "history_deleted": h_cnt}
 
 # Track Operations
-def save_track(video_id: str, title: str, artist: str, original_title: str, channel: str = "", duration: int = 0) -> int:
+def save_track(video_id: str, title: str, artist: str, original_title: str, channel: str = "", duration: int = 0, is_sing_along: bool = False, media_source: str = "youtube") -> int:
     conn = get_db()
+    if video_id.startswith("local_") and media_source == "youtube":
+        media_source = "imported"
     with conn:
         cursor = conn.execute("""
-            INSERT INTO tracks (video_id, title, artist, original_title, channel, duration)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO tracks (video_id, title, artist, original_title, channel, duration, is_sing_along, media_source)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(video_id) DO UPDATE SET
                 title = CASE WHEN tracks.is_downloaded = 1 THEN tracks.title ELSE excluded.title END,
                 artist = CASE WHEN tracks.is_downloaded = 1 THEN tracks.artist ELSE excluded.artist END,
                 original_title = excluded.original_title,
                 channel = excluded.channel,
-                duration = CASE WHEN excluded.duration > 0 THEN excluded.duration ELSE tracks.duration END
-        """, (video_id, title, artist, original_title, channel, duration))
+                duration = CASE WHEN excluded.duration > 0 THEN excluded.duration ELSE tracks.duration END,
+                is_sing_along = CASE WHEN excluded.is_sing_along = 1 THEN 1 ELSE tracks.is_sing_along END,
+                media_source = CASE WHEN tracks.media_source = 'imported' THEN 'imported' ELSE excluded.media_source END
+        """, (video_id, title, artist, original_title, channel, duration, 1 if is_sing_along else 0, media_source))
         
         cursor = conn.execute("SELECT id FROM tracks WHERE video_id = ?", (video_id,))
         track_id = cursor.fetchone()["id"]
@@ -494,33 +544,79 @@ def update_track_download_status(track_id: int, status: str, local_path: str = "
         """, (status, is_dl, local_path, local_path, normalized_lufs, track_id))
     conn.close()
 
-def search_local_tracks(query: str, limit: int = 25) -> List[Dict[str, Any]]:
+def set_track_sing_along(track_id: int, is_sing_along: bool = True):
     conn = get_db()
+    with conn:
+        conn.execute("UPDATE tracks SET is_sing_along = ? WHERE id = ?", (1 if is_sing_along else 0, track_id))
+    conn.close()
+
+def update_track_metadata(track_id: int, genre: str = "", release_year: int = 0):
+    conn = get_db()
+    with conn:
+        conn.execute("""
+            UPDATE tracks
+            SET genre = CASE WHEN ? != '' THEN ? ELSE genre END,
+                release_year = CASE WHEN ? > 0 THEN ? ELSE release_year END
+            WHERE id = ?
+        """, (genre, genre, release_year, release_year, track_id))
+    conn.close()
+
+def import_local_track(
+    file_path: str,
+    title: str,
+    artist: str,
+    duration: int = 0,
+    is_sing_along: bool = False
+) -> int:
+    """Imports an existing local video or karaoke track into the Tiki library."""
+    resolved = str(Path(file_path).resolve())
+    vid = f"local_{hashlib.sha256(resolved.encode()).hexdigest()[:12]}"
+    track_id = save_track(
+        video_id=vid,
+        title=title,
+        artist=artist,
+        original_title=Path(file_path).name,
+        channel="Local Library",
+        duration=duration,
+        is_sing_along=is_sing_along,
+        media_source="imported"
+    )
+    update_track_download_status(track_id, status="ready", local_path=resolved, normalized_lufs=-16.0)
+    return track_id
+
+def search_local_tracks(query: str, limit: int = 25, sing_along_only: bool = False) -> List[Dict[str, Any]]:
+    conn = get_db()
+    target_sa = 1 if sing_along_only else 0
     clean_q = "".join(c for c in query if c.isalnum() or c.isspace()).strip()
+
+    strict_byom = get_setting("strict_byom_only", "false") == "true"
+    strict_filter_simple = " AND (media_source = 'imported' OR video_id LIKE 'local_%')" if strict_byom else ""
+    strict_filter_joined = " AND (t.media_source = 'imported' OR t.video_id LIKE 'local_%')" if strict_byom else ""
+
     if not clean_q:
-        cursor = conn.execute("SELECT * FROM tracks WHERE is_downloaded = 1 ORDER BY id DESC LIMIT ?", (limit,))
+        cursor = conn.execute(f"SELECT * FROM tracks WHERE is_downloaded = 1 AND coalesce(is_sing_along, 0) = ?{strict_filter_simple} ORDER BY id DESC LIMIT ?", (target_sa, limit))
         rows = cursor.fetchall()
         conn.close()
         return [dict(r) for r in rows]
 
     fts_query = f'"{clean_q}"* OR ' + " ".join(f'"{word}"*' for word in clean_q.split())
     try:
-        cursor = conn.execute("""
+        cursor = conn.execute(f"""
             SELECT t.*, rank
             FROM tracks t
             JOIN tracks_fts f ON t.id = f.rowid
-            WHERE tracks_fts MATCH ? AND t.is_downloaded = 1
+            WHERE tracks_fts MATCH ? AND t.is_downloaded = 1 AND coalesce(t.is_sing_along, 0) = ?{strict_filter_joined}
             ORDER BY rank
             LIMIT ?
-        """, (fts_query, limit))
+        """, (fts_query, target_sa, limit))
         rows = cursor.fetchall()
     except sqlite3.OperationalError:
         like_str = f"%{clean_q}%"
-        cursor = conn.execute("""
+        cursor = conn.execute(f"""
             SELECT * FROM tracks
-            WHERE is_downloaded = 1 AND (title LIKE ? OR artist LIKE ? OR original_title LIKE ?)
+            WHERE is_downloaded = 1 AND coalesce(is_sing_along, 0) = ?{strict_filter_simple} AND (title LIKE ? OR artist LIKE ? OR original_title LIKE ?)
             LIMIT ?
-        """, (like_str, like_str, like_str, limit))
+        """, (target_sa, like_str, like_str, like_str, limit))
         rows = cursor.fetchall()
 
     conn.close()
@@ -685,6 +781,7 @@ def get_queue() -> List[Dict[str, Any]]:
             t.is_downloaded,
             t.local_path,
             t.download_status,
+            coalesce(t.is_sing_along, 0) as is_sing_along,
             s.id as singer_id,
             s.name as singer_name,
             s.avatar as singer_avatar
@@ -723,6 +820,7 @@ def get_current_playing() -> Optional[Dict[str, Any]]:
             t.duration,
             t.is_downloaded,
             t.local_path,
+            coalesce(t.is_sing_along, 0) as is_sing_along,
             s.name as singer_name,
             s.avatar as singer_avatar
         FROM queue q
@@ -738,7 +836,11 @@ def get_current_playing() -> Optional[Dict[str, Any]]:
     data = dict(row)
     if data.get("played_at"):
         try:
-            played_dt = datetime.datetime.strptime(data["played_at"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=datetime.timezone.utc)
+            ts_str = str(data["played_at"]).replace("Z", "+00:00")
+            if "T" in ts_str:
+                played_dt = datetime.datetime.fromisoformat(ts_str)
+            else:
+                played_dt = datetime.datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=datetime.timezone.utc)
             now_dt = datetime.datetime.now(datetime.timezone.utc)
             data["elapsed_seconds"] = max(0.0, (now_dt - played_dt).total_seconds())
         except Exception:
@@ -764,8 +866,9 @@ def set_queue_status(queue_id: int, status: str):
                         last_played = CURRENT_TIMESTAMP
                     WHERE id = ?
                 """, (p["track_id"],))
+            now_utc = datetime.datetime.now(datetime.timezone.utc).isoformat()
             conn.execute("UPDATE queue SET status = 'completed' WHERE status = 'playing'")
-            conn.execute("UPDATE queue SET status = 'playing', played_at = CURRENT_TIMESTAMP WHERE id = ?", (queue_id,))
+            conn.execute("UPDATE queue SET status = 'playing', played_at = ? WHERE id = ?", (now_utc, queue_id))
         elif status == 'completed':
             cursor = conn.execute("SELECT track_id, singer_id, duet_partner, pitch_shift FROM queue WHERE id = ?", (queue_id,))
             q_row = cursor.fetchone()
@@ -844,7 +947,8 @@ def check_song_queue_duplicate(
             t.id as track_id,
             t.video_id,
             t.title,
-            t.artist
+            t.artist,
+            coalesce(t.is_sing_along, 0) as is_sing_along
         FROM queue q
         JOIN tracks t ON q.track_id = t.id
         JOIN singers s ON q.singer_id = s.id
@@ -1185,12 +1289,18 @@ def get_browsable_tracks(
     limit: int = 25,
     sort: str = "popularity",
     artist: str = "",
-    search: str = ""
+    search: str = "",
+    sing_along: bool = False
 ) -> Dict[str, Any]:
     """Returns paginated downloaded tracks with custom sorting: popularity, bring_back, recent, least_played, alpha."""
     conn = get_db()
-    conditions = ["is_downloaded = 1"]
-    params: List[Any] = []
+    target_sa = 1 if sing_along else 0
+    conditions = ["is_downloaded = 1", "coalesce(is_sing_along, 0) = ?"]
+    params: List[Any] = [target_sa]
+
+    strict_byom = get_setting("strict_byom_only", "false") == "true"
+    if strict_byom:
+        conditions.append("(media_source = 'imported' OR video_id LIKE 'local_%')")
 
     if artist.strip():
         conditions.append("artist = ?")
@@ -1204,7 +1314,10 @@ def get_browsable_tracks(
     # Bring It Back algorithm: songs with at least 5 plays sorted by longest time since played
     # If the database has fewer total plays (e.g. party just started), fallback to play_count >= 1
     if sort == "bring_back":
-        cnt_5 = conn.execute("SELECT COUNT(*) as c FROM tracks WHERE is_downloaded = 1 AND play_count >= 5").fetchone()["c"]
+        bb_conds = list(conditions)
+        bb_params = list(params)
+        bb_conds_5 = bb_conds + ["play_count >= 5"]
+        cnt_5 = conn.execute(f"SELECT COUNT(*) as c FROM tracks WHERE {' AND '.join(bb_conds_5)}", bb_params).fetchone()["c"]
         if cnt_5 > 0:
             conditions.append("play_count >= 5")
             order_clause = "ORDER BY last_played ASC, play_count DESC, title ASC"
@@ -1231,7 +1344,9 @@ def get_browsable_tracks(
     data_query = f"""
         SELECT id, video_id, title, artist, original_title, channel, duration,
                is_downloaded, local_path, normalized_lufs, download_status,
-               created_at, coalesce(play_count, 0) as play_count, last_played
+               created_at, coalesce(play_count, 0) as play_count, last_played,
+               coalesce(is_sing_along, 0) as is_sing_along,
+               coalesce(media_source, 'youtube') as media_source
         FROM tracks
         {where_clause}
         {order_clause}
@@ -1252,15 +1367,16 @@ def get_browsable_tracks(
         "search": search
     }
 
-def get_unique_downloaded_artists() -> List[str]:
+def get_unique_downloaded_artists(sing_along: bool = False) -> List[str]:
     """Returns distinct artists who have downloaded tracks in the library."""
     conn = get_db()
+    target_sa = 1 if sing_along else 0
     rows = conn.execute("""
         SELECT DISTINCT artist 
         FROM tracks 
-        WHERE is_downloaded = 1 AND artist != ''
+        WHERE is_downloaded = 1 AND artist != '' AND coalesce(is_sing_along, 0) = ?
         ORDER BY artist COLLATE NOCASE ASC
-    """).fetchall()
+    """, (target_sa,)).fetchall()
     conn.close()
     return [r["artist"] for r in rows]
 
@@ -1333,26 +1449,30 @@ def add_filler_track(
     genre: str = "",
     release_year: int = 0,
     is_downloaded: int = 0,
-    local_path: str = ""
+    local_path: str = "",
+    media_source: str = "youtube"
 ) -> int:
     conn = get_db()
+    if video_id.startswith("local_") and media_source == "youtube":
+        media_source = "imported"
     with conn:
         cursor = conn.execute("""
             INSERT INTO filler_tracks (
                 video_id, title, artist, original_title, duration,
-                genre, release_year, is_downloaded, local_path, download_status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                genre, release_year, is_downloaded, local_path, download_status, media_source
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(video_id) DO UPDATE SET
                 title = excluded.title,
                 artist = excluded.artist,
                 original_title = excluded.original_title,
                 duration = CASE WHEN excluded.duration > 0 THEN excluded.duration ELSE filler_tracks.duration END,
                 genre = CASE WHEN excluded.genre != '' THEN excluded.genre ELSE filler_tracks.genre END,
-                release_year = CASE WHEN excluded.release_year > 0 THEN excluded.release_year ELSE filler_tracks.release_year END
+                release_year = CASE WHEN excluded.release_year > 0 THEN excluded.release_year ELSE filler_tracks.release_year END,
+                media_source = CASE WHEN filler_tracks.media_source = 'imported' THEN 'imported' ELSE excluded.media_source END
         """, (
             video_id, title, artist, original_title, duration,
             genre, release_year, is_downloaded, local_path,
-            "ready" if is_downloaded else "pending"
+            "ready" if is_downloaded else "pending", media_source
         ))
         track_id = cursor.lastrowid
         if not track_id:
@@ -1360,6 +1480,32 @@ def add_filler_track(
             track_id = row["id"] if row else 0
     conn.close()
     return track_id
+
+def import_local_filler_track(
+    file_path: str,
+    title: str,
+    artist: str,
+    duration: int = 0,
+    genre: str = "",
+    release_year: int = 0
+) -> int:
+    """Imports an existing local music video or intermission track into the Tiki filler crate."""
+    resolved = str(Path(file_path).resolve())
+    vid = f"local_filler_{hashlib.sha256(resolved.encode()).hexdigest()[:12]}"
+    filler_id = add_filler_track(
+        video_id=vid,
+        title=title,
+        artist=artist,
+        original_title=Path(file_path).name,
+        genre=genre,
+        release_year=release_year,
+        duration=duration,
+        is_downloaded=1,
+        local_path=resolved,
+        media_source="imported"
+    )
+    update_filler_track_status(filler_id, status="ready", local_path=resolved, is_downloaded=1)
+    return filler_id
 
 def get_filler_tracks() -> List[Dict[str, Any]]:
     conn = get_db()
@@ -1444,33 +1590,90 @@ def delete_filler_track(filler_id: int) -> Optional[str]:
     conn.close()
     return local_path
 
-def record_filler_play(filler_id: int):
+def record_filler_play(filler_id: int, is_sing_along: bool = False):
     conn = get_db()
     with conn:
-        conn.execute("""
-            UPDATE filler_tracks
-            SET play_count = play_count + 1,
-                last_played = CURRENT_TIMESTAMP
-            WHERE id = ?
-        """, (filler_id,))
+        if is_sing_along:
+            conn.execute("""
+                UPDATE tracks
+                SET play_count = coalesce(play_count, 0) + 1,
+                    last_played = CURRENT_TIMESTAMP
+                WHERE id = ?
+            """, (filler_id,))
+        else:
+            conn.execute("""
+                UPDATE filler_tracks
+                SET play_count = play_count + 1,
+                    last_played = CURRENT_TIMESTAMP
+                WHERE id = ?
+            """, (filler_id,))
     conn.close()
 
-def get_next_vibe_filler_track(last_track_artist: str = "", last_track_genre: str = "", last_track_year: int = 0) -> Optional[Dict[str, Any]]:
+def get_next_vibe_filler_track(
+    last_track_artist: str = "",
+    last_track_genre: str = "",
+    last_track_year: int = 0,
+    mode: Optional[str] = None,
+    is_paused: bool = False
+) -> Optional[Dict[str, Any]]:
     """
-    Selects the next ready BGM filler track matching the vibe of the room and recent songs.
-    1. 90-Minute Cooldown: Excludes tracks matching songs sung by guests in the last 90 minutes.
-    2. Artist Diversity: Penalizes back-to-back tracks by the same artist.
-    3. Genre & Year Proximity: Awards bonus points for matching genre and era/decade proximity.
-    4. Fair Rotation: Rotates across the crate by penalizing play_count and recent last_played.
+    Selects the next ready BGM / intermission track according to the host's selected vibe mode:
+    - pure_filler: Only music video downloads from the filler crate.
+    - sing_along: Only downloaded sing-along tracks with lyrics.
+    - intelligent_mashup: Sing-alongs when queue is naturally empty, music videos when show is paused.
+    
+    Applies Vibe Engine scoring:
+    1. 90-Minute Sung Song Cooldown
+    2. Artist Diversity bonus/penalty
+    3. Genre & Year Proximity bonus
+    4. Fair Rotation across the crate
     """
     conn = get_db()
-    tracks = [dict(r) for r in conn.execute("""
-        SELECT * FROM filler_tracks
-        WHERE download_status = 'ready' OR is_downloaded = 1
+    strict_byom = get_setting("strict_byom_only", "true") == "true"
+    strict_filter = " AND (media_source = 'imported' OR video_id LIKE 'local_%')" if strict_byom else ""
+
+    # Load ready filler tracks
+    filler_rows = [dict(r) for r in conn.execute(f"""
+        SELECT id, video_id, title, artist, original_title, genre, release_year,
+               duration, is_downloaded, local_path, download_status, play_count, last_played,
+               0 as is_sing_along, 'filler' as track_type, coalesce(media_source, 'youtube') as media_source
+        FROM filler_tracks
+        WHERE (download_status = 'ready' OR is_downloaded = 1){strict_filter}
         ORDER BY play_count ASC, coalesce(last_played, '1970-01-01') ASC, id ASC
     """).fetchall()]
 
-    if not tracks:
+    # Load ready sing-along tracks
+    sing_along_rows = [dict(r) for r in conn.execute(f"""
+        SELECT id, video_id, title, artist, original_title, coalesce(genre, '') as genre, coalesce(release_year, 0) as release_year,
+               duration, is_downloaded, local_path, download_status, play_count, last_played,
+               1 as is_sing_along, 'sing_along' as track_type, coalesce(media_source, 'youtube') as media_source
+        FROM tracks
+        WHERE is_sing_along = 1 AND (download_status = 'ready' OR is_downloaded = 1){strict_filter}
+        ORDER BY play_count ASC, coalesce(last_played, '1970-01-01') ASC, id ASC
+    """).fetchall()]
+
+    # If any tracks have local files on disk, prefer valid files; otherwise keep ready tracks (for mocks/test fixtures)
+    existing_filler = [t for t in filler_rows if t.get("local_path") and Path(t["local_path"]).exists()]
+    filler_tracks = existing_filler if existing_filler else filler_rows
+
+    existing_sing = [t for t in sing_along_rows if t.get("local_path") and Path(t["local_path"]).exists()]
+    sing_along_tracks = existing_sing if existing_sing else sing_along_rows
+
+    # Select candidate pool based on mode and pause state
+    if not mode:
+        mode = get_setting("intermission_vibe_mode", "sing_along")
+    clean_mode = (mode or "sing_along").strip().lower()
+    if clean_mode == "pure_filler":
+        candidate_pool = filler_tracks if filler_tracks else sing_along_tracks
+    elif clean_mode == "sing_along":
+        candidate_pool = sing_along_tracks if sing_along_tracks else filler_tracks
+    else: # intelligent_mashup
+        if is_paused:
+            candidate_pool = filler_tracks if filler_tracks else sing_along_tracks
+        else:
+            candidate_pool = sing_along_tracks if sing_along_tracks else filler_tracks
+
+    if not candidate_pool:
         conn.close()
         return None
 
@@ -1489,16 +1692,16 @@ def get_next_vibe_filler_track(last_track_artist: str = "", last_track_genre: st
 
     conn.close()
 
-    # Filter out tracks sung recently tonight unless doing so would leave 0 candidates
+    # Filter out tracks sung recently tonight unless doing so leaves 0 candidates
     cooled_pool = []
-    for t in tracks:
+    for t in candidate_pool:
         t_artist = t["artist"].strip().lower()
         t_title = t["title"].strip().lower()
         if (t_artist, t_title) in recent_sung_pairs or (t_title, t_artist) in recent_sung_pairs:
             continue
         cooled_pool.append(t)
 
-    candidate_pool = cooled_pool if cooled_pool else tracks
+    pool = cooled_pool if cooled_pool else candidate_pool
 
     # 2. Vibe Scoring Engine
     def score_track(t: Dict[str, Any]) -> float:
@@ -1537,14 +1740,15 @@ def get_next_vibe_filler_track(last_track_artist: str = "", last_track_genre: st
 
         return score
 
-    # Sort candidates by calculated score descending, then by last_played ascending
     sorted_candidates = sorted(
-        candidate_pool,
+        pool,
         key=lambda x: (score_track(x), -(1 if x.get("last_played") else 0)),
         reverse=True
     )
 
-    return sorted_candidates[0]
+    chosen = dict(sorted_candidates[0])
+    chosen["stream_url"] = f"/stream/{chosen['id']}" if chosen["is_sing_along"] else f"/stream/filler/{chosen['id']}"
+    return chosen
 
 
 

@@ -11,33 +11,47 @@ import subprocess
 import re
 import tempfile
 from pathlib import Path
-from typing import Optional, Tuple, Dict, Any
+from typing import Optional, Tuple, Dict, Any, List
 
 import shutil
 
 # Ensure project root is in python path
-BASE_DIR = Path(__file__).resolve().parent
+if getattr(sys, "frozen", False):
+    BASE_DIR = Path(sys._MEIPASS) if hasattr(sys, "_MEIPASS") else Path(sys.executable).resolve().parent
+else:
+    BASE_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(BASE_DIR))
+
+# Explicit Windows Application User Model ID (AUMID) for taskbar grouping & persistent tray settings
+if sys.platform == "win32":
+    try:
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Todd.TikiKaraoke.Lounge.1.0")
+    except Exception:
+        pass
 
 from config import (
     DATA_DIR, HOST_TOKEN, HOST_PIN, PORT, TARGET_LUFS,
     load_config, is_configured, get_bundled_binary_path
 )
-from app import LOCAL_IP, PUBLIC_IP, get_base_url, get_public_host
+from app import LOCAL_IP, PUBLIC_IP, get_base_url, get_public_host, register_shutdown_trigger
+from tray import start_tray, stop_tray
 
 TIKI_BANNER = r"""
-  ______ _            _     _         _______ _    _ 
- |  ____| |          (_)   | |       |__   __(_)  | |
- | |__  | | ___  _ __ _  __| | __ _     | |   _   | | _____  
- |  __| | |/ _ \| '__| |/ _` |/ _` |    | |  | |  | |/ / _ \ 
- | |    | | (_) | |  | | (_| | (_| |    | |  | |  |   <  __/ 
- |_|    |_|\___/|_|  |_|\__,_|\__,_|    |_|  |_|  |_|\_\___| 
+  _______ _ _    _    _  __                     _        
+ |__   __(_) |  (_)  | |/ /                    | |       
+    | |   _| | ___   | ' / __ _ _ __ __ _  ___ | | _____ 
+    | |  | | |/ / |  |  < / _` | '__/ _` |/ _ \| |/ / _ \
+    | |  | |   <| |  | . \ (_| | | | (_| | (_) |   <  __/
+    |_|  |_|_|\_\_|  |_|\_\__,_|_|  \__,_|\___/|_|\_\___|
       🌴 🌺  KARAOKE LOUNGE & NEON BAR  🍹 🌴
 """
 
 PID_FILE = DATA_DIR / "karaoke.pid"
 active_tunnel_proc = None
+launched_browser_procs: List[subprocess.Popen] = []
 is_shutting_down = False
+global_server = None
 
 def get_process_group_kwargs() -> dict:
     """Returns subprocess kwargs to isolate process groups across Unix and Windows."""
@@ -121,13 +135,54 @@ def print_terminal_qr(url: str, label: str):
         pass
 
 def cleanup_all_services():
-    """Ensures all spawned background processes and tunnels are cleanly terminated."""
-    global active_tunnel_proc, is_shutting_down
+    """Ensures all spawned background processes, browser windows, and tunnels are cleanly terminated."""
+    global active_tunnel_proc, launched_browser_procs, is_shutting_down
     if is_shutting_down:
         return
     is_shutting_down = True
 
     print("\n🌴 [Shutdown] Gracefully shutting down Tiki Karaoke Lounge...")
+    stop_tray()
+
+    # Terminate dedicated browser windows spawned for Tiki Karaoke
+    for proc in list(launched_browser_procs):
+        try:
+            if proc and proc.poll() is None:
+                kill_process_tree(proc)
+        except Exception as e:
+            print(f"[Shutdown] Notice closing browser proc {getattr(proc, 'pid', 'unknown')}: {e}")
+    launched_browser_procs.clear()
+
+    # On Windows: un-fullscreen Tiki windows (restore native title bar with [X]) and terminate dedicated profile processes
+    if sys.platform == "win32":
+        try:
+            ps_cmd = (
+                '$code = @\'\n'
+                'using System;\n'
+                'using System.Runtime.InteropServices;\n'
+                'public class Win32 {\n'
+                '    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);\n'
+                '    [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);\n'
+                '}\n'
+                '\'@\n'
+                'Add-Type -TypeDefinition $code -ErrorAction SilentlyContinue\n'
+                'Get-Process | Where-Object { $_.MainWindowTitle -like "*Tiki*" -or $_.MainWindowTitle -like "*Stage*" } | ForEach-Object {\n'
+                '    [Win32]::ShowWindow($_.MainWindowHandle, 9)\n'
+                '    [Win32]::PostMessage($_.MainWindowHandle, 16, [IntPtr]::Zero, [IntPtr]::Zero)\n'
+                '}\n'
+                'Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like "*tiki_stage_*" -or $_.CommandLine -like "*tiki_host_*" } | ForEach-Object {\n'
+                '    Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue\n'
+                '}'
+            )
+            subprocess.run(
+                ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps_cmd],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=4.0,
+                check=False
+            )
+        except Exception:
+            pass
 
     if active_tunnel_proc and active_tunnel_proc.poll() is None:
         print("[Shutdown] Stopping remote tunnel process...")
@@ -140,11 +195,18 @@ def cleanup_all_services():
         except Exception:
             pass
 
+    try:
+        from audio_router import audio_router
+        audio_router.stop_loopback()
+    except Exception:
+        pass
+
     print("✅ [Shutdown] All services stopped cleanly. Aloha! 🌺\n")
 
 def handle_signal(sig, frame):
     cleanup_all_services()
-    sys.exit(0)
+    time.sleep(0.2)
+    os._exit(0)
 
 # Register clean shutdown hooks
 signal.signal(signal.SIGINT, handle_signal)
@@ -163,6 +225,8 @@ def configure_firefox_profile(profile_path: Path):
         'user_pref("browser.sessionstore.resume_from_crash", false);',
         'user_pref("browser.shell.checkDefaultBrowser", false);',
         'user_pref("toolkit.telemetry.enabled", false);',
+        'user_pref("dom.allow_scripts_to_close_windows", true);',
+        'user_pref("browser.tabs.closeWindowWithLastTab", true);',
     ]
     try:
         user_js.write_text("\n".join(prefs) + "\n")
@@ -186,10 +250,14 @@ def open_browser_delayed(stage_url: str, host_url: str = "", delay: float = 1.5)
     firefox_bin = find_system_browser("firefox")
     temp_root = Path(tempfile.gettempdir())
     audio_device = cfg.get("audio_output_device", "default")
+    audio_input = cfg.get("audio_input_device", "default")
     env = os.environ.copy()
     if audio_device and audio_device != "default":
         env["PULSE_SINK"] = audio_device
         print(f"[Launcher] 🔊 Routing Stage Audio directly to sink: {audio_device}")
+    if audio_input and audio_input != "default":
+        env["PULSE_SOURCE"] = audio_input
+        print(f"[Launcher] 🎤 Routing Stage Microphone directly to source: {audio_input}")
 
     stage_launched = False
     if firefox_bin:
@@ -207,7 +275,8 @@ def open_browser_delayed(stage_url: str, host_url: str = "", delay: float = 1.5)
             else:
                 cmd.append("--new-window")
             cmd.append(stage_url)
-            subprocess.Popen(cmd, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **get_process_group_kwargs())
+            proc = subprocess.Popen(cmd, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **get_process_group_kwargs())
+            launched_browser_procs.append(proc)
             print(f"[Launcher] ✅ Dedicated Stage Window launched via Firefox on monitor {stage_disp_idx} ({stage_disp_name})!")
             stage_launched = True
         except Exception as e:
@@ -218,10 +287,19 @@ def open_browser_delayed(stage_url: str, host_url: str = "", delay: float = 1.5)
             c_bin = find_system_browser(b_name)
             if c_bin:
                 try:
-                    cmd = [c_bin, f"--app={stage_url}", f"--window-position={stage_disp_x},{stage_disp_y}"]
+                    stage_chrome_data = temp_root / f"tiki_stage_chrome_{stage_disp_idx}"
+                    cmd = [
+                        c_bin,
+                        f"--app={stage_url}",
+                        f"--user-data-dir={stage_chrome_data}",
+                        "--no-first-run",
+                        "--no-default-browser-check",
+                        f"--window-position={stage_disp_x},{stage_disp_y}"
+                    ]
                     if stage_kiosk:
                         cmd.append("--start-fullscreen")
-                    subprocess.Popen(cmd, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **get_process_group_kwargs())
+                    proc = subprocess.Popen(cmd, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **get_process_group_kwargs())
+                    launched_browser_procs.append(proc)
                     print(f"[Launcher] ✅ Dedicated Stage Window launched via {b_name} on monitor {stage_disp_idx} ({stage_disp_x},{stage_disp_y})!")
                     stage_launched = True
                     break
@@ -264,7 +342,8 @@ def open_browser_delayed(stage_url: str, host_url: str = "", delay: float = 1.5)
                 else:
                     cmd.extend([f"--kiosk-monitor={host_disp_idx}", "--new-window"])
                 cmd.append(host_url)
-                subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **get_process_group_kwargs())
+                proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **get_process_group_kwargs())
+                launched_browser_procs.append(proc)
                 print(f"[Launcher] ✅ Dedicated Host DJ Window launched via Firefox on monitor {host_disp_idx} ({host_disp_name})!")
                 host_launched = True
             except Exception as e:
@@ -275,10 +354,19 @@ def open_browser_delayed(stage_url: str, host_url: str = "", delay: float = 1.5)
                 c_bin = find_system_browser(b_name)
                 if c_bin:
                     try:
-                        cmd = [c_bin, f"--app={host_url}", f"--window-position={host_disp_x},{host_disp_y}"]
+                        host_chrome_data = temp_root / f"tiki_host_chrome_{host_disp_idx}"
+                        cmd = [
+                            c_bin,
+                            f"--app={host_url}",
+                            f"--user-data-dir={host_chrome_data}",
+                            "--no-first-run",
+                            "--no-default-browser-check",
+                            f"--window-position={host_disp_x},{host_disp_y}"
+                        ]
                         if host_kiosk:
                             cmd.append("--start-fullscreen")
-                        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **get_process_group_kwargs())
+                        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **get_process_group_kwargs())
+                        launched_browser_procs.append(proc)
                         print(f"[Launcher] ✅ Dedicated Host DJ Window launched via {b_name} on monitor {host_disp_idx} ({host_disp_x},{host_disp_y})!")
                         host_launched = True
                         break
@@ -529,6 +617,7 @@ def main():
     parser.add_argument("--port", type=int, default=int(cfg.get("port", PORT)), help=f"Port to run on (default: {cfg.get('port', PORT)})")
     parser.add_argument("--remote-port", type=int, default=int(cfg.get("remote_port", 38480)), help="Permanent public port on bore.pub (default: 38480)")
     parser.add_argument("--no-browser", action="store_true", help="Do not automatically launch browser on start")
+    parser.add_argument("--no-tray", action="store_true", help="Disable system tray icon")
     parser.add_argument("--local-only", action="store_true", help="Run on local network only (disable remote tunnels)")
     parser.add_argument("--tunnel", action="store_true", help="Force ephemeral Cloudflare HTTPS tunnel (Trusted SSL)")
     parser.add_argument("--bore", action="store_true", help="Force legacy Bore static port tunnel (HTTP)")
@@ -541,15 +630,19 @@ def main():
         print(f"[Warning] Could not write PID file: {e}")
 
     # 1. Pre-flight dependency check (FFmpeg / FFprobe)
-    ffmpeg_ok = bool(shutil.which("ffmpeg"))
+    ffmpeg_ok = bool(shutil.which("ffmpeg") or get_bundled_binary_path("ffmpeg").exists())
     if not ffmpeg_ok:
         print("\n" + "!" * 68)
         print("⚠️  [NOTICE] FFmpeg is not installed on this system.")
         print("   YouTube song downloading and audio extraction will be unavailable.")
         print("   To enable full functionality, install FFmpeg:")
-        print("     • Ubuntu/Debian/Mint:  sudo apt install -y ffmpeg")
-        print("     • Arch/Manjaro:        sudo pacman -S ffmpeg")
-        print("     • Fedora/RHEL:         sudo dnf install ffmpeg")
+        if sys.platform == "win32":
+            print("     • Windows (winget):    winget install Gyan.FFmpeg")
+            print("     • Windows (choco):     choco install ffmpeg")
+        else:
+            print("     • Ubuntu/Debian/Mint:  sudo apt install -y ffmpeg")
+            print("     • Arch/Manjaro:        sudo pacman -S ffmpeg")
+            print("     • Fedora/RHEL:         sudo dnf install ffmpeg")
         print("!" * 68 + "\n")
 
     # 2. Port availability & dynamic auto-fallback
@@ -652,6 +745,35 @@ def main():
         local_host_url = f"{local_base}/host?token={HOST_TOKEN}" if HOST_TOKEN else f"{local_base}/"
         threading.Thread(target=open_browser_delayed, args=(local_stage_url, local_host_url), daemon=True).start()
 
+    global global_server
+
+    def trigger_server_shutdown():
+        global global_server, is_shutting_down
+        if is_shutting_down:
+            return
+        print("\n🛑 [Shutdown] Server shutdown initiated...")
+        if global_server:
+            global_server.should_exit = True
+        cleanup_all_services()
+        def _hard_exit():
+            time.sleep(0.8)
+            os._exit(0)
+        threading.Thread(target=_hard_exit, daemon=True).start()
+
+    register_shutdown_trigger(trigger_server_shutdown)
+
+    if not args.no_tray:
+        tray_urls = {
+            "stage": stage_url,
+            "host": host_url,
+            "join": join_url,
+            "setup": f"http://127.0.0.1:{target_port}/setup",
+            "public": public_url or join_url,
+            "shutdown": f"http://127.0.0.1:{target_port}/api/host/shutdown?token={HOST_TOKEN}" if HOST_TOKEN else f"http://127.0.0.1:{target_port}/api/host/shutdown"
+        }
+        bar_name = cfg.get("bar_name", "The Tiki Hut Karaoke Lounge")
+        start_tray(tray_urls, on_quit_callback=trigger_server_shutdown, bar_name=bar_name)
+
     try:
         import uvicorn
         uvicorn_config = uvicorn.Config(
@@ -662,11 +784,14 @@ def main():
             loop="asyncio"
         )
         server = uvicorn.Server(uvicorn_config)
+        global_server = server
         server.run()
     except (KeyboardInterrupt, SystemExit):
         pass
     finally:
         cleanup_all_services()
+        time.sleep(0.2)
+        os._exit(0)
 
 if __name__ == "__main__":
     main()

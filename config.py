@@ -8,10 +8,32 @@ import re
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 
-BASE_DIR = Path(__file__).resolve().parent
-STATIC_DIR = BASE_DIR / "static"
-TEMPLATES_DIR = BASE_DIR / "templates"
-CONFIG_FILE = BASE_DIR / "config.json"
+if getattr(sys, "frozen", False):
+    APP_DIR = Path(sys.executable).resolve().parent
+    BUNDLE_DIR = Path(sys._MEIPASS) if hasattr(sys, "_MEIPASS") else APP_DIR
+else:
+    APP_DIR = Path(__file__).resolve().parent
+    BUNDLE_DIR = APP_DIR
+
+BASE_DIR = BUNDLE_DIR
+STATIC_DIR = BUNDLE_DIR / "static"
+TEMPLATES_DIR = BUNDLE_DIR / "templates"
+
+def get_user_data_root() -> Path:
+    """Returns safe persistent user data root across installed and development modes."""
+    if sys.platform == "win32" and getattr(sys, "frozen", False):
+        try:
+            test_file = APP_DIR / ".write_test"
+            test_file.touch()
+            test_file.unlink()
+            return APP_DIR
+        except (PermissionError, OSError):
+            appdata = os.getenv("APPDATA")
+            if appdata:
+                return Path(appdata) / "TikiKaraoke"
+    return APP_DIR
+
+CONFIG_FILE = get_user_data_root() / "config.json"
 
 def get_bundled_binary_path(binary_name: str) -> Path:
     """
@@ -34,6 +56,11 @@ def get_bundled_binary_path(binary_name: str) -> Path:
     local_bin = BASE_DIR / "bin" / full_name
     if local_bin.exists():
         return local_bin
+
+    # 2b. Check staging packaging bin directory
+    pkg_bin = BASE_DIR / "packaging" / "windows" / "bin" / full_name
+    if pkg_bin.exists():
+        return pkg_bin
 
     # 3. Fallback to system PATH lookup
     sys_which = shutil.which(full_name) or shutil.which(binary_name)
@@ -74,6 +101,8 @@ DEFAULT_CONFIG = {
     "kiosk_mode": True,
     "audio_output_device": "default",
     "audio_output_name": "System Default Audio Output",
+    "audio_input_device": "default",
+    "audio_input_name": "System Default Microphone / Input",
     "host_display_enabled": False,
     "host_display": 1,
     "host_display_name": "Secondary Display",
@@ -235,13 +264,51 @@ def get_available_audio_sinks() -> List[Dict[str, Any]]:
 
     return devices
 
+def get_available_audio_sources() -> List[Dict[str, Any]]:
+    """Returns detected system audio input devices (microphones, line-in, USB receivers)."""
+    devices = [{
+        "id": "default",
+        "name": "default",
+        "description": "System Default Microphone / Input",
+        "is_default": True
+    }]
+    # 1. Try pactl on Linux (PipeWire / PulseAudio)
+    if shutil.which("pactl"):
+        try:
+            res = subprocess.run(["pactl", "list", "sources"], capture_output=True, text=True, timeout=2)
+            source_blocks = res.stdout.split("Source #")
+            for block in source_blocks[1:]:
+                name_match = re.search(r"Name:\s*(\S+)", block)
+                desc_match = re.search(r"Description:\s*([^\n\r]+)", block)
+                if name_match:
+                    src_name = name_match.group(1).strip()
+                    # Exclude monitor sources (these are loopbacks of speakers/headphones)
+                    if src_name.endswith(".monitor"):
+                        continue
+                    src_desc = desc_match.group(1).strip() if desc_match else src_name
+                    if src_name not in [d["id"] for d in devices]:
+                        devices.append({
+                            "id": src_name,
+                            "name": src_name,
+                            "description": src_desc,
+                            "is_default": False
+                        })
+        except Exception as e:
+            print(f"[Audio Input Detection] pactl error: {e}")
+
+    return devices
+
 def get_config_path() -> Path:
-    if CONFIG_FILE.exists():
-        return CONFIG_FILE
-    data_cfg = BASE_DIR / "data" / "config.json"
+    root = get_user_data_root()
+    cfg_file = root / "config.json"
+    if cfg_file.exists():
+        return cfg_file
+    data_cfg = root / "data" / "config.json"
     if data_cfg.exists():
         return data_cfg
-    return CONFIG_FILE
+    if CONFIG_FILE.exists():
+        return CONFIG_FILE
+    return cfg_file
 
 def load_config() -> Dict[str, Any]:
     cfg = DEFAULT_CONFIG.copy()
@@ -257,12 +324,18 @@ def load_config() -> Dict[str, Any]:
             print(f"[Config] Error reading {cfg_path}: {e}")
     return cfg
 
+def get_default_library_dir() -> Path:
+    return (Path.home() / "Music" / "Karaoke" / "Tiki").resolve()
+
+def get_default_data_dir() -> Path:
+    return (Path.home() / "Music" / "Karaoke" / "Tiki" / "db").resolve()
+
 def get_library_dir() -> Path:
     cfg = load_config()
     p = os.getenv("TIKI_LIBRARY_DIR", "").strip() or cfg.get("library_dir", "").strip()
     if p:
         return Path(p).expanduser().resolve()
-    return (BASE_DIR / "karaoke_library").resolve()
+    return get_default_library_dir()
 
 def get_tracks_dir() -> Path:
     return get_library_dir() / "tracks"
@@ -273,12 +346,15 @@ def get_playlists_dir() -> Path:
 def get_filler_dir() -> Path:
     return get_library_dir() / "filler"
 
+def get_sing_along_dir() -> Path:
+    return get_library_dir() / "sing_along"
+
 def get_data_dir() -> Path:
     cfg = load_config()
     p = os.getenv("TIKI_DATA_DIR", "").strip() or cfg.get("data_dir", "").strip()
     if p:
         return Path(p).expanduser().resolve()
-    return (BASE_DIR / "data").resolve()
+    return get_default_data_dir()
 
 def get_db_path() -> Path:
     return get_data_dir() / "karaoke.db"
@@ -288,10 +364,32 @@ def get_secret_file() -> Path:
 
 def ensure_storage_dirs():
     try:
-        get_data_dir().mkdir(parents=True, exist_ok=True)
+        data_dir = get_data_dir()
+        data_dir.mkdir(parents=True, exist_ok=True)
         get_tracks_dir().mkdir(parents=True, exist_ok=True)
         get_playlists_dir().mkdir(parents=True, exist_ok=True)
         get_filler_dir().mkdir(parents=True, exist_ok=True)
+        get_sing_along_dir().mkdir(parents=True, exist_ok=True)
+
+        # Legacy data migration safeguard:
+        legacy_data = (get_user_data_root() / "data").resolve()
+        if legacy_data != data_dir:
+            legacy_db = legacy_data / "karaoke.db"
+            target_db = data_dir / "karaoke.db"
+            if legacy_db.exists() and not target_db.exists():
+                try:
+                    shutil.copy2(legacy_db, target_db)
+                    print(f"[Config] Seamlessly migrated legacy database from {legacy_db} -> {target_db}")
+                except Exception as mig_err:
+                    print(f"[Config] Note: Could not copy legacy database: {mig_err}")
+
+            legacy_token = legacy_data / "host_token.txt"
+            target_token = data_dir / "host_token.txt"
+            if legacy_token.exists() and not target_token.exists():
+                try:
+                    shutil.copy2(legacy_token, target_token)
+                except Exception:
+                    pass
     except Exception as e:
         print(f"[Config] Warning: could not ensure storage directories: {e}")
 
@@ -408,15 +506,17 @@ def get_storage_status() -> Dict[str, Any]:
 
     lib_bytes = 0
     track_count = 0
-    if tracks_dir.exists():
-        for f in tracks_dir.glob("**/*"):
-            if f.is_file():
-                try:
-                    lib_bytes += f.stat().st_size
-                    if f.suffix.lower() == ".mp4":
-                        track_count += 1
-                except Exception:
-                    pass
+    dirs_to_scan = [tracks_dir, get_sing_along_dir()]
+    for d in dirs_to_scan:
+        if d.exists():
+            for f in d.glob("**/*"):
+                if f.is_file():
+                    try:
+                        lib_bytes += f.stat().st_size
+                        if f.suffix.lower() == ".mp4":
+                            track_count += 1
+                    except Exception:
+                        pass
     lib_mb = round(lib_bytes / (1024**2), 1)
     lib_gb = round(lib_bytes / (1024**3), 2)
 
@@ -454,6 +554,7 @@ DATA_DIR = get_data_dir()
 LIBRARY_DIR = get_library_dir()
 TRACKS_DIR = get_tracks_dir()
 PLAYLISTS_DIR = get_playlists_dir()
+SING_ALONG_DIR = get_sing_along_dir()
 DB_PATH = get_db_path()
 SECRET_FILE = get_secret_file()
 HOST_TOKEN = get_host_token()

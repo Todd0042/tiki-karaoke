@@ -26,12 +26,12 @@ STARTER_FILLER_TRACKS = [
         "duration": 360
     },
     {
-        "video_id": "1k8craCGghs",
+        "video_id": "VcjzHMhBtf0",
         "title": "Don't Stop Believin'",
         "artist": "Journey",
         "genre": "Rock",
         "release_year": 1981,
-        "duration": 251
+        "duration": 252
     },
     {
         "video_id": "Zi_XLOBDo_Y",
@@ -100,7 +100,7 @@ STARTER_FILLER_TRACKS = [
         "duration": 228
     },
     {
-        "video_id": "KUmZp8PR1uc",
+        "video_id": "KUmZp8pR1uc",
         "title": "Rehab",
         "artist": "Amy Winehouse",
         "genre": "Soul",

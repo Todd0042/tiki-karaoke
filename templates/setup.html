@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Tiki Bar - Initial Setup Wizard 🌴</title>
+    <link rel="icon" type="image/x-icon" href="/favicon.ico">
     <link rel="stylesheet" href="/static/css/tiki-theme.css">
     <style>
         body {
@@ -440,6 +441,26 @@
                     <input type="hidden" id="audioOutputName" name="audio_output_name" value="{{ config.audio_output_name or '' }}">
                     <div id="audioDeviceInfo" class="field-desc" style="margin-top: 6px; color: var(--neon-gold);"></div>
                 </div>
+
+                <div class="field-group" style="margin-top: 18px; padding-top: 14px; border-top: 1px solid rgba(255,255,255,0.08);">
+                    <label for="audioInputSelect">🎤 Stage Microphone & Audio Input Device (Line-In / Mic / Receiver)</label>
+                    <div style="display: flex; gap: 8px;">
+                        <select id="audioInputSelect" name="audio_input_device" onchange="onAudioInputSelected()" style="flex: 1;">
+                            <option value="default">System Default Microphone / Input</option>
+                        </select>
+                        <button type="button" id="setupMicTestBtn" class="btn-ghost" style="white-space: nowrap; padding: 0 16px; border-color: var(--neon-cyan); color: var(--neon-cyan); border-radius: 10px; cursor: pointer;" onclick="testMicInput()">🎙️ Test Mic</button>
+                    </div>
+                    <input type="hidden" id="audioInputName" name="audio_input_name" value="{{ config.audio_input_name or '' }}">
+                    <div id="audioInputInfo" class="field-desc" style="margin-top: 6px; color: var(--neon-cyan);"></div>
+                    <div id="setupMicVuContainer" style="display: none; margin-top: 8px; background: rgba(8,14,24,0.7); padding: 8px 12px; border-radius: 8px; border: 1px solid rgba(0,240,255,0.2);">
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <span style="font-size: 0.75rem; color: var(--neon-cyan); font-weight: bold; width: 68px;">Live Signal:</span>
+                            <div style="flex: 1; height: 10px; background: rgba(255,255,255,0.1); border-radius: 5px; overflow: hidden;">
+                                <div id="setupMicVuBar" style="height: 100%; width: 0%; background: linear-gradient(90deg, #00f0ff 0%, #39ff14 70%, #ff0055 95%); transition: width 0.05s ease;"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
 
             <!-- Section 6: Stage Experience & DJ Settings -->
@@ -794,12 +815,147 @@
             }, 1800);
         }
 
+        let detectedAudioSources = [];
+        let setupMicStream = null;
+        let setupMicAnimFrame = null;
+
+        async function loadAudioSources() {
+            const sel = document.getElementById('audioInputSelect');
+            if (!sel) return;
+            const configuredSource = '{{ config.audio_input_device or "default" }}';
+
+            try {
+                const res = await fetch('/api/setup/audio-inputs');
+                const systemSources = await res.json();
+                detectedAudioSources = [...systemSources];
+
+                // Merge with browser mediaDevices if available
+                if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+                    try {
+                        const browserDevices = await navigator.mediaDevices.enumerateDevices();
+                        browserDevices.filter(d => d.kind === 'audioinput').forEach(bDev => {
+                            if (!detectedAudioSources.some(d => d.id === bDev.deviceId)) {
+                                detectedAudioSources.push({
+                                    id: bDev.deviceId,
+                                    name: bDev.label || bDev.deviceId,
+                                    description: bDev.label || `Microphone (${bDev.deviceId.slice(0,8)}...)`,
+                                    is_default: bDev.deviceId === 'default'
+                                });
+                            }
+                        });
+                    } catch(e){}
+                }
+
+                sel.innerHTML = '';
+                detectedAudioSources.forEach(d => {
+                    const opt = document.createElement('option');
+                    opt.value = d.id;
+                    opt.text = d.description || d.name;
+                    if (d.id === configuredSource) opt.selected = true;
+                    sel.appendChild(opt);
+                });
+                onAudioInputSelected();
+            } catch (e) {
+                console.error("Error loading audio inputs:", e);
+                sel.innerHTML = '<option value="default">System Default Microphone / Input</option>';
+            }
+        }
+
+        function onAudioInputSelected() {
+            const sel = document.getElementById('audioInputSelect');
+            const infoEl = document.getElementById('audioInputInfo');
+            const nameEl = document.getElementById('audioInputName');
+            if (!sel || detectedAudioSources.length === 0) return;
+            const chosen = detectedAudioSources.find(d => d.id === sel.value);
+            if (chosen) {
+                if (nameEl) nameEl.value = chosen.description || chosen.name;
+                if (infoEl) infoEl.innerText = `Selected Input: ${chosen.description || chosen.name}`;
+            }
+        }
+
+        async function testMicInput() {
+            const sel = document.getElementById('audioInputSelect');
+            const chosenDevice = sel ? sel.value : "default";
+            const btn = document.getElementById('setupMicTestBtn');
+            const vuContainer = document.getElementById('setupMicVuContainer');
+            const vuBar = document.getElementById('setupMicVuBar');
+
+            if (setupMicStream) {
+                try { setupMicStream.getTracks().forEach(t => t.stop()); } catch(e){}
+                setupMicStream = null;
+                if (setupMicAnimFrame) cancelAnimationFrame(setupMicAnimFrame);
+                if (vuContainer) vuContainer.style.display = 'none';
+                if (btn) btn.innerText = "🎙️ Test Mic";
+                return;
+            }
+
+            if (btn) btn.innerText = "⏹️ Stop Mic";
+            if (vuContainer) vuContainer.style.display = 'block';
+
+            try {
+                const constraints = {
+                    audio: {
+                        echoCancellation: false,
+                        noiseSuppression: false,
+                        autoGainControl: false
+                    }
+                };
+                const isBrowserGuid = chosenDevice && chosenDevice !== 'default' && !chosenDevice.startsWith("alsa_") && !chosenDevice.includes(":") && !chosenDevice.includes(".");
+                if (isBrowserGuid) {
+                    constraints.audio.deviceId = { exact: chosenDevice };
+                }
+
+                let stream;
+                try {
+                    stream = await navigator.mediaDevices.getUserMedia(constraints);
+                } catch(e) {
+                    if (constraints.audio.deviceId) {
+                        stream = await navigator.mediaDevices.getUserMedia({
+                            audio: {
+                                echoCancellation: false,
+                                noiseSuppression: false,
+                                autoGainControl: false
+                            }
+                        });
+                    } else {
+                        throw e;
+                    }
+                }
+                setupMicStream = stream;
+                const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                const src = audioCtx.createMediaStreamSource(stream);
+                const analyser = audioCtx.createAnalyser();
+                analyser.fftSize = 128;
+                src.connect(analyser);
+
+                const data = new Uint8Array(64);
+                function updateVU() {
+                    if (!setupMicStream) return;
+                    analyser.getByteTimeDomainData(data);
+                    let maxDev = 0;
+                    for (let i = 0; i < data.length; i++) {
+                        const dev = Math.abs(data[i] - 128);
+                        if (dev > maxDev) maxDev = dev;
+                    }
+                    const pct = Math.min(100, Math.round((maxDev / 128) * 100));
+                    if (vuBar) vuBar.style.width = pct + "%";
+                    setupMicAnimFrame = requestAnimationFrame(updateVU);
+                }
+                updateVU();
+            } catch(e) {
+                console.warn("Mic test error:", e);
+                if (btn) btn.innerText = "⚠️ Mic Access Error";
+                setTimeout(() => { if (btn) btn.innerText = "🎙️ Test Mic"; }, 2500);
+            }
+        }
+
         // Auto-check default storage locations, displays, and audio on load
         window.addEventListener('DOMContentLoaded', () => {
             checkStoragePath('libraryDir', 'libDiskInfo');
             checkStoragePath('dataDir', 'dataDiskInfo');
             loadDisplays();
             loadAudioDevices();
+            loadAudioSources();
         });
 
         async function handleSetupSubmit(e) {
@@ -838,6 +994,8 @@
                 kiosk_mode: formData.get('kiosk_mode') === 'true',
                 audio_output_device: formData.get('audio_output_device') || "default",
                 audio_output_name: formData.get('audio_output_name') || "System Default Audio Output",
+                audio_input_device: formData.get('audio_input_device') || "default",
+                audio_input_name: formData.get('audio_input_name') || "System Default Microphone / Input",
                 host_display_enabled: formData.get('host_display_enabled') === 'true',
                 host_display: parseInt(formData.get('host_display') || "1"),
                 host_display_name: formData.get('host_display_name') || "",

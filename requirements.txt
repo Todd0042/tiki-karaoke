@@ -45,7 +45,9 @@ typing_extensions==4.16.0
 uritemplate==4.2.0
 urllib3==2.8.0
 uvicorn==0.54.0
-uvloop==0.23.0
+uvloop==0.23.0; sys_platform != 'win32'
 watchfiles==1.3.0
 websockets==17.2
 yt-dlp==2026.8.19
+pystray==0.19.5
+python-xlib==0.33; sys_platform != 'win32'

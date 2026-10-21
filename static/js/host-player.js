@@ -21,6 +21,16 @@ let currentBgmIndex = -1;
 let currentNextTrack = null;
 let onDeckAlertFiredForQueueId = null;
 
+function escapeHtml(str) {
+    if (!str) return "";
+    return String(str)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+}
+
 const myDisplayId = localStorage.getItem("tiki_display_id") || ("disp_" + Math.random().toString(36).substring(2, 8));
 localStorage.setItem("tiki_display_id", myDisplayId);
 
@@ -76,6 +86,7 @@ function initAudio() {
     } else {
         audioDSP = new AudioDSPPipeline();
         window.audioDSP = audioDSP;
+        populateHostMicDevices();
     }
 
     applyAudioSink();
@@ -213,8 +224,7 @@ function handleSocketMessage(data) {
             break;
         case "resync_state":
             console.log("[Stage] Resync state command received from host.");
-            fetchCurrentState();
-            showSyncToast("🔄 Stage Resynced by Host");
+            fetchCurrentState(true);
             break;
         case "pause_track":
             pausePlayback();
@@ -232,8 +242,14 @@ function handleSocketMessage(data) {
         case "volume_change":
             if (audioDSP) audioDSP.setMasterVolume(data.volume);
             break;
+        case "host_mic_settings":
+            handleHostMicSettings(data);
+            break;
         case "emoji_reaction":
             spawnFloatingEmoji(data.emoji);
+            break;
+        case "singer_joined":
+            spawnSingerJoinedPill(data.name, data.avatar);
             break;
         case "queue_updated":
             updateNextTicker(data.queue);
@@ -264,6 +280,34 @@ function handleSocketMessage(data) {
             break;
         case "test_display":
             showTestDisplayFlash(data.badge);
+            break;
+        case "server_shutting_down":
+            showSyncToast("🛑 Closing session... Aloha! 🌺");
+            setTimeout(() => {
+                try {
+                    if (document.fullscreenElement) {
+                        document.exitFullscreen().catch(() => {});
+                    }
+                } catch (e) {}
+                document.body.innerHTML = `
+                    <div style="position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;background:#05080f;color:#00f0ff;font-family:sans-serif;text-align:center;padding:24px;box-sizing:border-box;">
+                        <button onclick="window.close()" title="Close Window" style="position:absolute;top:24px;right:24px;background:rgba(255,42,133,0.15);color:#ff2a85;border:1px solid #ff2a85;border-radius:50%;width:50px;height:50px;font-size:1.6rem;font-weight:bold;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all 0.2s;" onmouseover="this.style.background='#ff2a85';this.style.color='#fff';" onmouseout="this.style.background='rgba(255,42,133,0.15)';this.style.color='#ff2a85';">✕</button>
+                        <h1 style="font-size:2.8rem;margin-bottom:8px;text-shadow:0 0 20px #00f0ff;">🌴 Session Closed</h1>
+                        <p style="color:#aaa;font-size:1.2rem;max-width:550px;line-height:1.6;margin-bottom:32px;">
+                            Tiki Karaoke Lounge has been shut down by the host.<br>
+                            Aloha and see you next time! 🌺
+                        </p>
+                        <div style="display:flex;gap:16px;flex-wrap:wrap;justify-content:center;">
+                            <button onclick="window.close()" style="background:linear-gradient(135deg,#ff2a85,#ff758c);color:#fff;border:none;border-radius:12px;padding:14px 32px;font-size:1.15rem;font-weight:bold;cursor:pointer;box-shadow:0 0 20px rgba(255,42,133,0.4);transition:transform 0.15s;" onmousedown="this.style.transform='scale(0.96)';" onmouseup="this.style.transform='scale(1)';">
+                                ❌ Close Window
+                            </button>
+                            <button onclick="if(document.fullscreenElement){document.exitFullscreen();}else{window.close();}" style="background:rgba(0,240,255,0.15);color:#00f0ff;border:1px solid #00f0ff;border-radius:12px;padding:14px 28px;font-size:1.15rem;font-weight:bold;cursor:pointer;transition:transform 0.15s;" onmousedown="this.style.transform='scale(0.96)';" onmouseup="this.style.transform='scale(1)';">
+                                🗗 Exit Fullscreen
+                            </button>
+                        </div>
+                    </div>
+                `;
+            }, 500);
             break;
     }
 }
@@ -315,6 +359,7 @@ function startTrackPlayback(track) {
     stopIntermission();
     stopFillerPlayback();
     fadeOutBGM();
+    if (audioDSP) audioDSP.setBetweenSongs(false);
     onDeckAlertFiredForQueueId = null;
 
     document.getElementById("nowPlayingBar").style.display = "flex";
@@ -341,7 +386,13 @@ function startTrackPlayback(track) {
             localVideo.setSinkId(configuredAudioSink).catch(() => {});
         }
         if (seekTime > 0) {
-            localVideo.currentTime = seekTime;
+            if (localVideo.readyState >= 1) {
+                localVideo.currentTime = seekTime;
+            } else {
+                localVideo.addEventListener("loadedmetadata", () => {
+                    localVideo.currentTime = seekTime;
+                }, { once: true });
+            }
         } else {
             localVideo.currentTime = 0;
         }
@@ -468,6 +519,7 @@ function updatePitchBadge(pitch) {
 // Intermission & Countdown Timer
 function triggerIntermission(nextTrack, duration = 20) {
     isIntermission = true;
+    if (audioDSP) audioDSP.setBetweenSongs(true);
     intermissionRemaining = duration;
     stopFillerPlayback();
 
@@ -500,7 +552,8 @@ function triggerIntermission(nextTrack, duration = 20) {
 
         const nextSingerText = nextTrack.duet_partner ? `${nextTrack.singer_name} & ${nextTrack.duet_partner}` : nextTrack.singer_name;
         document.getElementById("intermissionSinger").innerText = nextSingerText;
-        document.getElementById("intermissionSong").innerText = `${nextTrack.artist} - ${nextTrack.title}`;
+        const saBadge = nextTrack.is_sing_along ? " [🎙️ Sing-Along]" : "";
+        document.getElementById("intermissionSong").innerText = `${nextTrack.artist} - ${nextTrack.title}${saBadge}`;
         document.getElementById("intermissionKey").innerText = nextTrack.pitch_shift !== 0 ? `Key: ${nextTrack.pitch_shift > 0 ? '+' : ''}${nextTrack.pitch_shift}` : "Key: Standard";
 
         // Virtual DJ TTS Announcer (if enabled)
@@ -532,6 +585,7 @@ function triggerIntermission(nextTrack, duration = 20) {
 
 function stopCurrentTrack(nextTrack) {
     isIntermission = true;
+    if (audioDSP) audioDSP.setBetweenSongs(true);
     currentTrack = null;
     stopFillerPlayback();
     clearInterval(intermissionTimer);
@@ -702,27 +756,156 @@ function fadeInBGM() {
     }, 150);
 }
 
-// Floating Emoji Reactions
+// ==========================================
+// 🌴 Crowd Hype System & Floating Reactions
+// ==========================================
+let reactionTotalCount = 0;
+let reactionStreakCount = 0;
+let lastReactionTimestamp = 0;
+let reactionStreakTimer = null;
+
+function getActiveReactionContainer() {
+    const fillerQR = document.getElementById("fillerQRCard");
+    const joinQR = document.getElementById("joinQROverlay");
+    const activeQR = (fillerQR && fillerQR.style.display !== "none" && fillerQR.offsetParent !== null) ? fillerQR : joinQR;
+
+    let container = document.getElementById("reactionContainer");
+    if (!container) {
+        container = document.createElement("div");
+        container.id = "reactionContainer";
+        if (activeQR) activeQR.appendChild(container);
+    } else if (activeQR && container.parentElement !== activeQR) {
+        activeQR.appendChild(container);
+    }
+    return { container, activeQR };
+}
+
 function spawnFloatingEmoji(emoji) {
-    const container = document.getElementById("reactionContainer");
+    const { container, activeQR } = getActiveReactionContainer();
     if (!container) return;
+
+    const now = Date.now();
+    if (now - lastReactionTimestamp < 3500) {
+        reactionStreakCount++;
+    } else {
+        reactionStreakCount = 1;
+    }
+    lastReactionTimestamp = now;
+    reactionTotalCount++;
+
+    clearTimeout(reactionStreakTimer);
+    reactionStreakTimer = setTimeout(() => {
+        reactionStreakCount = 0;
+    }, 3500);
+
+    // Is this a Milestone Hype event? (Every 5th reaction or when streak is a multiple of 5)
+    const isMilestone = (reactionTotalCount % 5 === 0) || (reactionStreakCount >= 5 && reactionStreakCount % 5 === 0);
 
     const el = document.createElement("div");
     el.className = "floating-reaction";
     el.innerText = emoji;
 
-    // Randomize horizontal offset (right side of screen: 70% to 92%)
-    const randomRight = 20 + Math.random() * 80;
-    el.style.right = `${randomRight}px`;
-    el.style.bottom = "80px";
+    // Horizontal range across the width of the QR card
+    const cardWidth = activeQR ? Math.max(180, activeQR.offsetWidth) : 240;
+    const spawnLeft = Math.floor(10 + Math.random() * (cardWidth - 55));
+    // Vertical: 12px to 32px strictly ABOVE the top roof of the card
+    const spawnBottom = Math.floor(12 + Math.random() * 20);
+
+    el.style.left = `${spawnLeft}px`;
+    el.style.bottom = `${spawnBottom}px`;
+
+    if (isMilestone) {
+        // Special Hype Milestone: BAM slam, Electric zap, Mega hype fire, or Starburst
+        const milestoneTypes = ["bam", "zap", "fire", "starburst"];
+        const pick = milestoneTypes[Math.floor(Math.random() * milestoneTypes.length)];
+
+        if (pick === "bam") {
+            el.classList.add("reaction-bam");
+            // Spawn neon shockwave ring centered around the emoji
+            const ring = document.createElement("div");
+            ring.className = "reaction-shockwave";
+            ring.style.left = `${spawnLeft - 20}px`;
+            ring.style.bottom = `${spawnBottom - 20}px`;
+            container.appendChild(ring);
+            setTimeout(() => ring.remove(), 900);
+        } else if (pick === "zap") {
+            el.classList.add("reaction-zap");
+        } else if (pick === "fire") {
+            el.classList.add("reaction-fire");
+            // Add mini Hype streak badge
+            const badge = document.createElement("span");
+            badge.style.cssText = "position: absolute; bottom: -8px; left: 50%; transform: translateX(-50%); font-size: 0.65rem; font-weight: 800; background: linear-gradient(135deg, #ff007f, #ffb703); color: #fff; padding: 2px 8px; border-radius: 10px; box-shadow: 0 0 12px #ff007f; white-space: nowrap;";
+            badge.innerText = `🔥 HYPE x${reactionStreakCount > 1 ? reactionStreakCount : 5}!`;
+            el.appendChild(badge);
+        } else if (pick === "starburst") {
+            el.classList.add("reaction-pop");
+            // Burst 4-6 mini sparkles radially
+            const sparkles = ["✨", "⭐", "💫", "🎉"];
+            for (let i = 0; i < 5; i++) {
+                const sp = document.createElement("div");
+                sp.className = "reaction-sparkle";
+                sp.innerText = sparkles[Math.floor(Math.random() * sparkles.length)];
+                sp.style.left = `${spawnLeft + 12}px`;
+                sp.style.bottom = `${spawnBottom + 12}px`;
+                const angle = (i / 5) * 2 * Math.PI;
+                const dist = 50 + Math.random() * 30;
+                sp.style.setProperty("--dx", `${Math.cos(angle) * dist}px`);
+                sp.style.setProperty("--dy", `${Math.sin(angle) * dist - 25}px`);
+                container.appendChild(sp);
+                setTimeout(() => sp.remove(), 1250);
+            }
+        }
+    } else {
+        // Standard reaction: choose random base float style
+        const standardStyles = ["reaction-sway", "reaction-pop", "reaction-glide"];
+        const style = standardStyles[Math.floor(Math.random() * standardStyles.length)];
+        el.classList.add(style);
+        const randomSize = (2.3 + Math.random() * 0.9).toFixed(2);
+        el.style.fontSize = `${randomSize}rem`;
+    }
 
     container.appendChild(el);
-    setTimeout(() => el.remove(), 3000);
+    setTimeout(() => el.remove(), 3400);
+}
+
+// Singer Registration Notification Pill (Decoupled from Hype system)
+function spawnSingerJoinedPill(singerName, avatar) {
+    const { container, activeQR } = getActiveReactionContainer();
+    if (!container) return;
+
+    const el = document.createElement("div");
+    el.className = "singer-joined-pill";
+    
+    const av = avatar || "🌴";
+    const name = singerName || "Guest Singer";
+    el.innerHTML = `<span style="font-size: 1.25rem;">${av}</span> <span style="color: var(--neon-cyan);">${escapeHtml(name)}</span> <span style="color: var(--text-muted); font-size: 0.85rem; font-weight: 600;">joined!</span>`;
+
+    // Position directly above the card, centered
+    el.style.left = "50%";
+    el.style.transform = "translateX(-50%)";
+    el.style.bottom = "16px";
+
+    container.appendChild(el);
+    setTimeout(() => el.remove(), 4300);
 }
 
 function playSoundEffect(sound) {
     const audio = new Audio(`/static/sounds/${sound}.mp3`);
     audio.play().catch(() => {});
+}
+
+function confirmHostShutdown() {
+    if (!confirm("Are you sure you want to shut down Tiki Karaoke and stop all server processes?")) return;
+    fetch("/api/host/shutdown", { method: "POST" })
+        .then(res => res.json())
+        .then(data => {
+            alert(data.message || "Tiki Karaoke is shutting down. Aloha! 🌺");
+            setTimeout(() => { window.close(); }, 800);
+        })
+        .catch(() => {
+            alert("Shutdown command sent. Window will now close.");
+            setTimeout(() => { window.close(); }, 800);
+        });
 }
 
 function showSyncToast(msg) {
@@ -743,10 +926,65 @@ function showSyncToast(msg) {
     }, 1800);
 }
 
-function fetchCurrentState() {
+function resyncPlayhead(targetSeconds, forceResync = false) {
+    if (typeof targetSeconds !== "number" || targetSeconds < 0) return;
+    const localVideo = document.getElementById("localVideo");
+    if (localVideo && localVideo.style.display !== "none" && localVideo.src && !localVideo.paused) {
+        const current = localVideo.currentTime;
+        const drift = current - targetSeconds; // positive = ahead, negative = behind
+        const absDrift = Math.abs(drift);
+
+        if (forceResync) {
+            localVideo.currentTime = targetSeconds;
+            localVideo.playbackRate = 1.0;
+            const dir = drift < 0 ? `${absDrift.toFixed(2)}s behind` : `${absDrift.toFixed(2)}s ahead`;
+            showSyncToast(`🔄 Synced: ${absDrift < 0.15 ? 'Locked in sync' : 'Corrected ' + dir}`);
+            console.log(`[Stage Sync] Force resynced playhead to ${targetSeconds.toFixed(2)}s (drift was ${drift.toFixed(3)}s)`);
+            return;
+        }
+
+        // Automatic drift management:
+        // Hard-seek if drift is substantial (> 1.2s)
+        if (absDrift > 1.2) {
+            console.log(`[Stage Sync] Correcting large drift: ${drift.toFixed(2)}s (video: ${current.toFixed(2)}s -> server: ${targetSeconds.toFixed(2)}s)`);
+            localVideo.currentTime = targetSeconds;
+            localVideo.playbackRate = 1.0;
+        } 
+        // Smooth dynamic playback rate alignment for mild drift (0.15s - 1.2s)
+        else if (absDrift > 0.15) {
+            if (drift < 0) {
+                // Video is slightly behind server: subtly speed up (1.05x) to catch up seamlessly
+                localVideo.playbackRate = 1.05;
+            } else {
+                // Video is slightly ahead of server: subtly slow down (0.95x)
+                localVideo.playbackRate = 0.95;
+            }
+        } else {
+            // Drift is negligible (< 150ms): maintain normal 1.0x playback rate
+            if (localVideo.playbackRate !== 1.0) {
+                localVideo.playbackRate = 1.0;
+            }
+        }
+    } else if (ytPlayer && typeof ytPlayer.getCurrentTime === "function" && typeof ytPlayer.seekTo === "function") {
+        const ytTime = ytPlayer.getCurrentTime();
+        const drift = Math.abs(ytTime - targetSeconds);
+        if (forceResync || drift > 1.5) {
+            ytPlayer.seekTo(targetSeconds, true);
+            if (forceResync) {
+                showSyncToast(`🔄 Synced YouTube playhead (${drift.toFixed(2)}s corrected)`);
+            }
+        }
+    } else if (forceResync) {
+        showSyncToast("🔄 Stage Player Synced");
+    }
+}
+
+function fetchCurrentState(forceResync = false) {
+    const t0 = performance.now();
     fetch("/api/state")
         .then(res => res.json())
         .then(data => {
+            const rttSec = (performance.now() - t0) / 1000;
             if (audioDSP && typeof data.av_sync_offset_ms === "number") {
                 audioDSP.setSyncOffset(data.av_sync_offset_ms);
             }
@@ -757,6 +995,10 @@ function fetchCurrentState() {
                     console.log("[Stage Sync] Detected new playing track from server:", data.playing.title);
                     stopFillerPlayback();
                     startTrackPlayback(data.playing);
+                } else if (typeof data.playing.elapsed_seconds === "number") {
+                    // Account for half RTT transit latency to sync playhead precisely
+                    const targetSec = data.playing.elapsed_seconds + (rttSec / 2);
+                    resyncPlayhead(targetSec, forceResync);
                 }
             } else if (currentTrack) {
                 // Server says nothing playing, but we had a track playing -> track was skipped or ended
@@ -816,7 +1058,8 @@ function updateNextTicker(queue) {
     if (pending.length > 0) {
         currentNextTrack = pending[0];
         const nextSinger = pending[0].duet_partner ? `${pending[0].singer_name} & ${pending[0].duet_partner}` : pending[0].singer_name;
-        ticker.innerText = `${nextSinger} ("${pending[0].title}")`;
+        const saBadge = pending[0].is_sing_along ? " [🎙️ Sing-Along]" : "";
+        ticker.innerText = `${nextSinger} ("${pending[0].title}")${saBadge}`;
     } else {
         currentNextTrack = null;
         ticker.innerText = "Queue is open — scan to sing!";
@@ -839,12 +1082,17 @@ function setupEventListeners() {
             if (e.shiftKey) {
                 window.location.reload(true);
             } else {
-                fetchCurrentState();
-                showSyncToast("🔄 Stage Player Synced");
+                fetchCurrentState(true);
             }
         } else if (e.key === "[") {
             // Pitch down 1 semitone
             if (audioDSP) audioDSP.setPitch(audioDSP.currentPitch - 1);
+        } else if (e.key === "]") {
+            // Pitch up 1 semitone
+            if (audioDSP) audioDSP.setPitch(audioDSP.currentPitch + 1);
+        } else if (e.key === "p" || e.key === "P") {
+            // P for Microphone Mute/Live toggle
+            toggleStageMic();
         } else if (e.key === "m" || e.key === "M") {
             // M for Mute/Unmute
             toggleStageAudioMute();
@@ -1036,6 +1284,7 @@ function startFillerPlayback(track) {
     if (!track) return;
     currentFillerTrack = track;
     isFillerPlaying = true;
+    if (audioDSP) audioDSP.setBetweenSongs(true);
 
     if (fillerBufferTimer) {
         clearInterval(fillerBufferTimer);
@@ -1075,7 +1324,11 @@ function startFillerPlayback(track) {
         tickerText.style.color = "var(--neon-cyan)";
         tickerText.style.fontSize = "0.95rem";
         tickerText.style.fontWeight = "600";
-        tickerText.innerText = `🌴 DJ LOUNGE MUSIC: ${track.artist} - ${track.title} • 🌺 OPEN MIC: Scan the QR code to queue your favorite song!`;
+        if (track.is_sing_along) {
+            tickerText.innerText = `🎤 SING-ALONG INTERMISSION: ${track.artist} - ${track.title} • 🌺 Sing along with the stage or scan to queue next!`;
+        } else {
+            tickerText.innerText = `🌴 DJ LOUNGE MUSIC: ${track.artist} - ${track.title} • 🌺 OPEN MIC: Scan the QR code to queue your favorite song!`;
+        }
         tickerText.offsetHeight; /* trigger reflow to reset animation from right */
         tickerText.style.animation = "tickerMarquee 25s linear infinite";
     }
@@ -1094,8 +1347,8 @@ function startFillerPlayback(track) {
 
         if (fillerVideo) {
             fillerVideo.style.display = "block";
-            fillerVideo.src = `/stream/filler/${track.id}`;
-            fillerVideo.volume = 1.0;
+            fillerVideo.src = track.stream_url || (track.is_sing_along ? `/stream/${track.id}` : `/stream/filler/${track.id}`);
+            fillerVideo.volume = 0.85;
             if (isMutedAudio) {
                 fillerVideo.muted = true;
             } else {
@@ -1243,4 +1496,312 @@ function stopFillerPlayback() {
         fillerVideo.volume = 1.0;
     }
 }
+
+// -------------------------------------------------------------
+// Live Host Microphone & Audio Mixing Engine
+// -------------------------------------------------------------
+let hostMicModalOpen = false;
+let hostMicVuAnimFrame = null;
+
+window.onAudioDspDuckingActive = function(factor) {
+    const bgm = document.getElementById("bgmPlayer");
+    if (bgm && !bgm.paused) {
+        if (!bgm.dataset.baseVolume) bgm.dataset.baseVolume = "0.25";
+        bgm.volume = Math.max(0, Math.min(1.0, parseFloat(bgm.dataset.baseVolume) * factor));
+    }
+    const fillerV = document.getElementById("fillerVideo");
+    if (fillerV && !fillerV.paused) {
+        if (!fillerV.dataset.baseVolume) fillerV.dataset.baseVolume = "1.0";
+        fillerV.volume = Math.max(0, Math.min(1.0, parseFloat(fillerV.dataset.baseVolume) * factor));
+    }
+};
+
+async function populateHostMicDevices() {
+    const select = document.getElementById("hostMicDeviceSelect");
+    if (!select) return;
+
+    try {
+        const savedDevice = localStorage.getItem("tiki_mic_device") || "default";
+        let deviceList = [];
+
+        // 1. Fetch system input devices from server (pactl / OS)
+        try {
+            const res = await fetch("/api/setup/audio-inputs");
+            if (res.ok) {
+                const sysInputs = await res.json();
+                deviceList = [...sysInputs];
+            }
+        } catch (e) {}
+
+        // 2. Merge browser audio inputs
+        if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+            try {
+                const devList = await navigator.mediaDevices.enumerateDevices();
+                const browserInputs = devList.filter(d => d.kind === "audioinput");
+                browserInputs.forEach((dev, idx) => {
+                    if (!dev.deviceId) return;
+                    const match = deviceList.find(d => d.id === dev.deviceId || (dev.label && d.description && d.description.toLowerCase().includes(dev.label.toLowerCase())));
+                    if (!match) {
+                        deviceList.push({
+                            id: dev.deviceId,
+                            name: dev.deviceId,
+                            description: dev.label || `Microphone ${idx + 1}`
+                        });
+                    } else if (dev.label) {
+                        match.id = dev.deviceId;
+                        match.description = dev.label;
+                    }
+                });
+            } catch (e) {}
+        }
+
+        if (deviceList.length === 0) {
+            deviceList = [{ id: "default", description: "Default Audio Input" }];
+        }
+
+        const currentVal = select.value || savedDevice;
+        select.innerHTML = "";
+        let matched = false;
+        deviceList.forEach(dev => {
+            const opt = document.createElement("option");
+            opt.value = dev.id;
+            opt.text = dev.description || dev.name;
+            if (dev.id === currentVal || dev.id === savedDevice) {
+                opt.selected = true;
+                matched = true;
+            }
+            select.appendChild(opt);
+        });
+
+        // If savedDevice wasn't found in current enumerated list, add it so dropdown never clears
+        if (!matched && savedDevice && savedDevice !== "default") {
+            const opt = document.createElement("option");
+            opt.value = savedDevice;
+            opt.text = `Saved Device (${savedDevice.slice(0, 16)}...)`;
+            opt.selected = true;
+            select.appendChild(opt);
+        } else if (!matched && select.options.length > 0) {
+            select.selectedIndex = 0;
+        }
+    } catch (e) {
+        console.warn("[Host Mic] Failed to enumerate audio devices:", e);
+    }
+}
+
+let hostMicMuted = true;
+let hostMicVolume = 80;
+let hostDuckingEnabled = true;
+let hostDuckingDb = -6;
+
+// Fetch initial state from backend audio router
+fetch("/api/host/mic-state")
+    .then(r => r.json())
+    .then(st => {
+        if (st) {
+            hostMicMuted = Boolean(st.muted);
+            hostMicVolume = Number(st.volume) || 80;
+            updateHostMicUI(hostMicMuted);
+            const slider = document.getElementById("modalMicVolumeSlider");
+            if (slider) slider.value = hostMicVolume;
+            const txt = document.getElementById("modalMicVolumeText");
+            if (txt) txt.innerText = `${hostMicVolume}%`;
+            if (st.device && st.device !== "default") {
+                localStorage.setItem("tiki_mic_device", st.device);
+            }
+        }
+    })
+    .catch(() => {});
+
+function requestHostMicPermission() {
+    // With native PipeWire loopback, no browser permission prompt is required.
+    // Triggering Connect turns mic LIVE via backend.
+    toggleStageMic();
+}
+
+function onHostMicDeviceChange(deviceId) {
+    localStorage.setItem("tiki_mic_device", deviceId);
+    broadcastHostMicState();
+}
+
+function toggleStageMic() {
+    hostMicMuted = !hostMicMuted;
+    updateHostMicUI(hostMicMuted);
+    broadcastHostMicState();
+}
+
+function updateHostMicUI(muted) {
+    const topBtn = document.getElementById("stageMicToggleBtn");
+    if (topBtn) {
+        if (muted) {
+            topBtn.innerHTML = "🔇 Mic Off";
+            topBtn.style.color = "#ff5555";
+            topBtn.style.borderColor = "rgba(255,85,85,0.4)";
+        } else {
+            topBtn.innerHTML = "🎤 Mic LIVE";
+            topBtn.style.color = "#39ff14";
+            topBtn.style.borderColor = "rgba(57,255,20,0.4)";
+        }
+    }
+
+    const modalBtn = document.getElementById("modalMicToggleBtn");
+    if (modalBtn) {
+        if (muted) {
+            modalBtn.innerHTML = "🔇 Mic Muted (OFF)";
+            modalBtn.style.color = "#ff5555";
+            modalBtn.style.borderColor = "rgba(255,85,85,0.4)";
+        } else {
+            modalBtn.innerHTML = "🎤 Mic LIVE (ON)";
+            modalBtn.style.color = "#39ff14";
+            modalBtn.style.borderColor = "rgba(57,255,20,0.4)";
+        }
+    }
+
+    const badge = document.getElementById("micLiveStatusBadge");
+    if (badge) {
+        if (muted) {
+            badge.innerText = "MUTED";
+            badge.style.color = "#ff5555";
+        } else {
+            badge.innerText = "LIVE (<2ms Direct)";
+            badge.style.color = "#39ff14";
+        }
+    }
+
+    const barL = document.getElementById("vuMeterBarL");
+    const barR = document.getElementById("vuMeterBarR");
+    if (barL) barL.style.width = muted ? "0%" : "75%";
+    if (barR) barR.style.width = muted ? "0%" : "75%";
+}
+
+function onHostMicVolumeChange(val) {
+    const num = Number(val) || 80;
+    hostMicVolume = num;
+    const txt = document.getElementById("modalMicVolumeText");
+    if (txt) txt.innerText = `${num}%`;
+    broadcastHostMicState();
+}
+
+function onHostMicReverbChange(checked) {
+    broadcastHostMicState();
+}
+
+function onHostDuckingToggleChange(checked) {
+    hostDuckingEnabled = !!checked;
+    broadcastHostMicState();
+}
+
+function onHostDuckingDbChange(val) {
+    hostDuckingDb = Number(val) || -6;
+    if (audioDSP) audioDSP.duckingDb = hostDuckingDb;
+    broadcastHostMicState();
+}
+
+function broadcastHostMicState() {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+            type: "host_mic_settings",
+            device: localStorage.getItem("tiki_mic_device") || "default",
+            muted: hostMicMuted,
+            volume: hostMicVolume,
+            ducking_enabled: hostDuckingEnabled,
+            ducking_db: hostDuckingDb
+        }));
+    }
+}
+
+function handleHostMicSettings(data) {
+    if (data.device !== undefined && data.device) {
+        localStorage.setItem("tiki_mic_device", data.device);
+        const select = document.getElementById("hostMicDeviceSelect");
+        if (select) {
+            let opt = Array.from(select.options).find(o => o.value === data.device);
+            if (!opt) {
+                opt = document.createElement("option");
+                opt.value = data.device;
+                opt.text = data.device_name || data.device;
+                select.appendChild(opt);
+            }
+            select.value = data.device;
+        }
+    }
+    if (data.muted !== undefined) {
+        hostMicMuted = Boolean(data.muted);
+        updateHostMicUI(hostMicMuted);
+
+        // Intelligent Between-Song Intermission Ducking on stage player
+        if (audioDSP) {
+            if (!hostMicMuted && isIntermission && hostDuckingEnabled) {
+                audioDSP.setMusicDucked(true);
+            } else {
+                audioDSP.setMusicDucked(false);
+            }
+        }
+    }
+    if (data.volume !== undefined) {
+        hostMicVolume = Number(data.volume);
+        const slider = document.getElementById("modalMicVolumeSlider");
+        if (slider) slider.value = hostMicVolume;
+        const txt = document.getElementById("modalMicVolumeText");
+        if (txt) txt.innerText = `${hostMicVolume}%`;
+    }
+    if (data.ducking_enabled !== undefined) {
+        hostDuckingEnabled = Boolean(data.ducking_enabled);
+        const duck = document.getElementById("modalDuckingToggle");
+        if (duck) duck.checked = hostDuckingEnabled;
+    }
+    if (data.ducking_db !== undefined) {
+        hostDuckingDb = Number(data.ducking_db);
+        if (audioDSP) audioDSP.duckingDb = hostDuckingDb;
+        const dbSel = document.getElementById("modalDuckingDbSelect");
+        if (dbSel) dbSel.value = String(data.ducking_db);
+    }
+}
+
+function toggleHostMicModal() {
+    const modal = document.getElementById("hostMicModal");
+    if (!modal) return;
+
+    hostMicModalOpen = (modal.style.display !== "flex");
+    modal.style.display = hostMicModalOpen ? "flex" : "none";
+
+    if (hostMicModalOpen) {
+        if (!audioDSP) {
+            audioDSP = new AudioDSPPipeline();
+            window.audioDSP = audioDSP;
+        }
+        audioDSP.ensureContext();
+        populateHostMicDevices();
+        startHostMicVULoop();
+    } else {
+        stopHostMicVULoop();
+    }
+}
+
+function startHostMicVULoop() {
+    if (hostMicVuAnimFrame) cancelAnimationFrame(hostMicVuAnimFrame);
+    function updateLoop() {
+        if (!hostMicModalOpen) return;
+        if (audioDSP) {
+            const levels = audioDSP.getMicLevels();
+            const barL = document.getElementById("vuMeterBarL");
+            const barR = document.getElementById("vuMeterBarR");
+            if (barL) barL.style.width = levels.isLive ? `${levels.peakL}%` : "0%";
+            if (barR) barR.style.width = levels.isLive ? `${levels.peakR}%` : "0%";
+        }
+        hostMicVuAnimFrame = requestAnimationFrame(updateLoop);
+    }
+    hostMicVuAnimFrame = requestAnimationFrame(updateLoop);
+}
+
+function stopHostMicVULoop() {
+    if (hostMicVuAnimFrame) {
+        cancelAnimationFrame(hostMicVuAnimFrame);
+        hostMicVuAnimFrame = null;
+    }
+    const barL = document.getElementById("vuMeterBarL");
+    const barR = document.getElementById("vuMeterBarR");
+    if (barL) barL.style.width = "0%";
+    if (barR) barR.style.width = "0%";
+}
+
 

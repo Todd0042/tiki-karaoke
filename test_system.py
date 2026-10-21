@@ -2,6 +2,7 @@ import os
 import sys
 import shutil
 import tempfile
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -22,7 +23,7 @@ from database import (
 )
 from search import normalize_title_artist, extract_attributes, deduplicate_and_group, tiered_search
 from downloader import sanitize_filename, normalize_audio_loudness, update_singer_m3u_playlist
-from config import TRACKS_DIR, PLAYLISTS_DIR
+from config import TRACKS_DIR, PLAYLISTS_DIR, get_bundled_binary_path
 
 class TestTikiKaraoke(unittest.TestCase):
     @classmethod
@@ -34,12 +35,14 @@ class TestTikiKaraoke(unittest.TestCase):
         shutil.rmtree(test_dir, ignore_errors=True)
 
     def setUp(self):
-        from database import get_db
+        from database import get_db, set_setting
         conn = get_db()
         with conn:
             conn.execute("DELETE FROM queue")
             conn.execute("DELETE FROM history")
+            conn.execute("DELETE FROM filler_tracks")
         conn.close()
+        set_setting("strict_byom_only", "false")
 
     def test_01_singer_registration(self):
         token = "test_token_123"
@@ -141,7 +144,17 @@ class TestTikiKaraoke(unittest.TestCase):
         test_in = TRACKS_DIR / "test_in.mp4"
         test_out = TRACKS_DIR / "test_out.mp4"
         
-        os.system(f'ffmpeg -y -f lavfi -i "sine=frequency=440:duration=1" -c:a aac "{test_in}" > /dev/null 2>&1')
+        ffmpeg_bin = str(get_bundled_binary_path("ffmpeg")) if get_bundled_binary_path("ffmpeg").exists() else "ffmpeg"
+        try:
+            subprocess.run(
+                [ffmpeg_bin, "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=1", "-c:a", "aac", str(test_in)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False
+            )
+        except Exception:
+            pass
+
         self.assertTrue(test_in.exists())
 
         success = normalize_audio_loudness(test_in, test_out, target_lufs=-16.0)
@@ -377,7 +390,7 @@ class TestTikiKaraoke(unittest.TestCase):
         conn.close()
 
         # When picking filler, Nirvana should be in 90-minute cooldown, so Queen is selected!
-        pick = get_next_vibe_filler_track(last_track_artist="Bush", last_track_genre="Rock", last_track_year=1994)
+        pick = get_next_vibe_filler_track(last_track_artist="Bush", last_track_genre="Rock", last_track_year=1994, mode="pure_filler")
         self.assertIsNotNone(pick)
         self.assertEqual(pick["artist"], "Queen")
         self.assertEqual(pick["title"], "Bohemian Rhapsody")
@@ -484,6 +497,56 @@ class TestTikiKaraoke(unittest.TestCase):
         self.assertEqual(health["status"], "ok")
         self.assertIn("ffmpeg_installed", health)
         self.assertIn("port", health)
+
+    def test_intermission_vibe_modes(self):
+        from database import add_filler_track, save_track, update_track_download_status, get_next_vibe_filler_track
+        
+        # Add a filler music video
+        fid = add_filler_track("queen_filler", "Radio Ga Ga", "Queen", "Queen - Radio Ga Ga", genre="Rock", release_year=1984, is_downloaded=1)
+        
+        # Add a sing-along track
+        sid = save_track("bon_jovi_sa", "Livin' on a Prayer", "Bon Jovi", "Bon Jovi - Livin' on a Prayer", is_sing_along=True)
+        update_track_download_status(sid, "ready", local_path="/mock/bon_jovi.mp4")
+
+        # 1. Mode: pure_filler -> MUST pick filler track
+        pick_filler = get_next_vibe_filler_track(mode="pure_filler")
+        self.assertIsNotNone(pick_filler)
+        self.assertEqual(pick_filler["track_type"], "filler")
+        self.assertEqual(pick_filler["stream_url"], f"/stream/filler/{fid}")
+
+        # 2. Mode: sing_along -> MUST pick sing-along track
+        pick_sa = get_next_vibe_filler_track(mode="sing_along")
+        self.assertIsNotNone(pick_sa)
+        self.assertEqual(pick_sa["track_type"], "sing_along")
+        self.assertEqual(pick_sa["stream_url"], f"/stream/{sid}")
+
+        # 3. Mode: intelligent_mashup when queue is empty (not paused) -> MUST pick sing-along
+        pick_mash_empty = get_next_vibe_filler_track(mode="intelligent_mashup", is_paused=False)
+        self.assertIsNotNone(pick_mash_empty)
+        self.assertEqual(pick_mash_empty["track_type"], "sing_along")
+
+        # 4. Mode: intelligent_mashup when show is explicitly paused -> MUST pick filler music video
+        pick_mash_paused = get_next_vibe_filler_track(mode="intelligent_mashup", is_paused=True)
+        self.assertIsNotNone(pick_mash_paused)
+        self.assertEqual(pick_mash_paused["track_type"], "filler")
+
+        # 5. Default fallback (no mode specified) -> MUST pick sing-along
+        pick_default = get_next_vibe_filler_track()
+        self.assertIsNotNone(pick_default)
+        self.assertEqual(pick_default["track_type"], "sing_along")
+
+    def test_tiered_search_pagination_support(self):
+        from search import tiered_search
+        from database import save_track, update_track_download_status
+
+        tid = save_track("local_queen_01", "Somebody to Love", "Queen", "Queen - Somebody to Love")
+        update_track_download_status(tid, "ready", local_path="/mock/queen.mp4")
+
+        # Page 1: Returns local matches and indicates online results are available
+        res_page1 = tiered_search("Somebody to Love", page=1)
+        self.assertIn("local_results", res_page1)
+        self.assertEqual(res_page1["page"], 1)
+        self.assertTrue(res_page1["has_more"])
 
 if __name__ == "__main__":
     unittest.main()

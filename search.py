@@ -2,7 +2,7 @@ import re
 from typing import List, Dict, Any, Tuple
 import yt_dlp
 from rapidfuzz import fuzz
-from database import search_local_tracks, save_track
+from database import search_local_tracks, save_track, get_setting
 
 # Regular expressions for cleaning metadata
 CHANNEL_BRANDS = [
@@ -113,6 +113,7 @@ def deduplicate_and_group(entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]
             "duration": entry.get("duration", 0),
             "attributes": attributes,
             "channel": uploader,
+            "is_sing_along": bool(entry.get("is_sing_along")),
             "thumbnail": f"https://i.ytimg.com/vi/{entry.get('id')}/hqdefault.jpg"
         }
 
@@ -134,6 +135,7 @@ def deduplicate_and_group(entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]
                 "title": display_title,
                 "best_video_id": entry.get("id"),
                 "duration": entry.get("duration", 0),
+                "is_sing_along": bool(entry.get("is_sing_along")),
                 "versions": [version_info]
             })
 
@@ -196,7 +198,7 @@ def is_karaoke_track(title: str, uploader: str = "") -> bool:
     # Must have explicit karaoke in title or be uploaded by a recognized karaoke producer
     return has_karaoke_title or is_karaoke_channel
 
-def query_youtube_karaoke(query: str, max_results: int = 15) -> List[Dict[str, Any]]:
+def query_youtube_karaoke(query: str, page: int = 1, limit: int = 15) -> Tuple[List[Dict[str, Any]], bool]:
     ydl_opts = {
         "quiet": True,
         "skip_download": True,
@@ -205,9 +207,9 @@ def query_youtube_karaoke(query: str, max_results: int = 15) -> List[Dict[str, A
         "socket_timeout": 8,
         "retries": 2,
     }
-    # Query more candidates so we have plenty after strict filtering
-    fetch_count = max(max_results * 2, 20)
-    search_q = f"ytsearch{fetch_count}:{query} karaoke"
+    # Query progressively more candidates for deeper pages
+    target_count = max(page * 25, 25)
+    search_q = f"ytsearch{target_count}:{query} karaoke"
     
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         try:
@@ -242,28 +244,164 @@ def query_youtube_karaoke(query: str, max_results: int = 15) -> List[Dict[str, A
             duration=entry.get("duration", 0) or 0
         )
 
-    return deduplicate_and_group(valid_entries)[:max_results]
+    grouped = deduplicate_and_group(valid_entries)
+    start_idx = (page - 1) * limit
+    end_idx = start_idx + limit
+    page_items = grouped[start_idx:end_idx]
+    has_more = len(grouped) > end_idx or (len(raw_entries) >= target_count and len(page_items) == limit)
+    return page_items, has_more
 
-def tiered_search(query: str, force_online: bool = False) -> Dict[str, Any]:
+def is_sing_along_track(title: str, uploader: str = "") -> bool:
+    """Strictly validates whether a track is a lyric video with original vocals (NOT pure karaoke or instrumental)."""
+    t_lower = title.lower()
+    u_lower = uploader.lower()
+
+    # Reject pure karaoke, instrumental, or backing tracks
+    pure_karaoke_patterns = [
+        r"\bkaraoke\b", r"\binstrumental\b", r"\bbacking\s+track\b", r"\bbackingtrack\b",
+        r"\bclean\s+backing\b", r"\boff\s+vocal\b", r"\bminus\s+one\b", r"\bminus\s+1\b",
+        r"\bno\s+vocal\b", r"\bvocal\s+off\b", r"\bwithout\s+vocals?\b",
+        r"\bpiano\s+backing\b", r"\bguitar\s+backing\b", r"\bacoustic\s+backing\b"
+    ]
+    if any(re.search(pat, t_lower) for pat in pure_karaoke_patterns):
+        return False
+
+    # Reject known pure karaoke channels
+    karaoke_channels = [
+        "karafun", "sing king", "singking", "sunfly", "edkara",
+        "zoom karaoke", "starlight karaoke", "party tyme", "coversph",
+        "divejam", "cckaraoke"
+    ]
+    if any(kw in u_lower for kw in karaoke_channels):
+        return False
+
+    # Reject non-musical noise / tutorials / reactions
+    junk_patterns = [
+        r"\breaction\b", r"\breacts\b", r"\bvocal\s+coach\b",
+        r"\bhow\s+to\s+sing\b", r"\bhow\s+to\s+play\b", r"\blesson\b",
+        r"\btutorial\b", r"\bguitar\s+tab\b", r"\bbass\s+tab\b",
+        r"\bfull\s+album\b", r"\bdiscography\b", r"\bteaser\b",
+        r"\btrailer\b", r"\bparody\b", r"\b10\s*hours?\b", r"\b1\s*hour\b"
+    ]
+    if any(re.search(pat, t_lower) for pat in junk_patterns):
+        return False
+
+    # Positive lyric video indicators
+    lyric_indicators = [
+        "lyrics", "lyric video", "with lyrics", "lyrics on screen",
+        "sing along", "sing-along", "singalong"
+    ]
+    return any(ind in t_lower for ind in lyric_indicators)
+
+def query_youtube_sing_along(query: str, page: int = 1, limit: int = 15) -> Tuple[List[Dict[str, Any]], bool]:
+    ydl_opts = {
+        "quiet": True,
+        "skip_download": True,
+        "extract_flat": True,
+        "no_warnings": True,
+        "socket_timeout": 8,
+        "retries": 2,
+    }
+    target_count = max(page * 25, 25)
+    search_q = f"ytsearch{target_count}:{query} lyrics"
+    
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        try:
+            info = ydl.extract_info(search_q, download=False)
+            raw_entries = info.get("entries", [])
+        except Exception as e:
+            print(f"[Search Sing-Along] YouTube query error: {e}")
+            raw_entries = []
+
+    valid_entries = []
+    for e in raw_entries:
+        if not e or not e.get("id"):
+            continue
+        duration = e.get("duration") or 0
+        if duration > 600 or (duration > 0 and duration < 30):
+            continue
+        title = e.get("title", "")
+        uploader = e.get("uploader", "") or e.get("channel", "")
+        if is_sing_along_track(title, uploader):
+            e_copy = dict(e)
+            e_copy["is_sing_along"] = True
+            valid_entries.append(e_copy)
+
+    # If strict filter yielded few results, fallback to entries containing "lyrics" in title
+    if len(valid_entries) < 3:
+        for e in raw_entries:
+            if not e or not e.get("id") or any(v.get("id") == e.get("id") for v in valid_entries):
+                continue
+            duration = e.get("duration") or 0
+            if duration > 600 or (duration > 0 and duration < 30):
+                continue
+            title = e.get("title", "")
+            if "lyric" in title.lower() and not any(k in title.lower() for k in ["karaoke", "instrumental"]):
+                e_copy = dict(e)
+                e_copy["is_sing_along"] = True
+                valid_entries.append(e_copy)
+
+    # Save discovered metadata to DB tracks with is_sing_along=True
+    for entry in valid_entries:
+        artist, title = normalize_title_artist(entry.get("title", ""), entry.get("uploader", ""))
+        save_track(
+            video_id=entry.get("id"),
+            title=title if title else entry.get("title", ""),
+            artist=artist if artist else "Unknown Artist",
+            original_title=entry.get("title", ""),
+            channel=entry.get("uploader", ""),
+            duration=entry.get("duration", 0) or 0,
+            is_sing_along=True
+        )
+
+    grouped = deduplicate_and_group(valid_entries)
+    for g in grouped:
+        g["is_sing_along"] = True
+
+    start_idx = (page - 1) * limit
+    end_idx = start_idx + limit
+    page_items = grouped[start_idx:end_idx]
+    has_more = len(grouped) > end_idx or (len(raw_entries) >= target_count and len(page_items) == limit)
+    return page_items, has_more
+
+def tiered_search(query: str, force_online: bool = False, sing_along: bool = False, page: int = 1, limit: int = 15) -> Dict[str, Any]:
     query_str = query.strip()
     if not query_str:
-        return {"local_results": [], "youtube_results": []}
+        return {"local_results": [], "youtube_results": [], "page": page, "has_more": False}
 
-    local_matches = search_local_tracks(query_str, limit=10)
-    
-    # If we have local matches and user didn't ask to force online search, return local first!
-    if local_matches and not force_online:
+    strict_byom = get_setting("strict_byom_only", "false") == "true"
+    if strict_byom:
+        local_matches = search_local_tracks(query_str, limit=limit, sing_along_only=sing_along)
         return {
             "local_results": local_matches,
-            "youtube_results": []
+            "youtube_results": [],
+            "page": page,
+            "has_more": False,
+            "strict_mode": True
         }
 
-    # Query YouTube online
-    yt_results = query_youtube_karaoke(query_str, max_results=12)
+    local_matches = search_local_tracks(query_str, limit=25, sing_along_only=sing_along) if page == 1 else []
+    
+    # If we have local matches and user didn't ask to force online search, return local first!
+    if local_matches and not force_online and page == 1:
+        return {
+            "local_results": local_matches,
+            "youtube_results": [],
+            "page": page,
+            "has_more": True
+        }
+
+    # Query YouTube online based on sing_along mode
+    if sing_along:
+        yt_results, has_more = query_youtube_sing_along(query_str, page=page, limit=limit)
+    else:
+        yt_results, has_more = query_youtube_karaoke(query_str, page=page, limit=limit)
 
     return {
         "local_results": local_matches,
-        "youtube_results": yt_results
+        "youtube_results": yt_results,
+        "page": page,
+        "has_more": has_more
     }
 
 def query_youtube_music_videos(query: str, max_results: int = 15) -> List[Dict[str, Any]]:

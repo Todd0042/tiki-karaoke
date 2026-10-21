@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover">
+    <title>Legal Rights, Licensing & Media Store Guide — Tiki Karaoke Lounge</title>
+    <link rel="icon" type="image/x-icon" href="/favicon.ico">
+    <link rel="stylesheet" href="/static/css/tiki-theme.css">
+    <style>
+        body {
+            background: #090e17;
+            color: #e2e8f0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            margin: 0;
+            padding: 16px 12px 60px;
+            line-height: 1.5;
+        }
+
+        .container {
+            max-width: 1060px;
+            margin: 0 auto;
+        }
+
+        .top-nav {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .intro-card {
+            background: rgba(14, 22, 38, 0.95);
+            border: 1px solid rgba(0, 240, 255, 0.3);
+            border-left: 5px solid var(--neon-cyan);
+            border-radius: 12px;
+            padding: 18px 20px;
+            margin-bottom: 24px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+        }
+
+        .legal-grid {
+            display: flex;
+            flex-direction: column;
+            gap: 24px;
+        }
+
+        @media (min-width: 820px) {
+            .legal-grid {
+                display: grid;
+                grid-template-columns: 1.25fr 0.85fr;
+                gap: 28px;
+            }
+        }
+
+        .column-header {
+            font-size: 1.05rem;
+            font-weight: 800;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .category-header {
+            font-size: 0.82rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin: 16px 0 8px;
+            color: #cbd5e1;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .resource-card {
+            background: rgba(16, 26, 44, 0.9);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            padding: 13px 15px;
+            margin-bottom: 10px;
+            transition: all 0.2s ease;
+            text-decoration: none;
+            display: block;
+            color: inherit;
+        }
+
+        .resource-card:hover {
+            border-color: var(--neon-cyan);
+            transform: translateY(-2px);
+            box-shadow: 0 6px 18px rgba(0, 240, 255, 0.18);
+            background: rgba(20, 34, 58, 0.95);
+        }
+
+        .resource-card-gold:hover {
+            border-color: var(--neon-gold);
+            box-shadow: 0 6px 18px rgba(255, 183, 3, 0.18);
+        }
+
+        .card-title {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 0.95rem;
+            font-weight: 700;
+            color: #fff;
+            margin-bottom: 3px;
+        }
+
+        .card-badge {
+            font-size: 0.68rem;
+            font-weight: 700;
+            padding: 2px 7px;
+            border-radius: 12px;
+            background: rgba(0, 240, 255, 0.15);
+            color: var(--neon-cyan);
+            border: 1px solid rgba(0, 240, 255, 0.3);
+        }
+
+        .card-badge-gold {
+            background: rgba(255, 183, 3, 0.15);
+            color: var(--neon-gold);
+            border-color: rgba(255, 183, 3, 0.3);
+        }
+
+        .card-badge-pink {
+            background: rgba(255, 42, 133, 0.15);
+            color: var(--neon-pink);
+            border-color: rgba(255, 42, 133, 0.3);
+        }
+
+        .card-badge-lime {
+            background: rgba(57, 255, 20, 0.15);
+            color: var(--neon-lime);
+            border-color: rgba(57, 255, 20, 0.3);
+        }
+
+        .card-desc {
+            font-size: 0.79rem;
+            color: #94a3b8;
+            margin: 0;
+            line-height: 1.4;
+        }
+
+        .card-link-icon {
+            font-size: 0.85rem;
+            color: var(--neon-cyan);
+            margin-left: 6px;
+        }
+
+        .tip-card {
+            background: rgba(255, 183, 3, 0.08);
+            border: 1px dashed rgba(255, 183, 3, 0.4);
+            border-radius: 12px;
+            padding: 16px 18px;
+            margin: 28px 0 20px;
+            font-size: 0.85rem;
+            color: #fef08a;
+        }
+
+        .venue-protip {
+            background: rgba(57, 255, 20, 0.08);
+            border: 1px solid rgba(57, 255, 20, 0.3);
+            border-left: 4px solid var(--neon-lime);
+            border-radius: 10px;
+            padding: 14px 16px;
+            margin-top: 14px;
+            font-size: 0.82rem;
+            color: #dcfce7;
+            line-height: 1.45;
+        }
+
+        .disclaimer-box {
+            background: rgba(7, 12, 20, 0.95);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 12px;
+            padding: 18px 20px;
+            font-size: 0.74rem;
+            color: #64748b;
+            line-height: 1.6;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Top Navigation -->
+        <div class="top-nav">
+            <button onclick="if (window.opener) { window.close(); } else { window.location.href = '/?tab=host'; }" class="btn-ghost" style="padding: 8px 14px; font-size: 0.82rem; font-weight: 700; border-radius: 8px; cursor: pointer;">
+                ← Return to Host Remote
+            </button>
+            <div style="font-size: 0.8rem; color: var(--neon-gold); font-weight: 700;">
+                🌴 TIKI KARAOKE LOUNGE
+            </div>
+        </div>
+
+        <!-- Header -->
+        <div style="text-align: center; margin-bottom: 24px;">
+            <h1 class="font-tiki neon-cyan" style="font-size: 1.8rem; margin: 0 0 6px 0;">
+                ⚖️ Legal Rights, Licensing & Media Store Guide
+            </h1>
+            <p style="margin: 0; color: var(--text-muted); font-size: 0.88rem;">
+                Official compliance directory: where to purchase authorized karaoke, sing-along, and music video files and obtain venue performance rights.
+            </p>
+        </div>
+
+        <!-- Explanatory Overview Card -->
+        <div class="intro-card">
+            <div style="font-weight: 800; color: var(--neon-cyan); font-size: 0.96rem; margin-bottom: 6px;">
+                🌺 Intended Purpose & The Two Distinct Copyright Permissions
+            </div>
+            <p style="margin: 0 0 10px 0; font-size: 0.85rem; color: #cbd5e1;">
+                <strong>Private Home Entertainment:</strong> Tiki Karaoke is designed and licensed for private personal use, family gatherings, and home living room parties. Private, non-commercial performances among family and social acquaintances do not require public performance licensing.
+            </p>
+            <p style="margin: 0 0 10px 0; font-size: 0.85rem; color: #cbd5e1;">
+                <strong>Commercial Venues & Public Performances:</strong> When operating in a commercial venue (bar, restaurant, lounge, festival, or ticketed event), copyright law requires two distinct rights to be in place:
+            </p>
+            <div style="display: grid; grid-template-columns: 1fr; gap: 10px; font-size: 0.82rem;">
+                <div style="background: rgba(0, 240, 255, 0.08); padding: 10px 12px; border-radius: 8px; border: 1px solid rgba(0, 240, 255, 0.2);">
+                    <strong style="color: var(--neon-cyan);">1. Master & Synchronization Rights (The Media File):</strong> Conveys the right to own and play the recorded video track. You obtain this by purchasing legal video files from authorized stores and video pools on the left.
+                </div>
+                <div style="background: rgba(255, 183, 3, 0.08); padding: 10px 12px; border-radius: 8px; border: 1px solid rgba(255, 183, 3, 0.2);">
+                    <strong style="color: var(--neon-gold);">2. Public Performance Rights (The Venue License):</strong> Conveys the right for music to be played or performed publicly. Venues obtain this through annual blanket licenses from the Performing Rights Organizations (PROs) on the right.
+                </div>
+            </div>
+        </div>
+
+        <!-- Two-Column Directory -->
+        <div class="legal-grid">
+            <!-- Left Column: Where to Legally Buy Media Files -->
+            <div>
+                <div class="column-header" style="color: var(--neon-cyan);">
+                    <span>🛒</span>
+                    <span>WHERE TO LEGALLY BUY & DOWNLOAD MEDIA</span>
+                </div>
+                <div style="font-size: 0.78rem; color: var(--text-muted); margin-bottom: 6px;">
+                    Download high-definition <code>.mp4</code> video files directly to your PC for 100% offline playback:
+                </div>
+
+                <!-- CATEGORY 1: Karaoke Video Downloads -->
+                <div class="category-header" style="color: var(--neon-cyan);">
+                    <span>🎤</span> 1. Karaoke Video Stores (Standard Backing Tracks + Lyrics)
+                </div>
+
+                <!-- Store 1: Karaoke-Version -->
+                <a href="https://www.karaoke-version.com" target="_blank" rel="noopener noreferrer" class="resource-card">
+                    <div class="card-title">
+                        <span>Karaoke-Version</span>
+                        <span class="card-badge">World's #1 Catalog</span>
+                    </div>
+                    <p class="card-desc">
+                        Over 65,000 professional downloadable MP4 karaoke videos, customizable multi-track stems, and custom pitch key transposition.
+                    </p>
+                    <div style="font-size: 0.74rem; color: var(--neon-cyan); margin-top: 5px; font-weight: 600;">
+                        karaoke-version.com <span class="card-link-icon">↗</span>
+                    </div>
+                </a>
+
+                <!-- Store 2: Sunfly Karaoke -->
+                <a href="https://www.sunflykaraoke.com" target="_blank" rel="noopener noreferrer" class="resource-card">
+                    <div class="card-title">
+                        <span>Sunfly Karaoke</span>
+                        <span class="card-badge">Studio Mastered</span>
+                    </div>
+                    <p class="card-desc">
+                        Legendary UK and international karaoke producer. 1080p HD MP4 video downloads across rock, pop, R&B, and classic standards.
+                    </p>
+                    <div style="font-size: 0.74rem; color: var(--neon-cyan); margin-top: 5px; font-weight: 600;">
+                        sunflykaraoke.com <span class="card-link-icon">↗</span>
+                    </div>
+                </a>
+
+                <!-- Store 3: Buy Karaoke Downloads (TriceraSoft) -->
+                <a href="https://www.buykaraokedownloads.com" target="_blank" rel="noopener noreferrer" class="resource-card">
+                    <div class="card-title">
+                        <span>Buy Karaoke Downloads</span>
+                        <span class="card-badge">Pay-Per-Song</span>
+                    </div>
+                    <p class="card-desc">
+                        Massive individual song library powered by TriceraSoft. DRM-free MP4 video downloads with instant file delivery.
+                    </p>
+                    <div style="font-size: 0.74rem; color: var(--neon-cyan); margin-top: 5px; font-weight: 600;">
+                        buykaraokedownloads.com <span class="card-link-icon">↗</span>
+                    </div>
+                </a>
+
+                <!-- Store 4: Party Tyme Karaoke -->
+                <a href="https://partytyme.com" target="_blank" rel="noopener noreferrer" class="resource-card">
+                    <div class="card-title">
+                        <span>Party Tyme Karaoke</span>
+                        <span class="card-badge">US Venue Standard</span>
+                    </div>
+                    <p class="card-desc">
+                        Produced by Sybersound, Party Tyme is the best-selling karaoke brand in the United States, heard in commercial bars nationwide.
+                    </p>
+                    <div style="font-size: 0.74rem; color: var(--neon-cyan); margin-top: 5px; font-weight: 600;">
+                        partytyme.com <span class="card-link-icon">↗</span>
+                    </div>
+                </a>
+
+                <!-- Store 5: SBI Karaoke -->
+                <a href="https://sbikaraoke.com" target="_blank" rel="noopener noreferrer" class="resource-card">
+                    <div class="card-title">
+                        <span>SBI Karaoke</span>
+                        <span class="card-badge">Global Hits</span>
+                    </div>
+                    <p class="card-desc">
+                        Commercial manufacturer offering modern chart-toppers, classic oldies, and specialty world genres in downloadable video formats.
+                    </p>
+                    <div style="font-size: 0.74rem; color: var(--neon-cyan); margin-top: 5px; font-weight: 600;">
+                        sbikaraoke.com <span class="card-link-icon">↗</span>
+                    </div>
+                </a>
+
+                <!-- CATEGORY 2: Crowd Sing-Along Video Stores -->
+                <div class="category-header" style="color: var(--neon-pink);">
+                    <span>👥</span> 2. Crowd Sing-Along Stores (With Guide / Lead Vocals)
+                </div>
+
+                <!-- Sing-Along 1: Karaoke-Version Custom Stems -->
+                <a href="https://www.karaoke-version.com/custombackingtrack/" target="_blank" rel="noopener noreferrer" class="resource-card">
+                    <div class="card-title">
+                        <span>Karaoke-Version Custom Backing Tracks</span>
+                        <span class="card-badge-pink">Vocals Included</span>
+                    </div>
+                    <p class="card-desc">
+                        Download karaoke video tracks with lead vocals or choir stems mixed in so the entire crowd can easily sing along in unison.
+                    </p>
+                    <div style="font-size: 0.74rem; color: var(--neon-pink); margin-top: 5px; font-weight: 600;">
+                        karaoke-version.com/custombackingtrack <span class="card-link-icon" style="color: var(--neon-pink);">↗</span>
+                    </div>
+                </a>
+
+                <!-- Sing-Along 2: Sunfly Vocal Sessions -->
+                <a href="https://www.sunflykaraoke.com" target="_blank" rel="noopener noreferrer" class="resource-card">
+                    <div class="card-title">
+                        <span>Sunfly Vocal Sessions</span>
+                        <span class="card-badge-pink">Party Anthems</span>
+                    </div>
+                    <p class="card-desc">
+                        Studio vocal guide editions designed specifically for group sing-alongs, crowd participation, and party intermissions.
+                    </p>
+                    <div style="font-size: 0.74rem; color: var(--neon-pink); margin-top: 5px; font-weight: 600;">
+                        sunflykaraoke.com <span class="card-link-icon" style="color: var(--neon-pink);">↗</span>
+                    </div>
+                </a>
+
+                <!-- CATEGORY 3: Commercial Music Video Pools -->
+                <div class="category-header" style="color: var(--neon-lime);">
+                    <span>🎬</span> 3. Commercial Music Video Pools (For Official Music Video BGM)
+                </div>
+
+                <!-- Video Pool 1: Promo Only -->
+                <a href="https://www.promoonly.com" target="_blank" rel="noopener noreferrer" class="resource-card">
+                    <div class="card-title">
+                        <span>Promo Only</span>
+                        <span class="card-badge-lime">Commercial Venue Standard</span>
+                    </div>
+                    <p class="card-desc">
+                        The #1 commercial music video service in North America. Delivers licensed HD music videos formatted and legally cleared for playback in bars, clubs, and venues.
+                    </p>
+                    <div style="font-size: 0.74rem; color: var(--neon-lime); margin-top: 5px; font-weight: 600;">
+                        promoonly.com <span class="card-link-icon" style="color: var(--neon-lime);">↗</span>
+                    </div>
+                </a>
+
+                <!-- Video Pool 2: Xtendamix -->
+                <a href="https://xtendamix.com" target="_blank" rel="noopener noreferrer" class="resource-card">
+                    <div class="card-title">
+                        <span>Xtendamix</span>
+                        <span class="card-badge-lime">VJ Video Pool</span>
+                    </div>
+                    <p class="card-desc">
+                        Premier licensed video pool providing high-definition commercial music videos for professional video DJs and entertainment venues.
+                    </p>
+                    <div style="font-size: 0.74rem; color: var(--neon-lime); margin-top: 5px; font-weight: 600;">
+                        xtendamix.com <span class="card-link-icon" style="color: var(--neon-lime);">↗</span>
+                    </div>
+                </a>
+
+                <!-- Video Pool 3: Video Pool / SmashVidz -->
+                <a href="https://videopool.com" target="_blank" rel="noopener noreferrer" class="resource-card">
+                    <div class="card-title">
+                        <span>Video Pool (SmashVidz)</span>
+                        <span class="card-badge-lime">Clean Radio Edits</span>
+                    </div>
+                    <p class="card-desc">
+                        Comprehensive commercial video pool with clean edits, intro/outro transitions, and high-energy music videos for hospitality displays.
+                    </p>
+                    <div style="font-size: 0.74rem; color: var(--neon-lime); margin-top: 5px; font-weight: 600;">
+                        videopool.com <span class="card-link-icon" style="color: var(--neon-lime);">↗</span>
+                    </div>
+                </a>
+            </div>
+
+            <!-- Right Column: Performing Rights Organizations (PROs) & Commercial Rules -->
+            <div>
+                <div class="column-header" style="color: var(--neon-gold);">
+                    <span>🏛️</span>
+                    <span>VENUE PERFORMANCE RIGHTS (PROs)</span>
+                </div>
+                <div style="font-size: 0.78rem; color: var(--text-muted); margin-bottom: 12px;">
+                    Official blanket licensing portals for venue operators, hospitality managers, and event producers:
+                </div>
+
+                <!-- USA: ASCAP -->
+                <a href="https://www.ascap.com/music-users" target="_blank" rel="noopener noreferrer" class="resource-card resource-card-gold">
+                    <div class="card-title">
+                        <span>🇺🇸 ASCAP</span>
+                        <span class="card-badge-gold">United States</span>
+                    </div>
+                    <p class="card-desc">
+                        American Society of Composers, Authors and Publishers. General music licensing for bars, lounges, restaurants, and nightclubs.
+                    </p>
+                    <div style="font-size: 0.74rem; color: var(--neon-gold); margin-top: 5px; font-weight: 600;">
+                        ascap.com/music-users <span class="card-link-icon" style="color: var(--neon-gold);">↗</span>
+                    </div>
+                </a>
+
+                <!-- USA: BMI -->
+                <a href="https://www.bmi.com/licensing" target="_blank" rel="noopener noreferrer" class="resource-card resource-card-gold">
+                    <div class="card-title">
+                        <span>🇺🇸 BMI</span>
+                        <span class="card-badge-gold">United States</span>
+                    </div>
+                    <p class="card-desc">
+                        Broadcast Music, Inc. Blanket music licenses for businesses, eating and drinking establishments, and live entertainment venues.
+                    </p>
+                    <div style="font-size: 0.74rem; color: var(--neon-gold); margin-top: 5px; font-weight: 600;">
+                        bmi.com/licensing <span class="card-link-icon" style="color: var(--neon-gold);">↗</span>
+                    </div>
+                </a>
+
+                <!-- USA: SESAC & GMR -->
+                <a href="https://www.sesac.com/licensing" target="_blank" rel="noopener noreferrer" class="resource-card resource-card-gold">
+                    <div class="card-title">
+                        <span>🇺🇸 SESAC & GMR</span>
+                        <span class="card-badge-gold">United States</span>
+                    </div>
+                    <p class="card-desc">
+                        SESAC Performance Licensing and Global Music Rights represent top songwriters and commercial public performance catalogs.
+                    </p>
+                    <div style="font-size: 0.74rem; color: var(--neon-gold); margin-top: 5px; font-weight: 600;">
+                        sesac.com/licensing <span class="card-link-icon" style="color: var(--neon-gold);">↗</span>
+                    </div>
+                </a>
+
+                <!-- UK: PPL PRS -->
+                <a href="https://pplprs.co.uk" target="_blank" rel="noopener noreferrer" class="resource-card resource-card-gold">
+                    <div class="card-title">
+                        <span>🇬🇧 TheMusicLicence (PPL PRS)</span>
+                        <span class="card-badge-lime">United Kingdom</span>
+                    </div>
+                    <p class="card-desc">
+                        Joint licensing agency ensuring UK venues are legally covered to play and perform commercial music in public spaces.
+                    </p>
+                    <div style="font-size: 0.74rem; color: var(--neon-lime); margin-top: 5px; font-weight: 600;">
+                        pplprs.co.uk <span class="card-link-icon" style="color: var(--neon-lime);">↗</span>
+                    </div>
+                </a>
+
+                <!-- Canada: Entandem -->
+                <a href="https://www.entandemlicensing.com" target="_blank" rel="noopener noreferrer" class="resource-card resource-card-gold">
+                    <div class="card-title">
+                        <span>🇨🇦 Entandem (SOCAN & Re:Sound)</span>
+                        <span class="card-badge-lime">Canada</span>
+                    </div>
+                    <p class="card-desc">
+                        Single-window joint venture simplifying public performance music licensing for Canadian businesses and events.
+                    </p>
+                    <div style="font-size: 0.74rem; color: var(--neon-lime); margin-top: 5px; font-weight: 600;">
+                        entandemlicensing.com <span class="card-link-icon" style="color: var(--neon-lime);">↗</span>
+                    </div>
+                </a>
+
+                <!-- Australia: OneMusic -->
+                <a href="https://onemusic.com.au" target="_blank" rel="noopener noreferrer" class="resource-card resource-card-gold">
+                    <div class="card-title">
+                        <span>🇦🇺 OneMusic Australia</span>
+                        <span class="card-badge-lime">Australia</span>
+                    </div>
+                    <p class="card-desc">
+                        Joint initiative of APRA AMCOS and PPCA providing blanket music licenses for Australian venues and hospitality operations.
+                    </p>
+                    <div style="font-size: 0.74rem; color: var(--neon-lime); margin-top: 5px; font-weight: 600;">
+                        onemusic.com.au <span class="card-link-icon" style="color: var(--neon-lime);">↗</span>
+                    </div>
+                </a>
+
+                <!-- Commercial Video Rules & Zero-Cost Venue Pro-Tip -->
+                <div style="margin-top: 20px; padding: 14px 16px; background: rgba(14, 22, 38, 0.95); border: 1px solid rgba(255, 183, 3, 0.3); border-radius: 10px;">
+                    <div style="font-weight: 700; color: var(--neon-gold); font-size: 0.88rem; margin-bottom: 6px;">
+                        📺 Commercial Music Video Display Rules
+                    </div>
+                    <div style="font-size: 0.8rem; color: #cbd5e1; line-height: 1.45;">
+                        Personal consumer accounts (such as standard YouTube, Spotify, or Apple Music) do not convey rights for commercial public video display in bars or restaurants. For original artist music videos, venues subscribe to licensed commercial video pools (such as <strong>Promo Only</strong>).
+                    </div>
+
+                    <!-- The Zero-Cost Venue Alternative Pro-Tip -->
+                    <div class="venue-protip">
+                        <strong style="color: var(--neon-lime);">🌴 Venue Pro-Tip (Zero Extra Video Fees):</strong><br>
+                        If your venue does not wish to subscribe to commercial music video pools, simply switch Tiki Karaoke's <strong>Intermission Vibe Mode</strong> to <strong>"True Karaoke (Sing-Alongs)"</strong> on your Host Remote! Between singer performances, the stage screen will play crowd sing-alongs covered 100% by your venue's standard ASCAP/BMI blanket licenses with zero additional video fees!
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tip Box -->
+        <div class="tip-card">
+            <div style="font-weight: 800; font-size: 0.95rem; margin-bottom: 4px; display: flex; align-items: center; gap: 6px;">
+                <span>💡</span>
+                <span>How to Play Purchased Karaoke Files in Tiki Karaoke</span>
+            </div>
+            <div>
+                1. Save your purchased <code>.mp4</code> video files into your user <strong><code>Music/Karaoke/Tiki</code></strong> folder on this PC.<br>
+                2. On the Host Remote screen, open the <strong>📂 Import Local Karaoke Media (BYOM)</strong> card.<br>
+                3. Tap <strong>🚀 Scan & Import Local Songs</strong>. Tiki Karaoke will automatically parse Artist and Song Titles from filenames and index them directly into the mobile search songbook!
+            </div>
+        </div>
+
+        <!-- Legal Disclaimer Box -->
+        <div class="disclaimer-box">
+            <div style="font-weight: 700; color: #cbd5e1; margin-bottom: 8px; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.5px;">
+                ⚖️ Non-Affiliation, Nominative Trademark & External Links Disclaimer
+            </div>
+            <p style="margin: 0 0 8px 0;">
+                <strong>Independent Software:</strong> Tiki Karaoke is an independent media coordination software player. Tiki Karaoke and its developers are not affiliated, associated, authorized, endorsed by, or in any way officially connected with any of the commercial vendors or Performing Rights Organizations (PROs) referenced on this page, including but not limited to ASCAP, BMI, SESAC, Global Music Rights (GMR), PPL, PRS for Music, SOCAN, Re:Sound, APRA AMCOS, Karaoke-Version, Sunfly Karaoke, Buy Karaoke Downloads / TriceraSoft, Party Tyme Karaoke / Sybersound, SBI Karaoke, Promo Only, Xtendamix, or Video Pool / SmashVidz.
+            </p>
+            <p style="margin: 0 0 8px 0;">
+                <strong>Nominative Fair Use of Trademarks:</strong> All product names, company names, trademarks™, and registered® trademarks referenced on this page are property of their respective owners. Their mention herein is strictly for nominative identification, educational guidance, and legal compliance assistance (15 U.S.C. § 1115(b)(4)), and does not imply any partnership, affiliation, sponsorship, or endorsement.
+            </p>
+            <p style="margin: 0 0 8px 0;">
+                <strong>Zero Affiliate Compensation (FTC Disclosure 16 CFR Part 255):</strong> Tiki Karaoke receives no affiliate commissions, referral fees, advertising revenue, or financial incentives of any kind from any of the referenced stores or licensing organizations. External links are provided strictly as a practical public compliance courtesy.
+            </p>
+            <p style="margin: 0 0 8px 0;">
+                <strong>Third-Party Website Responsibility:</strong> Tiki Karaoke does not operate, control, or assume liability for the content, privacy practices, terms of service, customer transactions, or licensing agreements of external third-party websites.
+            </p>
+            <p style="margin: 0;">
+                <strong>No Formal Legal Advice:</strong> The information provided on this page is for general educational and compliance guidance only and does not constitute formal legal counsel. Venue operators, commercial DJs, and event producers are responsible for determining their specific compliance requirements under applicable copyright statutes.
+            </p>
+        </div>
+    </div>
+</body>
+</html>

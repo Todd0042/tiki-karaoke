@@ -18,6 +18,9 @@ class TestAPIEndpoints(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         init_db()
+        from database import get_setting, set_setting
+        cls.default_strict_mode = get_setting("strict_byom_only")
+        set_setting("strict_byom_only", "false")
         from config import save_config
         save_config({"configured": True})
         cls.client = TestClient(app)
@@ -508,12 +511,29 @@ class TestAPIEndpoints(unittest.TestCase):
                 msg = ws.receive_json()
                 self.assertEqual(msg.get("type"), "emoji_reaction")
 
-        # 2. Host-authenticated WebSocket can trigger soundboard
+        # 2. Host-authenticated WebSocket can trigger soundboard and broadcast host_mic_settings
         with self.client.websocket_connect(f"/ws?token={HOST_TOKEN}") as ws_host:
             ws_host.send_json({"type": "soundboard_play", "sound": "airhorn"})
             msg = ws_host.receive_json()
             self.assertEqual(msg.get("type"), "soundboard_play")
             self.assertEqual(msg.get("sound"), "airhorn")
+
+            # Test host_mic_settings broadcast
+            ws_host.send_json({
+                "type": "host_mic_settings",
+                "volume": 95,
+                "muted": False,
+                "reverb": True,
+                "ducking_enabled": True,
+                "ducking_db": -6
+            })
+            mic_msg = ws_host.receive_json()
+            self.assertEqual(mic_msg.get("type"), "host_mic_settings")
+            self.assertEqual(mic_msg.get("volume"), 95)
+            self.assertEqual(mic_msg.get("muted"), False)
+            self.assertEqual(mic_msg.get("reverb"), True)
+            self.assertEqual(mic_msg.get("ducking_enabled"), True)
+            self.assertEqual(mic_msg.get("ducking_db"), -6)
 
     def test_abuse_prevention_quotas_and_cooldown(self):
         from config import HOST_TOKEN
@@ -773,7 +793,234 @@ class TestAPIEndpoints(unittest.TestCase):
         self.assertEqual(r_host_del.status_code, 200)
         self.assertTrue(r_host_del.json()["deleted"])
 
+    def test_host_shutdown_endpoint(self):
+        from config import HOST_TOKEN
+        from app import register_shutdown_trigger
+        shutdown_called = []
+        register_shutdown_trigger(lambda: shutdown_called.append(True))
+
+        # 1. Reject unauthorized request
+        r = self.client.post("/api/host/shutdown")
+        self.assertEqual(r.status_code, 403)
+
+        # 2. Accept host authorized request
+        r = self.client.post("/api/host/shutdown", headers={"X-Host-Token": HOST_TOKEN})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()["status"], "ok")
+
+        # Wait briefly for delayed exit callback
+        import time
+        time.sleep(0.8)
+        self.assertTrue(len(shutdown_called) > 0)
+
+    def test_sing_along_detection_and_filtering(self):
+        from search import is_sing_along_track
+
+        # Positive cases (original vocals with lyrics)
+        self.assertTrue(is_sing_along_track("Adele - Rolling in the Deep (Lyrics)"))
+        self.assertTrue(is_sing_along_track("Queen - Bohemian Rhapsody (Official Lyric Video)"))
+        self.assertTrue(is_sing_along_track("Journey - Don't Stop Believin' [Lyrics on screen]"))
+        self.assertTrue(is_sing_along_track("Disney Sing Along - Under the Sea"))
+
+        # Negative cases (pure karaoke, instrumental, backing track, or non-music)
+        self.assertFalse(is_sing_along_track("Adele - Rolling in the Deep (Karaoke Version)"))
+        self.assertFalse(is_sing_along_track("Queen - Bohemian Rhapsody Instrumental with lyrics"))
+        self.assertFalse(is_sing_along_track("Journey - Don't Stop Believin' (Backing Track)"))
+        self.assertFalse(is_sing_along_track("Ed Sheeran - Perfect (Off Vocal)"))
+        self.assertFalse(is_sing_along_track("Taylor Swift - Love Story (Sing King Karaoke)"))
+        self.assertFalse(is_sing_along_track("Beatles - Let It Be (Vocal Coach Reaction)"))
+        self.assertFalse(is_sing_along_track("How to sing Rolling in the Deep tutorial"))
+
+    def test_sing_along_queue_and_library(self):
+        from config import HOST_TOKEN, get_sing_along_dir, get_tracks_dir
+        from database import get_track_by_id, update_track_download_status
+
+        # 1. Queue a normal karaoke track
+        r1 = self.client.post("/api/queue", json={
+            "video_id": "sa_test_karaoke_01",
+            "title": "Normal Karaoke Song",
+            "artist": "Standard Artist",
+            "singer_token": "tok_sa_singer",
+            "is_sing_along": False
+        }, headers={"X-Host-Token": HOST_TOKEN})
+        self.assertEqual(r1.status_code, 200)
+
+        # 2. Queue a sing-along track
+        r2 = self.client.post("/api/queue", json={
+            "video_id": "sa_test_sing_along_02",
+            "title": "Sing Along Song",
+            "artist": "Vocal Artist",
+            "singer_token": "tok_sa_singer",
+            "is_sing_along": True
+        }, headers={"X-Host-Token": HOST_TOKEN})
+        self.assertEqual(r2.status_code, 200)
+
+        # 3. Check /api/queue returns correct is_sing_along flags
+        q_res = self.client.get("/api/queue").json()
+        item_normal = next((q for q in q_res if q["video_id"] == "sa_test_karaoke_01"), None)
+        item_sa = next((q for q in q_res if q["video_id"] == "sa_test_sing_along_02"), None)
+        self.assertIsNotNone(item_normal)
+        self.assertIsNotNone(item_sa)
+        self.assertEqual(item_normal["is_sing_along"], 0)
+        self.assertEqual(item_sa["is_sing_along"], 1)
+
+        # 4. Check downloader directory destination logic
+        track_normal = get_track_by_id(item_normal["track_id"])
+        track_sa = get_track_by_id(item_sa["track_id"])
+        self.assertEqual(track_normal["is_sing_along"], 0)
+        self.assertEqual(track_sa["is_sing_along"], 1)
+
+        # Mock download status and verify library separation
+        update_track_download_status(track_normal["id"], "ready", str(get_tracks_dir() / "Standard Artist" / "Normal.mp4"))
+        update_track_download_status(track_sa["id"], "ready", str(get_sing_along_dir() / "Vocal Artist" / "SingAlong.mp4"))
+
+        # Verify /api/library with sing_along=false returns only normal karaoke track
+        lib_normal = self.client.get("/api/library?sing_along=false").json()
+        self.assertTrue(any(t["video_id"] == "sa_test_karaoke_01" for t in lib_normal["tracks"]))
+        self.assertFalse(any(t["video_id"] == "sa_test_sing_along_02" for t in lib_normal["tracks"]))
+
+        # Verify /api/library with sing_along=true returns only sing-along track
+        lib_sa = self.client.get("/api/library?sing_along=true").json()
+        self.assertFalse(any(t["video_id"] == "sa_test_karaoke_01" for t in lib_sa["tracks"]))
+        self.assertTrue(any(t["video_id"] == "sa_test_sing_along_02" for t in lib_sa["tracks"]))
+
+    def test_default_paths(self):
+        from config import HOST_TOKEN
+        res = self.client.get("/api/host/default-paths", headers={"X-Host-Token": HOST_TOKEN})
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["status"], "ok")
+        self.assertIn("default_music_dir", data)
+        self.assertIn("user_karaoke_parent", data)
+        self.assertIn("db_dir", data)
+        self.assertTrue(data["default_music_dir"].endswith("Music/Karaoke/Tiki") or "Music\\Karaoke\\Tiki" in data["default_music_dir"])
+
+    def test_import_local_library(self):
+        from config import HOST_TOKEN
+        import tempfile
+        from database import search_local_tracks
+
+        # Create temporary folder with mock karaoke video files
+        with tempfile.TemporaryDirectory(prefix="tiki_mock_import_") as tmp_import:
+            f1 = Path(tmp_import) / "Journey - Don't Stop Believin' (Karaoke).mp4"
+            f1.write_bytes(b"dummy mp4 content")
+            f2 = Path(tmp_import) / "subfolder"
+            f2.mkdir(parents=True, exist_ok=True)
+            f2_file = f2 / "Bon Jovi - Livin' on a Prayer.mkv"
+            f2_file.write_bytes(b"dummy mkv content")
+
+            # Post import request
+            payload = {
+                "folder_path": tmp_import,
+                "recursive": True,
+                "is_sing_along": False
+            }
+            res = self.client.post("/api/host/import-local-library", json=payload, headers={"X-Host-Token": HOST_TOKEN})
+            self.assertEqual(res.status_code, 200)
+            data = res.json()
+            self.assertEqual(data["status"], "ok")
+            self.assertEqual(data["imported_count"], 2)
+            self.assertEqual(data["total_found"], 2)
+
+            # Verify local FTS search finds the imported songs
+            journey_results = search_local_tracks("Believin")
+            self.assertTrue(len(journey_results) > 0)
+            self.assertEqual(journey_results[0]["artist"], "Journey")
+
+            bon_jovi_results = search_local_tracks("Prayer")
+            self.assertTrue(len(bon_jovi_results) > 0)
+            self.assertEqual(bon_jovi_results[0]["artist"], "Bon Jovi")
+
+    def test_legal_guide_page(self):
+        res = self.client.get("/legal")
+        self.assertEqual(res.status_code, 200)
+        content = res.text
+        self.assertIn("Legal Rights, Licensing & Media Store Guide", content)
+        self.assertIn("karaoke-version.com", content)
+        self.assertIn("sunflykaraoke.com", content)
+        self.assertIn("promoonly.com", content)
+        self.assertIn("xtendamix.com", content)
+        self.assertIn("ascap.com", content)
+        self.assertIn("bmi.com", content)
+        self.assertIn("Nominative Fair Use", content)
+        self.assertIn("Zero Affiliate Compensation", content)
+        self.assertIn("True Karaoke", content)
+
+    def test_strict_commercial_byom_lockdown(self):
+        from config import HOST_TOKEN
+        from database import (
+            save_track, set_setting, get_setting, add_filler_track,
+            get_next_vibe_filler_track, import_local_filler_track
+        )
+        from search import tiered_search
+
+        # 1. Verify fresh install default is true
+        self.assertEqual(self.default_strict_mode, "true")
+
+        # 2. Check host authentication
+        res = self.client.get("/api/host/strict-mode")
+        self.assertEqual(res.status_code, 403)
+
+        # 3. Toggle strict mode ON
+        res = self.client.post("/api/host/strict-mode", json={"enabled": True}, headers={"X-Host-Token": HOST_TOKEN})
+        self.assertEqual(res.status_code, 200)
+        self.assertTrue(res.json()["strict_byom_only"])
+        self.assertEqual(get_setting("strict_byom_only"), "true")
+
+        # 4. Create an imported track and a youtube track
+        tid_imported = save_track("local_acdc_back_in_black", "Back In Black", "AC/DC", "AC/DC - Back In Black", media_source="imported")
+        from database import update_track_download_status
+        update_track_download_status(tid_imported, "ready", "/dummy/path/acdc.mp4")
+
+        tid_youtube = save_track("yt_stream_track_01", "Thunderstruck", "AC/DC", "AC/DC - Thunderstruck", media_source="youtube")
+
+        # 5. Intermission Lockdown: Unlicensed YouTube filler tracks are excluded under strict mode
+        add_filler_track("yt_filler_bad_01", "Bad Stream Clip", "Bad Artist", "Bad Stream Clip", is_downloaded=1, media_source="youtube")
+        pick = get_next_vibe_filler_track(mode="pure_filler")
+        self.assertIsNone(pick)
+
+        # 6. Licensed / imported filler video is successfully picked!
+        import_local_filler_track("/dummy/path/promoonly_dance.mp4", "Licensed Dance Video", "Pool DJ", duration=210)
+        pick_imported = get_next_vibe_filler_track(mode="pure_filler")
+        self.assertIsNotNone(pick_imported)
+        self.assertEqual(pick_imported["artist"], "Pool DJ")
+
+        # 7. Search under strict mode: only imported track is returned, and search skips online
+        results = tiered_search("Black")
+        self.assertTrue(results.get("strict_mode", False))
+        self.assertEqual(len(results["youtube_results"]), 0)
+        self.assertEqual(len(results["local_results"]), 1)
+        self.assertEqual(results["local_results"][0]["artist"], "AC/DC")
+
+        # 8. Enqueue rejection for youtube track
+        singer_token = "strict_singer_test"
+        res_yt = self.client.post("/api/queue", json={
+            "track_id": tid_youtube,
+            "singer_token": singer_token,
+            "video_id": "yt_stream_track_01",
+            "title": "Thunderstruck",
+            "artist": "AC/DC"
+        })
+        self.assertEqual(res_yt.status_code, 403)
+        self.assertIn("Strict Commercial Mode Active", res_yt.json()["detail"])
+
+        # 9. Enqueue success for imported track
+        res_imp = self.client.post("/api/queue", json={
+            "track_id": tid_imported,
+            "singer_token": singer_token,
+            "video_id": "local_acdc_back_in_black",
+            "title": "Back In Black",
+            "artist": "AC/DC"
+        })
+        self.assertEqual(res_imp.status_code, 200)
+        self.assertEqual(res_imp.json()["status"], "ok")
+
+        # 10. Reset strict mode to false
+        self.client.post("/api/host/strict-mode", json={"enabled": False}, headers={"X-Host-Token": HOST_TOKEN})
+        self.assertEqual(get_setting("strict_byom_only"), "false")
+
 if __name__ == "__main__":
     unittest.main()
+
 
 

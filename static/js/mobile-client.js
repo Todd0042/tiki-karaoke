@@ -15,14 +15,52 @@ let lastAlertedQueueId = null;
 let currentAvSyncOffset = 0;
 let lastQueuedSongTime = 0;
 let lastQueuedSongId = null;
+let isSingAlongMode = false;
 
 document.addEventListener("DOMContentLoaded", () => {
+    initSingAlongMode();
     checkIdentity();
     initWebSocket();
     setupNavigation();
     setupSearch();
     loadLiveQueue();
+    loadLibraryTracks();
 });
+
+function initSingAlongMode() {
+    const cookieVal = getCookie("tiki_sing_along");
+    if (cookieVal !== null) {
+        isSingAlongMode = (cookieVal === "1" || cookieVal === "true");
+    } else {
+        const localVal = localStorage.getItem("tiki_sing_along");
+        isSingAlongMode = (localVal === "1" || localVal === "true");
+    }
+    syncSingAlongToggleUI();
+}
+
+function syncSingAlongToggleUI() {
+    const tSearch = document.getElementById("singAlongToggleSearch");
+    if (tSearch) tSearch.checked = isSingAlongMode;
+    const tLib = document.getElementById("singAlongToggleLibrary");
+    if (tLib) tLib.checked = isSingAlongMode;
+}
+
+function onSingAlongToggleChange(checked) {
+    isSingAlongMode = !!checked;
+    setCookie("tiki_sing_along", isSingAlongMode ? "1" : "0", 365);
+    localStorage.setItem("tiki_sing_along", isSingAlongMode ? "1" : "0");
+    syncSingAlongToggleUI();
+
+    const searchInput = document.getElementById("searchInput");
+    if (searchInput && searchInput.value.trim().length > 0) {
+        performSearch(searchInput.value.trim());
+    }
+
+    if (typeof loadLibraryTracks === "function") {
+        currentLibPage = 1;
+        loadLibraryTracks();
+    }
+}
 
 // Identity & Session
 function checkIdentity() {
@@ -74,7 +112,11 @@ function checkIdentity() {
     } else {
         currentSinger = null;
         updateSingerHeader();
-        showOnboardingModal();
+        const urlP = new URLSearchParams(window.location.search);
+        const isHostParam = urlP.get("tab") === "host" || urlP.get("tab") === "hostTab" || Boolean(getCookie("tiki_host"));
+        if (!isHostParam) {
+            showOnboardingModal();
+        }
     }
 
     // Check if host
@@ -96,6 +138,8 @@ function checkRole() {
             }
             document.body.classList.toggle("host-mode-active", isHost);
             if (isHost) {
+                const onboarding = document.getElementById("onboardingModal");
+                if (onboarding) onboarding.style.display = "none";
                 loadHostSettings();
                 loadHostDisplays();
                 loadHostStorageStatus();
@@ -103,6 +147,12 @@ function checkRole() {
                 loadVenueAvSync();
                 checkHostHealth();
                 loadHostNetworkStatus();
+
+                const urlParams = new URLSearchParams(window.location.search);
+                const reqTab = urlParams.get("tab");
+                if (reqTab === "host" || reqTab === "hostTab") {
+                    switchTab("hostTab");
+                }
             }
             return isHost;
         })
@@ -483,6 +533,19 @@ function initWebSocket() {
                 }
             } else if (data.type === "singer_on_deck") {
                 handleSingerOnDeckMessage(data);
+            } else if (data.type === "host_mic_settings") {
+                if (isHost) {
+                    syncHostMicSettingsUI(data);
+                }
+            } else if (data.type === "strict_mode_updated") {
+                if (isHost) {
+                    syncHostStrictModeUI(data.strict_byom_only);
+                }
+            } else if (data.type === "server_shutting_down") {
+                showToast("🛑 Host closed the session. Aloha! 🌺");
+                setTimeout(() => {
+                    document.body.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;background:#05080f;color:#00f0ff;font-family:sans-serif;text-align:center;padding:20px;"><h1>🌴 Party Closed</h1><p style="color:#aaa;font-size:1.1rem;margin-top:12px;">Tiki Karaoke has been shut down by the host.<br>Aloha and see you next time! 🌺</p></div>';
+                }, 1000);
             }
         } catch (e) {
             console.error("[WS] Error:", e);
@@ -541,6 +604,21 @@ document.addEventListener("visibilitychange", () => {
     }
 });
 
+function switchTab(tabName) {
+    if (!tabName) return;
+    const target = tabName.endsWith("Tab") ? tabName : (tabName + "Tab");
+    const btn = document.querySelector(`.nav-tab-btn[data-tab="${target}"]`) || document.querySelector(`.nav-tab-btn[data-tab="${tabName}"]`);
+    if (btn) {
+        btn.click();
+        return;
+    }
+    // Fallback if button not found or hidden
+    document.querySelectorAll(".nav-tab-btn[data-tab]").forEach(b => b.classList.remove("active"));
+    document.querySelectorAll(".tab-view").forEach(v => v.style.display = "none");
+    const targetEl = document.getElementById(target) || document.getElementById(tabName);
+    if (targetEl) targetEl.style.display = "block";
+}
+
 // Navigation Tabs
 function setupNavigation() {
     document.querySelectorAll(".nav-tab-btn[data-tab]").forEach(btn => {
@@ -564,6 +642,8 @@ function setupNavigation() {
                 loadHostStorageStatus();
                 checkYtdlpStatus();
                 loadVenueAvSync();
+                loadHostDefaultPaths();
+                loadHostStrictMode();
             }
             if (target === "fillerCrateTab") {
                 loadFillerTracks();
@@ -652,11 +732,30 @@ function clearSearchInput() {
     }
 }
 
-function performSearch(query, forceOnline = false) {
-    const resultsContainer = document.getElementById("searchResults");
-    resultsContainer.innerHTML = '<div style="text-align: center; padding: 25px; color: var(--neon-cyan);">🍹 Searching Tiki Library & YouTube...</div>';
+let currentSearchQuery = "";
+let currentSearchForceOnline = false;
+let currentSearchPage = 1;
 
-    fetch(`/api/search?q=${encodeURIComponent(query)}&force_online=${forceOnline}`)
+function performSearch(query, forceOnline = false, page = 1) {
+    const resultsContainer = document.getElementById("searchResults");
+    if (!resultsContainer) return;
+
+    currentSearchQuery = query;
+    currentSearchForceOnline = forceOnline;
+    currentSearchPage = page;
+
+    if (page === 1) {
+        const searchMsg = isSingAlongMode ? "🍹 Searching Tiki Sing-Along Library & YouTube..." : "🍹 Searching Tiki Library & YouTube...";
+        resultsContainer.innerHTML = `<div style="text-align: center; padding: 25px; color: var(--neon-cyan);">${searchMsg}</div>`;
+    } else {
+        const findMoreBtn = document.getElementById("findMoreBtn");
+        if (findMoreBtn) {
+            findMoreBtn.disabled = true;
+            findMoreBtn.innerText = "🌺 Digging up more songs...";
+        }
+    }
+
+    fetch(`/api/search?q=${encodeURIComponent(query)}&force_online=${forceOnline}&sing_along=${isSingAlongMode}&page=${page}`)
         .then(async res => {
             if (res.status === 429) {
                 const data = await res.json().catch(() => ({}));
@@ -668,71 +767,88 @@ function performSearch(query, forceOnline = false) {
             return res.json();
         })
         .then(data => {
-            renderSearchResults(data, query);
+            renderSearchResults(data, query, page > 1);
         })
         .catch(err => {
-            resultsContainer.innerHTML = `<div style="text-align: center; color: #ffb703; padding: 20px;">⏳ ${err.message || "Search error. Check connection."}</div>`;
+            if (page === 1) {
+                resultsContainer.innerHTML = `<div style="text-align: center; color: #ffb703; padding: 20px;">⏳ ${err.message || "Search error. Check connection."}</div>`;
+            } else {
+                showToast("⚠️ " + (err.message || "Could not load more songs"));
+                const findMoreBtn = document.getElementById("findMoreBtn");
+                if (findMoreBtn) {
+                    findMoreBtn.disabled = false;
+                    findMoreBtn.innerText = "🔎 Find More Songs...";
+                }
+            }
         });
 }
 
-function renderSearchResults(data, query) {
+function renderSearchResults(data, query, isAppend = false) {
     const container = document.getElementById("searchResults");
-    container.innerHTML = "";
+    if (!container) return;
 
     const localList = data.local_results || [];
     const ytList = data.youtube_results || [];
+    const hasMore = Boolean(data.has_more);
 
-    if (localList.length === 0 && ytList.length === 0) {
-        container.innerHTML = `<div style="text-align:center; padding: 30px; color: var(--text-muted);">
-            No songs found for "${query}". Try another title or artist! 🌺
-        </div>`;
-        return;
-    }
+    if (!isAppend) {
+        container.innerHTML = "";
+        if (localList.length === 0 && ytList.length === 0) {
+            container.innerHTML = `<div style="text-align:center; padding: 30px; color: var(--text-muted);">
+                No songs found for "${escapeHtml(query)}". Try another title or artist! 🌺
+            </div>`;
+            return;
+        }
 
-    // 1. Local Tracks (Tier 1)
-    if (localList.length > 0) {
-        const localSection = document.createElement("div");
-        localSection.innerHTML = '<div style="font-size: 0.8rem; color: var(--neon-lime); font-weight: 700; margin: 15px 0 8px 4px;">⚡ FROM LOCAL TIKI LIBRARY (Instant Play)</div>';
-        
-        localList.forEach(track => {
-            const card = document.createElement("div");
-            card.className = "tiki-card";
-            card.style.padding = "14px";
-            card.style.marginBottom = "10px";
-            card.style.display = "flex";
-            card.style.justifyContent = "space-between";
-            card.style.alignItems = "center";
+        // 1. Local Tracks (Tier 1)
+        if (localList.length > 0) {
+            const localSection = document.createElement("div");
+            const localHeader = isSingAlongMode ? "⚡ LOCAL SING-ALONG TRACKS (Instant Play)" : "⚡ FROM LOCAL TIKI LIBRARY (Instant Play)";
+            localSection.innerHTML = `<div style="font-size: 0.8rem; color: var(--neon-lime); font-weight: 700; margin: 15px 0 8px 4px;">${localHeader}</div>`;
+            
+            localList.forEach(track => {
+                const card = document.createElement("div");
+                card.className = "tiki-card";
+                card.style.padding = "14px";
+                card.style.marginBottom = "10px";
+                card.style.display = "flex";
+                card.style.justifyContent = "space-between";
+                card.style.alignItems = "center";
 
-            card.innerHTML = `
-                <div style="flex: 1; padding-right: 10px;">
-                    <div style="font-weight: 700; font-size: 1.05rem;">${escapeHtml(track.title)}</div>
-                    <div style="color: var(--text-muted); font-size: 0.85rem;">${escapeHtml(track.artist)}</div>
-                    <span class="badge-local" style="margin-top: 4px;">⚡ Downloaded</span>
-                </div>
-                <button class="btn-neon-pink local-queue-btn" style="padding: 8px 14px; font-size: 0.85rem;">
-                    + Queue
-                </button>
-            `;
-            card.querySelector(".local-queue-btn").onclick = () => openQueueModal(track.id, track.title, track.artist, track.video_id);
-            localSection.appendChild(card);
-        });
-        container.appendChild(localSection);
+                const isSingAlongTrack = Boolean(track.is_sing_along || isSingAlongMode);
 
-        // Optional YouTube button if user wants more versions
-        const searchMoreBtn = document.createElement("button");
-        searchMoreBtn.className = "btn-ghost";
-        searchMoreBtn.style.width = "100%";
-        searchMoreBtn.style.margin = "10px 0 20px 0";
-        searchMoreBtn.innerText = "🌐 Search YouTube for more versions...";
-        searchMoreBtn.onclick = () => performSearch(query, true);
-        container.appendChild(searchMoreBtn);
+                card.innerHTML = `
+                    <div style="flex: 1; padding-right: 10px;">
+                        <div style="font-weight: 700; font-size: 1.05rem;">${escapeHtml(track.title)}</div>
+                        <div style="color: var(--text-muted); font-size: 0.85rem;">${escapeHtml(track.artist)}</div>
+                        <div style="display: flex; gap: 6px; align-items: center; margin-top: 4px; flex-wrap: wrap;">
+                            <span class="badge-local">⚡ Downloaded</span>
+                            ${isSingAlongTrack ? '<span class="badge-sing-along">🎙️ Sing-Along</span>' : ''}
+                        </div>
+                    </div>
+                    <button class="btn-neon-pink local-queue-btn" style="padding: 8px 14px; font-size: 0.85rem;">
+                        + Queue
+                    </button>
+                `;
+                card.querySelector(".local-queue-btn").onclick = () => openQueueModal(track.id, track.title, track.artist, track.video_id, 0, isSingAlongTrack);
+                localSection.appendChild(card);
+            });
+            container.appendChild(localSection);
+        }
     }
 
     // 2. YouTube Results (Tier 2)
-    if (ytList.length > 0) {
-        const ytSection = document.createElement("div");
-        ytSection.innerHTML = '<div style="font-size: 0.8rem; color: var(--neon-pink); font-weight: 700; margin: 15px 0 8px 4px;">🌐 YOUTUBE KARAOKE RESULTS</div>';
+    let ytSection = document.getElementById("ytResultsSection");
+    if (!ytSection && ytList.length > 0) {
+        ytSection = document.createElement("div");
+        ytSection.id = "ytResultsSection";
+        const ytHeader = isSingAlongMode ? "🌐 YOUTUBE SING-ALONG (LYRICS + VOCALS)" : "🌐 YOUTUBE KARAOKE RESULTS";
+        ytSection.innerHTML = `<div style="font-size: 0.8rem; color: var(--neon-pink); font-weight: 700; margin: 15px 0 8px 4px;">${ytHeader}</div><div id="ytResultsCards"></div>`;
+        container.appendChild(ytSection);
+    }
 
+    const cardsContainer = document.getElementById("ytResultsCards") || ytSection;
+    if (cardsContainer && ytList.length > 0) {
         ytList.forEach(group => {
             const card = document.createElement("div");
             card.className = "tiki-card-pink";
@@ -740,16 +856,17 @@ function renderSearchResults(data, query) {
             card.style.marginBottom = "12px";
 
             const bestVersion = group.versions[0];
-            const hasMultiple = group.versions.length > 1;
+            const isSingAlongYt = Boolean(group.is_sing_along || isSingAlongMode);
 
             card.innerHTML = `
                 <div style="display: flex; justify-content: space-between; align-items: flex-start;">
                     <div style="flex: 1; padding-right: 10px;">
                         <div style="font-weight: 700; font-size: 1.05rem;">${escapeHtml(group.title)}</div>
                         <div style="color: var(--text-muted); font-size: 0.85rem;">${escapeHtml(group.artist)}</div>
-                        <div style="font-size: 0.75rem; color: var(--neon-gold); margin-top: 4px;">
-                            ${escapeHtml(bestVersion.channel || "YouTube")} • ${formatDuration(bestVersion.duration)}
-                            ${bestVersion.attributes.length ? `• ${bestVersion.attributes.join(', ')}` : ''}
+                        <div style="font-size: 0.75rem; color: var(--neon-gold); margin-top: 4px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+                            <span>${escapeHtml(bestVersion.channel || "YouTube")} • ${formatDuration(bestVersion.duration)}</span>
+                            ${bestVersion.attributes && bestVersion.attributes.length ? `<span>• ${bestVersion.attributes.join(', ')}</span>` : ''}
+                            ${isSingAlongYt ? '<span class="badge-sing-along">🎙️ Sing-Along</span>' : ''}
                         </div>
                     </div>
                     <button class="btn-neon-cyan yt-queue-btn" style="padding: 8px 14px; font-size: 0.85rem;">
@@ -757,21 +874,59 @@ function renderSearchResults(data, query) {
                     </button>
                 </div>
             `;
-            card.querySelector(".yt-queue-btn").onclick = () => openQueueModal(null, group.title, group.artist, bestVersion.video_id);
-            ytSection.appendChild(card);
+            card.querySelector(".yt-queue-btn").onclick = () => openQueueModal(null, group.title, group.artist, bestVersion.video_id, 0, isSingAlongYt);
+            cardsContainer.appendChild(card);
         });
-        container.appendChild(ytSection);
     }
+
+    // Clean up old button
+    const oldBtn = document.getElementById("findMoreBtn");
+    if (oldBtn) oldBtn.remove();
+
+    // Render "Find More Songs" button
+    if (hasMore || (!currentSearchForceOnline && localList.length > 0)) {
+        const findMoreBtn = document.createElement("button");
+        findMoreBtn.id = "findMoreBtn";
+        findMoreBtn.className = "btn-ghost";
+        findMoreBtn.style.width = "100%";
+        findMoreBtn.style.margin = "14px 0 24px 0";
+        findMoreBtn.style.padding = "12px";
+        findMoreBtn.style.borderColor = "var(--neon-cyan)";
+        findMoreBtn.style.color = "var(--neon-cyan)";
+        findMoreBtn.style.fontWeight = "700";
+        findMoreBtn.style.borderRadius = "10px";
+        findMoreBtn.innerText = (!currentSearchForceOnline && localList.length > 0)
+            ? (isSingAlongMode ? "🌐 Search YouTube for more sing-alongs..." : "🌐 Search YouTube for more versions...")
+            : "🔎 Find More Songs...";
+        findMoreBtn.onclick = () => {
+            const nextPage = (!currentSearchForceOnline && localList.length > 0) ? 1 : (currentSearchPage + 1);
+            performSearch(currentSearchQuery, true, nextPage);
+        };
+        container.appendChild(findMoreBtn);
+    } else if (isAppend && ytList.length === 0) {
+        const endBanner = document.createElement("div");
+        endBanner.style.textAlign = "center";
+        endBanner.style.padding = "16px";
+        endBanner.style.color = "var(--text-muted)";
+        endBanner.style.fontSize = "0.85rem";
+        endBanner.innerText = "🌴 That's all the songs found for this search!";
+        container.appendChild(endBanner);
+    }
+
 }
 
 // Queue Modal & Pitch Selector
 // Queue Modal & Pitch Selector
-async function openQueueModal(trackId, title, artist, videoId, initialPitch = 0) {
-    selectedTrackForQueue = { trackId, title, artist, videoId };
+async function openQueueModal(trackId, title, artist, videoId, initialPitch = 0, isSingAlong = null) {
+    const isSA = (isSingAlong !== null && isSingAlong !== undefined) ? Boolean(isSingAlong) : Boolean(isSingAlongMode);
+    selectedTrackForQueue = { trackId, title, artist, videoId, isSingAlong: isSA };
     selectedPitch = initialPitch || 0;
     activeDuplicateInfo = null;
 
-    document.getElementById("modalSongTitle").innerText = `${artist} - ${title}`;
+    const modalTitleEl = document.getElementById("modalSongTitle");
+    if (modalTitleEl) {
+        modalTitleEl.innerHTML = `${escapeHtml(artist)} - ${escapeHtml(title)} ${isSA ? ' <span class="badge-sing-along" style="font-size:0.75rem;">🎙️ Sing-Along</span>' : ''}`;
+    }
     resetPitchButtons();
     if (selectedPitch !== 0) {
         selectPitch(selectedPitch);
@@ -848,7 +1003,8 @@ function submitQueue() {
         singer_token: currentSinger.token,
         duet_partner: duet,
         pitch_shift: selectedPitch,
-        force: Boolean(activeDuplicateInfo)
+        force: Boolean(activeDuplicateInfo),
+        is_sing_along: Boolean(selectedTrackForQueue.isSingAlong)
     };
 
     fetch("/api/queue", {
@@ -1070,7 +1226,10 @@ function renderQueue(queue) {
                         <div style="color: var(--text-muted); font-size: 0.88rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
                             ${escapeHtml(item.artist)} - ${escapeHtml(item.title)}
                         </div>
-                        <span class="badge-key" style="margin-top: 4px; display: inline-block;">${pitchText}</span>
+                        <div style="display: flex; gap: 6px; align-items: center; margin-top: 4px; flex-wrap: wrap;">
+                            <span class="badge-key">${pitchText}</span>
+                            ${item.is_sing_along ? '<span class="badge-sing-along">🎙️ Sing-Along</span>' : ''}
+                        </div>
                     </div>
                 </div>
 
@@ -1451,22 +1610,29 @@ function renderSongbookList() {
     });
 }
 
-function installStarterCrate() {
-    const btn = event ? event.target : null;
+function installStarterCrate(e) {
+    const btn = document.getElementById("installStarterBtn") || (e && (e.currentTarget || e.target));
     const oldText = btn ? btn.innerText : "";
     if (btn) {
         btn.disabled = true;
         btn.innerText = "🌴 Installing 15 Classics...";
     }
-    showCustomToast("🌴 Queueing 15 starter music videos...");
+    showCustomToast("🌴 Queueing starter music videos...");
     fetch("/api/host/filler/install-starter", { method: "POST" })
-        .then(res => res.json())
+        .then(async res => {
+            if (!res.ok) {
+                const errData = await res.json().catch(() => ({}));
+                throw new Error(errData.detail || `Server returned error (${res.status})`);
+            }
+            return res.json();
+        })
         .then(data => {
-            showCustomToast(`🌴 Added ${data.added_count} starter music videos to BGM!`);
+            const count = data.total_queued || (data.added_count + (data.requeued_count || 0)) || 15;
+            showCustomToast(`🌴 Queued ${count} starter music videos to BGM!`);
             loadFillerTracks();
         })
         .catch(err => {
-            showCustomToast("⚠️ Error installing starter crate: " + err);
+            showCustomToast("⚠️ Error installing starter crate: " + err.message);
         })
         .finally(() => {
             if (btn) {
@@ -1546,7 +1712,173 @@ function hostDuckBGM(duck) {
     }
 }
 
+// -------------------------------------------------------------
+// Mobile Host Remote Microphone Controls
+// -------------------------------------------------------------
+let hostMicState = {
+    device: "default",
+    muted: true,
+    volume: 80,
+    reverb: true,
+    ducking_enabled: true,
+    ducking_db: -6
+};
+
+async function loadHostMicDevices() {
+    const sel = document.getElementById("mobileHostMicDeviceSelect");
+    if (!sel) return;
+
+    try {
+        const res = await fetch("/api/setup/audio-inputs");
+        if (!res.ok) return;
+        const devices = await res.json();
+        sel.innerHTML = "";
+        devices.forEach(d => {
+            const opt = document.createElement("option");
+            opt.value = d.id;
+            opt.text = d.description || d.name;
+            if (d.id === hostMicState.device) opt.selected = true;
+            sel.appendChild(opt);
+        });
+
+        // Also fetch live state from backend audio router
+        const stateRes = await fetch("/api/host/mic-state");
+        if (stateRes.ok) {
+            const st = await stateRes.json();
+            if (st) {
+                hostMicState.muted = Boolean(st.muted);
+                hostMicState.volume = Number(st.volume) || 80;
+                if (st.device && st.device !== "default") hostMicState.device = st.device;
+                updateMobileHostMicUI();
+                const slider = document.getElementById("mobileHostMicSlider");
+                if (slider) slider.value = hostMicState.volume;
+                const volText = document.getElementById("mobileHostMicVolText");
+                if (volText) volText.innerText = `${hostMicState.volume}%`;
+                if (hostMicState.device) sel.value = hostMicState.device;
+            }
+        }
+    } catch (e) {
+        console.warn("[Host Remote] Error loading audio inputs:", e);
+    }
+}
+
+function hostSetMicDevice(dev) {
+    hostMicState.device = dev;
+    sendHostMicSettings({ device: dev });
+}
+
+function hostToggleMic(muted) {
+    if (muted === undefined) muted = !hostMicState.muted;
+    hostMicState.muted = muted;
+    sendHostMicSettings({ muted: hostMicState.muted });
+    updateMobileHostMicUI();
+}
+
+function hostSetMicVolume(vol) {
+    hostMicState.volume = Number(vol) || 80;
+    sendHostMicSettings({ volume: hostMicState.volume });
+    const label = document.getElementById("mobileHostMicVolText");
+    if (label) label.innerText = `${hostMicState.volume}%`;
+}
+
+function hostToggleMicReverb(enabled) {
+    hostMicState.reverb = !!enabled;
+    sendHostMicSettings({ reverb: hostMicState.reverb });
+}
+
+function hostToggleDucking(enabled) {
+    hostMicState.ducking_enabled = !!enabled;
+    sendHostMicSettings({ ducking_enabled: hostMicState.ducking_enabled });
+}
+
+function hostSetDuckingDb(db) {
+    hostMicState.ducking_db = Number(db) || -6;
+    sendHostMicSettings({ ducking_db: hostMicState.ducking_db });
+}
+
+function sendHostMicSettings(partial) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+            type: "host_mic_settings",
+            ...partial
+        }));
+    }
+}
+
+function updateMobileHostMicUI() {
+    const btn = document.getElementById("mobileHostMicToggleBtn");
+    const badge = document.getElementById("mobileHostMicBadge");
+    if (btn) {
+        if (hostMicState.muted) {
+            btn.innerHTML = "🔇 Stage Mic Muted (OFF)";
+            btn.style.color = "#ff5555";
+            btn.style.borderColor = "rgba(255,85,85,0.4)";
+        } else {
+            btn.innerHTML = "🎤 Stage Mic LIVE (ON)";
+            btn.style.color = "#39ff14";
+            btn.style.borderColor = "rgba(57,255,20,0.4)";
+        }
+    }
+    if (badge) {
+        if (hostMicState.muted) {
+            badge.innerText = "MUTED";
+            badge.style.background = "rgba(255, 85, 85, 0.2)";
+            badge.style.color = "#ff5555";
+            badge.style.borderColor = "rgba(255, 85, 85, 0.4)";
+        } else {
+            badge.innerText = "LIVE";
+            badge.style.background = "rgba(57, 255, 20, 0.2)";
+            badge.style.color = "#39ff14";
+            badge.style.borderColor = "rgba(57, 255, 20, 0.4)";
+        }
+    }
+}
+
+function syncHostMicSettingsUI(data) {
+    if (data.device !== undefined && data.device) {
+        hostMicState.device = data.device;
+        const sel = document.getElementById("mobileHostMicDeviceSelect");
+        if (sel) {
+            let opt = Array.from(sel.options).find(o => o.value === data.device);
+            if (!opt) {
+                opt = document.createElement("option");
+                opt.value = data.device;
+                opt.text = data.device;
+                sel.appendChild(opt);
+            }
+            sel.value = data.device;
+        }
+    }
+    if (data.muted !== undefined) {
+        hostMicState.muted = !!data.muted;
+        updateMobileHostMicUI();
+    }
+    if (data.volume !== undefined) {
+        hostMicState.volume = Number(data.volume);
+        const slider = document.getElementById("mobileHostMicSlider");
+        if (slider) slider.value = hostMicState.volume;
+        const volText = document.getElementById("mobileHostMicVolText");
+        if (volText) volText.innerText = `${hostMicState.volume}%`;
+    }
+    if (data.reverb !== undefined) {
+        hostMicState.reverb = !!data.reverb;
+        const rev = document.getElementById("mobileMicReverbToggle");
+        if (rev) rev.checked = hostMicState.reverb;
+    }
+    if (data.ducking_enabled !== undefined) {
+        hostMicState.ducking_enabled = !!data.ducking_enabled;
+        const duck = document.getElementById("mobileDuckingToggle");
+        if (duck) duck.checked = hostMicState.ducking_enabled;
+    }
+    if (data.ducking_db !== undefined) {
+        hostMicState.ducking_db = Number(data.ducking_db);
+        const sel = document.getElementById("mobileDuckingDbSelect");
+        if (sel) sel.value = String(hostMicState.ducking_db);
+    }
+}
+
 function loadHostSettings() {
+    loadHostMicDevices();
     fetch("/api/settings")
         .then(res => res.json())
         .then(settings => {
@@ -2074,7 +2406,7 @@ function loadLibraryTracks() {
     const container = document.getElementById("libraryListContainer");
     if (!container) return;
 
-    const url = `/api/library?page=${currentLibPage}&limit=25&sort=${encodeURIComponent(currentLibSort)}&artist=${encodeURIComponent(currentLibArtist)}&q=${encodeURIComponent(currentLibSearch)}`;
+    const url = `/api/library?page=${currentLibPage}&limit=25&sort=${encodeURIComponent(currentLibSort)}&artist=${encodeURIComponent(currentLibArtist)}&q=${encodeURIComponent(currentLibSearch)}&sing_along=${isSingAlongMode}`;
 
     fetch(url)
         .then(res => res.json())
@@ -2108,11 +2440,14 @@ function loadLibraryTracks() {
             container.innerHTML = "";
 
             if (tracks.length === 0) {
+                const emptyMsg = isSingAlongMode
+                    ? "No downloaded sing-along songs found. Search YouTube above with Sing-Along Mode ON to download and add sing-along tracks!"
+                    : "Search YouTube above to download and add new tracks to this library!";
                 container.innerHTML = `
                     <div style="text-align: center; padding: 40px 20px; color: var(--text-muted);">
                         <div style="font-size: 2.2rem; margin-bottom: 8px;">🌴</div>
-                        <p style="font-size: 0.95rem; font-weight: 600; color: #fff;">No downloaded songs found</p>
-                        <p style="font-size: 0.82rem;">Search YouTube above to download and add new tracks to this library!</p>
+                        <p style="font-size: 0.95rem; font-weight: 600; color: #fff;">${isSingAlongMode ? "No Sing-Along Songs Found" : "No Downloaded Songs Found"}</p>
+                        <p style="font-size: 0.82rem;">${emptyMsg}</p>
                     </div>
                 `;
                 const pag = document.getElementById("libraryPaginationBar");
@@ -2159,6 +2494,7 @@ function loadLibraryTracks() {
                             <span style="background: ${playBadgeColor}; color: ${playTextColor}; padding: 2px 7px; border-radius: 6px; font-weight: 700;">
                                 ${playBadgeText}
                             </span>
+                            ${track.is_sing_along ? '<span class="badge-sing-along">🎙️ Sing-Along</span>' : ''}
                             <span style="color: var(--neon-gold);">
                                 🕒 ${lastPlayedText}
                             </span>
@@ -2171,7 +2507,7 @@ function loadLibraryTracks() {
                         + Queue
                     </button>
                 `;
-                card.querySelector(".lib-queue-btn").onclick = () => openQueueModal(track.id, track.title, track.artist, track.video_id);
+                card.querySelector(".lib-queue-btn").onclick = () => openQueueModal(track.id, track.title, track.artist, track.video_id, 0, Boolean(track.is_sing_along || isSingAlongMode));
                 container.appendChild(card);
             });
 
@@ -2765,6 +3101,51 @@ function loadFillerSettings(settings) {
             finishBtn.classList.remove("active");
         }
     }
+
+    const vibeMode = settings.intermission_vibe_mode || "sing_along";
+    updateVibeModeUI(vibeMode);
+}
+
+function updateVibeModeUI(mode) {
+    const fillerBtn = document.getElementById("vibeModeFillerBtn");
+    const singAlongBtn = document.getElementById("vibeModeSingAlongBtn");
+    const mashupBtn = document.getElementById("vibeModeMashupBtn");
+    const desc = document.getElementById("vibeModeDesc");
+
+    if (fillerBtn) fillerBtn.classList.toggle("active", mode === "pure_filler");
+    if (singAlongBtn) singAlongBtn.classList.toggle("active", mode === "sing_along");
+    if (mashupBtn) mashupBtn.classList.toggle("active", mode === "intelligent_mashup");
+
+    if (desc) {
+        if (mode === "pure_filler") {
+            desc.innerText = "Pure filler music videos only. Great for a classic party lounge vibe.";
+        } else if (mode === "sing_along") {
+            desc.innerText = "True Karaoke: Sing-along tracks with vocals & lyrics to get the room singing!";
+        } else {
+            desc.innerText = "Intelligent mashup: Sing-alongs when queue empty, music videos when show paused.";
+        }
+    }
+}
+
+function setIntermissionVibeMode(mode) {
+    updateVibeModeUI(mode);
+    fetch("/api/host/filler-settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ intermission_vibe_mode: mode })
+    })
+    .then(res => res.json())
+    .then(() => {
+        const labels = {
+            pure_filler: "📼 Pure Filler",
+            sing_along: "🎤 True Karaoke",
+            intelligent_mashup: "🧠 Smart Mashup"
+        };
+        showCustomToast(`🌴 Intermission mode: ${labels[mode] || mode}`);
+    })
+    .catch(err => {
+        showCustomToast("⚠️ Failed to update intermission mode: " + err);
+    });
 }
 
 function renderFillerCrateView(tracks) {
@@ -3079,5 +3460,196 @@ function previewFillerCrateTrack(trackId, title, artist, videoId, isDownloaded) 
         `;
     }
 }
+
+function confirmHostServerShutdown() {
+    if (!confirm("Are you sure you want to shut down Tiki Karaoke and stop all server processes?")) return;
+    fetch("/api/host/shutdown", { method: "POST" })
+        .then(res => res.json())
+        .then(data => {
+            alert(data.message || "Tiki Karaoke is shutting down. Aloha! 🌺");
+            setTimeout(() => { location.reload(); }, 1200);
+        })
+        .catch(() => {
+            alert("Shutdown command sent to server.");
+        });
+}
+
+// -----------------------------------------------------------------
+// Bring Your Own Media (BYOM) Local Importer
+// -----------------------------------------------------------------
+let hostDefaultPathsCache = null;
+
+async function loadHostDefaultPaths() {
+    try {
+        const res = await fetch("/api/host/default-paths");
+        if (res.ok) {
+            const data = await res.json();
+            hostDefaultPathsCache = data;
+            const input = document.getElementById("hostImportFolderPath");
+            if (input && !input.value) {
+                input.value = data.default_music_dir || "";
+            }
+        }
+    } catch (err) {
+        console.warn("[BYOM] Could not load default paths:", err);
+    }
+}
+
+function useHostPathPreset(presetType) {
+    const input = document.getElementById("hostImportFolderPath");
+    if (!input) return;
+    if (presetType === "default") {
+        if (hostDefaultPathsCache && hostDefaultPathsCache.default_music_dir) {
+            input.value = hostDefaultPathsCache.default_music_dir;
+        } else {
+            input.value = "~/Music/Karaoke/Tiki";
+        }
+    } else if (presetType === "parent") {
+        if (hostDefaultPathsCache && hostDefaultPathsCache.user_karaoke_parent) {
+            input.value = hostDefaultPathsCache.user_karaoke_parent;
+        } else {
+            input.value = "~/Music/Karaoke";
+        }
+    }
+}
+
+async function submitLocalKaraokeImport() {
+    const folderInput = document.getElementById("hostImportFolderPath");
+    const recursiveToggle = document.getElementById("hostImportRecursive");
+    const singAlongToggle = document.getElementById("hostImportSingAlong");
+    const submitBtn = document.getElementById("hostImportSubmitBtn");
+    const resultBox = document.getElementById("hostImportResultContainer");
+
+    const folderPath = folderInput ? folderInput.value.trim() : "";
+    if (!folderPath) {
+        showToast("⚠️ Please enter a folder path to scan");
+        if (folderInput) folderInput.focus();
+        return;
+    }
+
+    if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = "⏳ Scanning files & importing...";
+    }
+    if (resultBox) {
+        resultBox.style.display = "block";
+        resultBox.style.background = "rgba(0, 240, 255, 0.08)";
+        resultBox.style.border = "1px solid rgba(0, 240, 255, 0.3)";
+        resultBox.style.color = "#fff";
+        resultBox.innerHTML = `🔍 Scanning <code>${folderPath}</code> for supported karaoke videos...`;
+    }
+
+    const destSelect = document.getElementById("hostImportDestination");
+    const targetDest = destSelect ? destSelect.value : "karaoke";
+
+    try {
+        const res = await fetch("/api/host/import-local-library", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                folder_path: folderPath,
+                recursive: recursiveToggle ? recursiveToggle.checked : true,
+                is_sing_along: (targetDest === "sing_along"),
+                target_destination: targetDest
+            })
+        });
+
+        const data = await res.json();
+        if (!res.ok) {
+            throw new Error(data.detail || data.message || "Failed to import local folder");
+        }
+
+        if (resultBox) {
+            resultBox.style.display = "block";
+            if (data.imported_count > 0) {
+                resultBox.style.background = "rgba(57, 255, 20, 0.1)";
+                resultBox.style.border = "1px solid var(--neon-lime)";
+                resultBox.style.color = "#dcfce7";
+                resultBox.innerHTML = `
+                    <div style="font-weight: 700; color: var(--neon-lime); margin-bottom: 4px;">🎉 Import Successful!</div>
+                    <div>Imported <strong>${data.imported_count}</strong> of <strong>${data.total_found}</strong> media files into songbook.</div>
+                    <div style="font-size: 0.72rem; color: var(--text-muted); margin-top: 4px;">Songs are now instantly searchable for all singers.</div>
+                `;
+                showToast(`🎉 Imported ${data.imported_count} karaoke songs!`);
+                if (typeof loadLibraryTracks === "function") loadLibraryTracks();
+                if (typeof loadFillerTracks === "function") loadFillerTracks();
+            } else {
+                resultBox.style.background = "rgba(255, 183, 3, 0.1)";
+                resultBox.style.border = "1px solid var(--neon-gold)";
+                resultBox.style.color = "#fef3c7";
+                resultBox.innerHTML = `
+                    <div style="font-weight: 700; color: var(--neon-gold); margin-bottom: 4px;">ℹ️ No New Tracks Found</div>
+                    <div>${data.message || "No supported media files (.mp4, .mkv, .webm, .avi) found in directory."}</div>
+                `;
+                showToast("ℹ️ No new karaoke files found in folder");
+            }
+        }
+    } catch (err) {
+        console.error("[BYOM] Import error:", err);
+        if (resultBox) {
+            resultBox.style.display = "block";
+            resultBox.style.background = "rgba(255, 85, 85, 0.1)";
+            resultBox.style.border = "1px solid #ff5555";
+            resultBox.style.color = "#fee2e2";
+            resultBox.innerHTML = `
+                <div style="font-weight: 700; color: #ff5555; margin-bottom: 4px;">❌ Import Error</div>
+                <div>${err.message}</div>
+            `;
+        }
+        showToast("❌ " + err.message);
+    } finally {
+        if (submitBtn) {
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = "🚀 Scan & Import Local Songs";
+        }
+    }
+}
+
+// -------------------------------------------------------------
+// Strict Commercial / BYOM Only Mode Controls
+// -------------------------------------------------------------
+async function loadHostStrictMode() {
+    try {
+        const res = await fetch("/api/host/strict-mode");
+        if (res.ok) {
+            const data = await res.json();
+            syncHostStrictModeUI(data.strict_byom_only);
+        }
+    } catch (e) {
+        console.error("[Host] Error loading strict mode:", e);
+    }
+}
+
+function syncHostStrictModeUI(enabled) {
+    const toggle = document.getElementById("hostStrictByomToggle");
+    if (toggle) {
+        toggle.checked = Boolean(enabled);
+    }
+}
+
+async function toggleStrictByomMode(enabled) {
+    try {
+        const res = await fetch("/api/host/strict-mode", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ enabled: Boolean(enabled) })
+        });
+        if (res.ok) {
+            const data = await res.json();
+            syncHostStrictModeUI(data.strict_byom_only);
+            if (data.strict_byom_only) {
+                showToast("🔒 Strict Commercial Mode ON: YouTube downloader & online requests disabled.");
+            } else {
+                showToast("🔓 Strict Commercial Mode OFF: Hybrid library & online requests active.");
+            }
+        } else {
+            showToast("⚠️ Failed to update Strict Mode setting");
+        }
+    } catch (e) {
+        console.error("[Host] Error setting strict mode:", e);
+        showToast("⚠️ Failed to update Strict Mode setting");
+    }
+}
+
 
 

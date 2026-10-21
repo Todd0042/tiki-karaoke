@@ -16,17 +16,18 @@ sys.path.insert(0, str(BASE_DIR))
 from config import (
     CONFIG_FILE, load_config, save_config, is_configured, DEFAULT_CONFIG,
     get_library_dir, get_tracks_dir, get_playlists_dir, get_data_dir, get_db_path,
-    get_path_info, ensure_storage_dirs, get_available_displays, get_available_audio_sinks
+    get_path_info, ensure_storage_dirs, get_available_displays, get_available_audio_sinks,
+    get_available_audio_sources
 )
 from database import init_db, set_setting, migrate_storage_paths
 
 TIKI_SETUP_BANNER = r"""
-  ______ _            _     _         _______ _    _ 
- |  ____| |          (_)   | |       |__   __(_)  | |
- | |__  | | ___  _ __ _  __| | __ _     | |   _   | | _____  
- |  __| | |/ _ \| '__| |/ _` |/ _` |    | |  | |  | |/ / _ \ 
- | |    | | (_) | |  | | (_| | (_| |    | |  | |  |   <  __/ 
- |_|    |_|\___/|_|  |_|\__,_|\__,_|    |_|  |_|  |_|\_\___| 
+  _______ _ _    _    _  __                     _        
+ |__   __(_) |  (_)  | |/ /                    | |       
+    | |   _| | ___   | ' / __ _ _ __ __ _  ___ | | _____ 
+    | |  | | |/ / |  |  < / _` | '__/ _` |/ _ \| |/ / _ \
+    | |  | |   <| |  | . \ (_| | | | (_| | (_) |   <  __/
+    |_|  |_|_|\_\_|  |_|\_\__,_|_|  \__,_|\___/|_|\_\___|
       🌴 🌺  INITIAL SETUP & CONFIGURATION WIZARD  🍹 🌴
 """
 
@@ -279,6 +280,21 @@ def run_setup():
         chosen_sink = audio_sinks[0]
     print(f"  ✅ Selected Audio Output: {chosen_sink['description']}")
 
+    # 7. Audio Input Device (Microphone / Line-In)
+    print("\n🎤 7. STAGE MICROPHONE & AUDIO INPUT DEVICE")
+    print("Detected System Microphones & Audio Inputs:")
+    audio_sources = get_available_audio_sources()
+    for idx, s in enumerate(audio_sources):
+        print(f"  [{idx}] {s['description']}")
+    
+    source_input = prompt(f"Select Microphone / Input Device for Karaoke Stage [0-{len(audio_sources)-1}]", "0")
+    try:
+        source_idx = int(source_input)
+        chosen_source = audio_sources[source_idx] if 0 <= source_idx < len(audio_sources) else audio_sources[0]
+    except (ValueError, IndexError):
+        chosen_source = audio_sources[0]
+    print(f"  ✅ Selected Audio Input: {chosen_source['description']}")
+
     # Build updated config
     config_data = {
         "configured": True,
@@ -318,7 +334,9 @@ def run_setup():
         "host_display_height": chosen_host_disp["height"],
         "host_kiosk_mode": host_kiosk_mode,
         "audio_output_device": chosen_sink["id"],
-        "audio_output_name": chosen_sink["description"]
+        "audio_output_name": chosen_sink["description"],
+        "audio_input_device": chosen_source["id"],
+        "audio_input_name": chosen_source["description"]
     }
 
     print("\n💾 Writing configuration to config.json...")
