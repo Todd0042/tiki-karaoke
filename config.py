@@ -20,7 +20,7 @@ STATIC_DIR = BUNDLE_DIR / "static"
 TEMPLATES_DIR = BUNDLE_DIR / "templates"
 
 def get_user_data_root() -> Path:
-    """Returns safe persistent user data root across installed and development modes."""
+    """Returns safe persistent user data root across installed, portable, and AppImage modes."""
     if sys.platform == "win32" and getattr(sys, "frozen", False):
         try:
             test_file = APP_DIR / ".write_test"
@@ -31,6 +31,18 @@ def get_user_data_root() -> Path:
             appdata = os.getenv("APPDATA")
             if appdata:
                 return Path(appdata) / "TikiKaraoke"
+    elif getattr(sys, "frozen", False):
+        # On Linux AppImage / PyInstaller: check if directory is writable (AppImage squashfs is read-only)
+        try:
+            test_file = APP_DIR / ".write_test"
+            test_file.touch()
+            test_file.unlink()
+            return APP_DIR
+        except (PermissionError, OSError):
+            config_home = os.getenv("XDG_CONFIG_HOME")
+            base = Path(config_home) / "TikiKaraoke" if config_home else Path.home() / ".config" / "TikiKaraoke"
+            base.mkdir(parents=True, exist_ok=True)
+            return base
     return APP_DIR
 
 CONFIG_FILE = get_user_data_root() / "config.json"
@@ -451,7 +463,8 @@ def save_config(updates: Dict[str, Any]) -> Dict[str, Any]:
     cfg = load_config()
     cfg.update(updates)
     cfg["configured"] = True
-    cfg_path = CONFIG_FILE
+    cfg_path = get_config_path()
+    cfg_path.parent.mkdir(parents=True, exist_ok=True)
     with open(cfg_path, "w", encoding="utf-8") as f:
         json.dump(cfg, f, indent=2)
     ensure_storage_dirs()

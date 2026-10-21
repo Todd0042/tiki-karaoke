@@ -18,6 +18,12 @@ import shutil
 # Ensure project root is in python path
 if getattr(sys, "frozen", False):
     BASE_DIR = Path(sys._MEIPASS) if hasattr(sys, "_MEIPASS") else Path(sys.executable).resolve().parent
+    # Clean internal AppImage / PyInstaller LD_LIBRARY_PATH so child processes (firefox, chrome, xdg-open, /bin/sh)
+    # use host system libraries instead of bundled container libraries
+    if "LD_LIBRARY_PATH_ORIG" in os.environ:
+        os.environ["LD_LIBRARY_PATH"] = os.environ["LD_LIBRARY_PATH_ORIG"]
+    else:
+        os.environ.pop("LD_LIBRARY_PATH", None)
 else:
     BASE_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(BASE_DIR))

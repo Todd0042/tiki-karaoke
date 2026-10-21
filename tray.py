@@ -186,8 +186,8 @@ def start_tray(
     public_url = urls.get("public", "")
     shutdown_url = urls.get("shutdown", "")
 
-    # On Linux: Prefer Qt StatusNotifierItem for native Wayland / KDE Plasma support
-    if sys.platform != "win32":
+    # On Linux: Prefer Qt StatusNotifierItem for native Wayland / KDE Plasma support (non-frozen dev runs only)
+    if sys.platform != "win32" and not getattr(sys, "frozen", False):
         try:
             import PyQt6.QtWidgets  # noqa: F401
             has_qt = True
@@ -297,7 +297,8 @@ def start_tray(
     try:
         tray_icon = pystray.Icon("tiki_karaoke", image, f"Tiki Karaoke - {bar_name}", menu)
         tray_icon.run_detached()
-        print("[System Tray] ✅ Win32 system tray icon active (Right-click icon in taskbar for options).")
+        engine_name = "Win32" if sys.platform == "win32" else "X11/AppIndicator"
+        print(f"[System Tray] ✅ Native {engine_name} system tray icon active (Right-click icon in taskbar for options).")
         return tray_icon
     except Exception as e:
         print(f"[System Tray] Notice: System tray not available in this desktop session ({e}). Running in console mode.")

@@ -68,6 +68,10 @@ pyinstaller --clean -y --onedir \
     --hidden-import wave \
     --hidden-import tray \
     --hidden-import audio_router \
+    --hidden-import pystray \
+    --collect-all pystray \
+    --hidden-import Xlib \
+    --collect-all Xlib \
     /src/main.py
 EOF
 
@@ -84,6 +88,7 @@ cp -r "${BUILD_TMP}/TikiKaraoke"/* "$APPDIR/usr/bin/"
 if [ -d "${REPO_ROOT}/bin" ]; then
     mkdir -p "$APPDIR/usr/bin/bin"
     cp -r "${REPO_ROOT}/bin"/* "$APPDIR/usr/bin/bin/" || true
+    chmod +x "$APPDIR/usr/bin/bin/"* 2>/dev/null || true
 fi
 
 cp "${REPO_ROOT}/static/tiki-icon.png" "$APPDIR/tiki-icon.png"
@@ -94,7 +99,7 @@ cat << 'EOF' > "$APPDIR/tiki-karaoke.desktop"
 Name=Tiki Karaoke Lounge
 GenericName=Karaoke & Party System
 Comment=Turnkey Dual-Screen Karaoke & Party Entertainment System
-Exec=TikiKaraoke %U
+Exec=AppRun %U
 Icon=tiki-icon
 Type=Application
 Categories=AudioVideo;Audio;Player;
@@ -109,8 +114,11 @@ cat << 'EOF' > "$APPDIR/AppRun"
 SELF=$(readlink -f "$0")
 HERE=${SELF%/*}
 
+# Preserve host LD_LIBRARY_PATH for spawned external tools (browsers, xdg-open, /bin/sh)
+export LD_LIBRARY_PATH_ORIG="${LD_LIBRARY_PATH}"
+unset LD_LIBRARY_PATH
+
 export PATH="${HERE}/usr/bin:${HERE}/usr/bin/bin:${PATH}"
-export LD_LIBRARY_PATH="${HERE}/usr/lib:${HERE}/usr/bin/_internal:${LD_LIBRARY_PATH}"
 
 cd "${HERE}/usr/bin"
 exec "${HERE}/usr/bin/TikiKaraoke" "$@"
@@ -118,6 +126,7 @@ EOF
 
 chmod +x "$APPDIR/AppRun"
 chmod +x "$APPDIR/usr/bin/TikiKaraoke"
+ln -sf AppRun "$APPDIR/TikiKaraoke"
 
 echo "=== [4/5] Packaging AppImage ==="
 if [ ! -f "/tmp/appimagetool" ]; then
@@ -130,7 +139,8 @@ export ARCH=x86_64
 chmod +x "$OUT_APPIMAGE"
 
 echo "=== [5/5] Cleaning up temporary build files ==="
-rm -rf "$BUILD_TMP" "$APPDIR"
+docker run --rm -v "${BUILD_TMP}:/b" debian:bookworm-slim rm -rf /b 2>/dev/null || true
+rm -rf "$BUILD_TMP" "$APPDIR" 2>/dev/null || true
 
 echo "================================================================="
 echo "✅ AppImage build complete: ${OUT_APPIMAGE}"
