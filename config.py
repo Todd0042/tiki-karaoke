@@ -245,6 +245,33 @@ def get_available_displays() -> List[Dict[str, Any]]:
         })
     return monitors
 
+def _windows_mic_router_devices() -> Optional[Dict[str, Any]]:
+    """Query the bundled tiki-mic-router helper for WASAPI endpoints (Windows only).
+
+    Returns {"playback": [...], "capture": [...]} or None if the helper is
+    unavailable. Single source of truth: the same names the helper lists are
+    the names it accepts as device specs for loopback start.
+    """
+    if sys.platform != "win32":
+        return None
+    try:
+        helper = get_bundled_binary_path("tiki-mic-router")
+        if not helper or not Path(helper).exists():
+            return None
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        res = subprocess.run(
+            [str(helper), "--list-json"],
+            capture_output=True, text=True, timeout=5,
+            creationflags=creationflags
+        )
+        if res.returncode == 0 and res.stdout.strip():
+            data = json.loads(res.stdout.strip().splitlines()[-1])
+            if isinstance(data.get("playback"), list) and isinstance(data.get("capture"), list):
+                return data
+    except Exception as e:
+        print(f"[Audio Detection] tiki-mic-router --list-json error: {e}")
+    return None
+
 def get_available_audio_sinks() -> List[Dict[str, Any]]:
     """Returns detected system audio output devices."""
     devices = [{
@@ -253,6 +280,23 @@ def get_available_audio_sinks() -> List[Dict[str, Any]]:
         "description": "System Default Audio Output",
         "is_default": True
     }]
+
+    # Windows: enumerate WASAPI endpoints via the tiki-mic-router helper
+    if sys.platform == "win32":
+        helper_data = _windows_mic_router_devices()
+        if helper_data:
+            for dev in helper_data["playback"]:
+                name = str(dev.get("name", "")).strip()
+                if not name or name in [d["id"] for d in devices]:
+                    continue
+                devices.append({
+                    "id": name,
+                    "name": name,
+                    "description": name,
+                    "is_default": bool(dev.get("is_default", False))
+                })
+        return devices
+
     # 1. Try pactl on Linux (PipeWire / PulseAudio)
     if shutil.which("pactl"):
         try:
@@ -284,6 +328,26 @@ def get_available_audio_sources() -> List[Dict[str, Any]]:
         "description": "System Default Microphone / Input",
         "is_default": True
     }]
+
+    # Windows: enumerate WASAPI endpoints via the tiki-mic-router helper
+    if sys.platform == "win32":
+        helper_data = _windows_mic_router_devices()
+        if helper_data:
+            for dev in helper_data["capture"]:
+                name = str(dev.get("name", "")).strip()
+                # Exclude loopback/monitor endpoints (speaker captures, not mics)
+                if not name or name.lower().startswith("monitor of"):
+                    continue
+                if name in [d["id"] for d in devices]:
+                    continue
+                devices.append({
+                    "id": name,
+                    "name": name,
+                    "description": name,
+                    "is_default": bool(dev.get("is_default", False))
+                })
+        return devices
+
     # 1. Try pactl on Linux (PipeWire / PulseAudio)
     if shutil.which("pactl"):
         try:
