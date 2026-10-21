@@ -394,7 +394,10 @@ class WasapiAudioRouter:
         return False
 
     def stop_loopback(self):
-        self._cmd({"cmd": "stop"}, timeout=2.0)
+        with self._lock:
+            proc = self.proc
+        if proc is not None:
+            self._cmd({"cmd": "stop"}, timeout=2.0)
         self.is_active = False
         self.last_negotiated = {}
 
@@ -409,7 +412,10 @@ class WasapiAudioRouter:
         if self.is_muted:
             # Stop streaming entirely: releases the mic (privacy LED off,
             # zero CPU). Mirrors Linux behavior of stopping the loopback.
-            self._cmd({"cmd": "stop"}, timeout=2.0)
+            with self._lock:
+                proc = self.proc
+            if proc is not None:
+                self._cmd({"cmd": "stop"}, timeout=2.0)
             self.is_active = False
         else:
             if not self.is_active:

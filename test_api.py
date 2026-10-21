@@ -27,6 +27,15 @@ class TestAPIEndpoints(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
+        # Release any native mic loopback loaded by host_mic_settings tests
+        # (Linux: pactl module-loopback; Windows: helper stream) so the test
+        # suite never leaves the microphone held open.
+        try:
+            from audio_router import audio_router
+            audio_router.stop_loopback()
+            audio_router.cleanup_stale_modules()
+        except Exception:
+            pass
         shutil.rmtree(test_dir, ignore_errors=True)
 
     def setUp(self):
