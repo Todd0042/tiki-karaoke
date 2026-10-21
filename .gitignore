@@ -52,5 +52,7 @@ screenshots/
 
 # Packaging folder (commercial build scripts live in sibling repo)
 packaging/
+dist/
+*.AppImage
 # Research & design notes
 VOCAL_AUTOTUNE_RESEARCH.md
