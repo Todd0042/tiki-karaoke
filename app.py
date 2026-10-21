@@ -2535,6 +2535,8 @@ async def websocket_endpoint(websocket: WebSocket):
                         "volume": st["volume"],
                         "muted": st["muted"],
                         "device": st["device"],
+                        "available": st.get("available", False),
+                        "latency_ms": st.get("latency_ms_est"),
                         "reverb": data.get("reverb", False),
                         "ducking_enabled": data.get("ducking_enabled", True),
                         "ducking_db": data.get("ducking_db", -6)

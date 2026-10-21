@@ -1721,7 +1721,9 @@ let hostMicState = {
     volume: 80,
     reverb: true,
     ducking_enabled: true,
-    ducking_db: -6
+    ducking_db: -6,
+    available: null,   // null = unknown yet; true/false from backend router
+    latency_ms: null   // negotiated buffering latency estimate (native path)
 };
 
 async function loadHostMicDevices() {
@@ -1749,7 +1751,12 @@ async function loadHostMicDevices() {
                 hostMicState.muted = Boolean(st.muted);
                 hostMicState.volume = Number(st.volume) || 80;
                 if (st.device && st.device !== "default") hostMicState.device = st.device;
+                if (st.available !== undefined) hostMicState.available = Boolean(st.available);
+                if (st.latency_ms_est !== undefined && st.latency_ms_est !== null) {
+                    hostMicState.latency_ms = Number(st.latency_ms_est);
+                }
                 updateMobileHostMicUI();
+                renderMobileMicAvailability();
                 const slider = document.getElementById("mobileHostMicSlider");
                 if (slider) slider.value = hostMicState.volume;
                 const volText = document.getElementById("mobileHostMicVolText");
@@ -1820,13 +1827,20 @@ function updateMobileHostMicUI() {
         }
     }
     if (badge) {
-        if (hostMicState.muted) {
+        if (hostMicState.available === false) {
+            badge.innerText = "NO NATIVE ROUTING";
+            badge.style.background = "rgba(255, 183, 3, 0.2)";
+            badge.style.color = "#ffb703";
+            badge.style.borderColor = "rgba(255, 183, 3, 0.4)";
+        } else if (hostMicState.muted) {
             badge.innerText = "MUTED";
             badge.style.background = "rgba(255, 85, 85, 0.2)";
             badge.style.color = "#ff5555";
             badge.style.borderColor = "rgba(255, 85, 85, 0.4)";
         } else {
-            badge.innerText = "LIVE";
+            badge.innerText = (hostMicState.latency_ms !== null && hostMicState.latency_ms > 0)
+                ? `LIVE (~${Math.round(hostMicState.latency_ms)}ms)`
+                : "LIVE";
             badge.style.background = "rgba(57, 255, 20, 0.2)";
             badge.style.color = "#39ff14";
             badge.style.borderColor = "rgba(57, 255, 20, 0.4)";
@@ -1834,7 +1848,31 @@ function updateMobileHostMicUI() {
     }
 }
 
+function renderMobileMicAvailability() {
+    const warn = document.getElementById("mobileHostMicNativeWarning");
+    if (!warn) return;
+    if (hostMicState.available === false) {
+        const hint = document.getElementById("mobileHostMicNativeWarningHint");
+        if (hint) {
+            const isWin = /Windows/i.test(navigator.userAgent);
+            hint.innerText = isWin
+                ? "The tiki-mic-router helper was not found in the app's bin folder — reinstall, or copy tiki-mic-router.exe into bin\\ next to TikiKaraoke.exe."
+                : "Install PipeWire or PulseAudio (pactl) on the host system to enable low-latency mic monitoring.";
+        }
+        warn.style.display = "block";
+    } else {
+        warn.style.display = "none";
+    }
+}
+
 function syncHostMicSettingsUI(data) {
+    if (data.available !== undefined) {
+        hostMicState.available = Boolean(data.available);
+        renderMobileMicAvailability();
+    }
+    if (data.latency_ms !== undefined && data.latency_ms !== null) {
+        hostMicState.latency_ms = Number(data.latency_ms);
+    }
     if (data.device !== undefined && data.device) {
         hostMicState.device = data.device;
         const sel = document.getElementById("mobileHostMicDeviceSelect");

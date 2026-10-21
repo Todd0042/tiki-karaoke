@@ -1533,22 +1533,41 @@ async function populateHostMicDevices() {
             }
         } catch (e) {}
 
-        // 2. Merge browser audio inputs
-        if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+        // 2. Merge browser audio inputs.
+        // NOTE: the native audio router (pactl / tiki-mic-router) resolves
+        // devices by OS name — opaque browser GUIDs are useless to it and
+        // actively harmful if they overwrite server-side ids. So we keep
+        // server ids authoritative and only fall back to browser devices
+        // when server enumeration returned nothing beyond "default".
+        const serverHasRealDevices = deviceList.some(d => d.id !== "default");
+        if (!serverHasRealDevices && navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
             try {
                 const devList = await navigator.mediaDevices.enumerateDevices();
                 const browserInputs = devList.filter(d => d.kind === "audioinput");
                 browserInputs.forEach((dev, idx) => {
                     if (!dev.deviceId) return;
-                    const match = deviceList.find(d => d.id === dev.deviceId || (dev.label && d.description && d.description.toLowerCase().includes(dev.label.toLowerCase())));
+                    const match = deviceList.find(d => d.id === dev.deviceId);
                     if (!match) {
                         deviceList.push({
                             id: dev.deviceId,
                             name: dev.deviceId,
                             description: dev.label || `Microphone ${idx + 1}`
                         });
-                    } else if (dev.label) {
-                        match.id = dev.deviceId;
+                    }
+                });
+            } catch (e) {}
+        } else if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+            // Server list is authoritative; enrich descriptions with browser
+            // labels where they clearly refer to the same device.
+            try {
+                const devList = await navigator.mediaDevices.enumerateDevices();
+                const browserInputs = devList.filter(d => d.kind === "audioinput" && d.label);
+                browserInputs.forEach(dev => {
+                    const match = deviceList.find(d =>
+                        d.id !== "default" && d.description &&
+                        (d.description.toLowerCase().includes(dev.label.toLowerCase()) ||
+                         dev.label.toLowerCase().includes(d.description.toLowerCase())));
+                    if (match && (!match.description || match.description === match.id)) {
                         match.description = dev.label;
                     }
                 });
@@ -1592,6 +1611,8 @@ let hostMicMuted = true;
 let hostMicVolume = 80;
 let hostDuckingEnabled = true;
 let hostDuckingDb = -6;
+let hostMicAvailable = null;   // null = unknown yet; true/false from backend router
+let hostMicLatencyMs = null;   // negotiated buffering latency estimate (native path)
 
 // Fetch initial state from backend audio router
 fetch("/api/host/mic-state")
@@ -1600,6 +1621,10 @@ fetch("/api/host/mic-state")
         if (st) {
             hostMicMuted = Boolean(st.muted);
             hostMicVolume = Number(st.volume) || 80;
+            hostMicAvailable = Boolean(st.available);
+            hostMicLatencyMs = (st.latency_ms_est !== undefined && st.latency_ms_est !== null)
+                ? Number(st.latency_ms_est) : null;
+            renderMicAvailability();
             updateHostMicUI(hostMicMuted);
             const slider = document.getElementById("modalMicVolumeSlider");
             if (slider) slider.value = hostMicVolume;
@@ -1611,6 +1636,23 @@ fetch("/api/host/mic-state")
         }
     })
     .catch(() => {});
+
+function renderMicAvailability() {
+    const warn = document.getElementById("micNativeWarning");
+    if (!warn) return;
+    if (hostMicAvailable === false) {
+        const hint = document.getElementById("micNativeWarningHint");
+        if (hint) {
+            const isWin = /Windows/i.test(navigator.userAgent);
+            hint.innerText = isWin
+                ? "The tiki-mic-router helper was not found in the app's bin folder — reinstall, or copy tiki-mic-router.exe into bin\\ next to TikiKaraoke.exe."
+                : "Install PipeWire or PulseAudio (pactl) on the host system to enable low-latency mic monitoring.";
+        }
+        warn.style.display = "block";
+    } else {
+        warn.style.display = "none";
+    }
+}
 
 function requestHostMicPermission() {
     // With native PipeWire loopback, no browser permission prompt is required.
@@ -1658,11 +1700,16 @@ function updateHostMicUI(muted) {
 
     const badge = document.getElementById("micLiveStatusBadge");
     if (badge) {
-        if (muted) {
+        if (hostMicAvailable === false) {
+            badge.innerText = "NO NATIVE ROUTING";
+            badge.style.color = "#ffb703";
+        } else if (muted) {
             badge.innerText = "MUTED";
             badge.style.color = "#ff5555";
         } else {
-            badge.innerText = "LIVE (<2ms Direct)";
+            badge.innerText = (hostMicLatencyMs !== null && hostMicLatencyMs > 0)
+                ? `LIVE (~${Math.round(hostMicLatencyMs)}ms Direct)`
+                : "LIVE (Direct)";
             badge.style.color = "#39ff14";
         }
     }
@@ -1710,6 +1757,13 @@ function broadcastHostMicState() {
 }
 
 function handleHostMicSettings(data) {
+    if (data.available !== undefined) {
+        hostMicAvailable = Boolean(data.available);
+        renderMicAvailability();
+    }
+    if (data.latency_ms !== undefined && data.latency_ms !== null) {
+        hostMicLatencyMs = Number(data.latency_ms);
+    }
     if (data.device !== undefined && data.device) {
         localStorage.setItem("tiki_mic_device", data.device);
         const select = document.getElementById("hostMicDeviceSelect");
