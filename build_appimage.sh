@@ -91,7 +91,12 @@ if [ -d "${REPO_ROOT}/bin" ]; then
     chmod +x "$APPDIR/usr/bin/bin/"* 2>/dev/null || true
 fi
 
+cp "${REPO_ROOT}/tray.py" "$APPDIR/usr/bin/tray.py"
+cp "${REPO_ROOT}/tray.py" "$APPDIR/usr/bin/_internal/tray.py" 2>/dev/null || true
 cp "${REPO_ROOT}/static/tiki-icon.png" "$APPDIR/tiki-icon.png"
+cp "${REPO_ROOT}/static/tiki-icon.png" "$APPDIR/usr/bin/tiki-icon.png"
+mkdir -p "$APPDIR/usr/bin/static"
+cp "${REPO_ROOT}/static/tiki-icon.png" "$APPDIR/usr/bin/static/tiki-icon.png"
 cp "${REPO_ROOT}/static/tiki-icon.png" "$APPDIR/usr/share/icons/hicolor/512x512/apps/tiki-icon.png"
 
 cat << 'EOF' > "$APPDIR/tiki-karaoke.desktop"

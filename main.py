@@ -18,8 +18,10 @@ import shutil
 # Ensure project root is in python path
 if getattr(sys, "frozen", False):
     BASE_DIR = Path(sys._MEIPASS) if hasattr(sys, "_MEIPASS") else Path(sys.executable).resolve().parent
-    # Clean internal AppImage / PyInstaller LD_LIBRARY_PATH so child processes (firefox, chrome, xdg-open, /bin/sh)
-    # use host system libraries instead of bundled container libraries
+    # Clean internal AppImage / PyInstaller environment so child processes (firefox, chrome, python3, xdg-open, /bin/sh)
+    # use host system libraries and standard library instead of container bundle
+    os.environ.pop("PYTHONHOME", None)
+    os.environ.pop("PYTHONPATH", None)
     if "LD_LIBRARY_PATH_ORIG" in os.environ:
         os.environ["LD_LIBRARY_PATH"] = os.environ["LD_LIBRARY_PATH_ORIG"]
     else:
@@ -627,7 +629,13 @@ def main():
     parser.add_argument("--local-only", action="store_true", help="Run on local network only (disable remote tunnels)")
     parser.add_argument("--tunnel", action="store_true", help="Force ephemeral Cloudflare HTTPS tunnel (Trusted SSL)")
     parser.add_argument("--bore", action="store_true", help="Force legacy Bore static port tunnel (HTTP)")
+    parser.add_argument("--debug-tray", action="store_true", help="Diagnose system tray icon and menu setup")
     args = parser.parse_args()
+
+    if args.debug_tray:
+        from tray import debug_tray_status
+        debug_tray_status()
+        sys.exit(0)
 
     # Write PID file for process tracking
     try:

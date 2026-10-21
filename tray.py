@@ -27,18 +27,25 @@ qt_tray_proc = None
 tray_icon = None
 
 def get_tray_icon_path() -> Optional[Path]:
-    """Finds best icon image path across platforms."""
-    candidates = [
+    """Finds best icon image path across platforms and bundle structures."""
+    candidates = []
+    if getattr(sys, "frozen", False):
+        base = Path(sys._MEIPASS) if hasattr(sys, "_MEIPASS") else Path(sys.executable).parent
+        candidates.extend([
+            base / "_internal" / "static" / "tiki-icon.png",
+            base / "static" / "tiki-icon.png",
+            base / "tiki-icon.png",
+            base.parent.parent / "tiki-icon.png",  # AppImage root
+            base.parent.parent / "usr" / "share" / "icons" / "hicolor" / "512x512" / "apps" / "tiki-icon.png",
+            base / "_internal" / "tiki-icon.ico",
+            base / "tiki-icon.ico",
+        ])
+    candidates.extend([
         Path(__file__).resolve().parent / "static" / "tiki-icon.png",
         Path(__file__).resolve().parent / "packaging" / "windows" / "tiki-icon.ico",
         Path(__file__).resolve().parent / "static" / "favicon.ico",
         Path(__file__).resolve().parent / "tiki-icon.ico",
-    ]
-    if getattr(sys, "frozen", False):
-        base = Path(sys._MEIPASS) if hasattr(sys, "_MEIPASS") else Path(sys.executable).parent
-        candidates.insert(0, base / "tiki-icon.png")
-        candidates.insert(1, base / "static" / "tiki-icon.png")
-        candidates.insert(2, base / "tiki-icon.ico")
+    ])
 
     for path in candidates:
         if path.exists():
@@ -52,7 +59,11 @@ def get_tray_image():
     icon_path = get_tray_icon_path()
     if icon_path:
         try:
-            return Image.open(icon_path)
+            img = Image.open(icon_path).convert("RGBA")
+            # Downscale large icons cleanly so X11 and Win32 don't choke or distort
+            if img.width > 64 or img.height > 64:
+                img = img.resize((64, 64), Image.Resampling.LANCZOS)
+            return img
         except Exception:
             pass
 
@@ -62,6 +73,110 @@ def get_tray_image():
     draw = ImageDraw.Draw(img)
     draw.ellipse((4, 4, 60, 60), fill=(0, 240, 255, 230), outline=(255, 42, 133, 255), width=4)
     return img
+
+def get_clean_host_env() -> dict:
+    """Returns an environment dictionary stripped of PyInstaller/AppImage internal paths."""
+    env = os.environ.copy()
+    env.pop("PYTHONHOME", None)
+    env.pop("PYTHONPATH", None)
+    # If LD_LIBRARY_PATH_ORIG is non-empty, restore it; otherwise completely pop LD_LIBRARY_PATH
+    orig = env.get("LD_LIBRARY_PATH_ORIG", "").strip()
+    if orig:
+        env["LD_LIBRARY_PATH"] = orig
+    else:
+        env.pop("LD_LIBRARY_PATH", None)
+    return env
+
+def find_qt_python(verbose: bool = False) -> Optional[str]:
+    """Finds a Python interpreter on the system that has PyQt6 or PySide6 available."""
+    clean_env = get_clean_host_env()
+    # 1. Check current interpreter (dev/non-frozen)
+    try:
+        import PyQt6.QtWidgets  # noqa: F401
+        return sys.executable
+    except ImportError:
+        try:
+            import PySide6.QtWidgets  # noqa: F401
+            return sys.executable
+        except ImportError:
+            pass
+
+    # 2. Check host system python interpreters (AppImage running on Linux host)
+    candidates = ["/usr/bin/python3", "/usr/local/bin/python3"]
+    w3 = shutil.which("python3")
+    if w3 and w3 not in candidates:
+        candidates.append(w3)
+    w = shutil.which("python")
+    if w and w not in candidates:
+        candidates.append(w)
+
+    for candidate in candidates:
+        if candidate and os.path.exists(candidate):
+            for qt_mod in ["PyQt6.QtWidgets", "PySide6.QtWidgets"]:
+                try:
+                    res = subprocess.run(
+                        [candidate, "-c", f"import {qt_mod}; print('OK')"],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        env=clean_env,
+                        text=True,
+                        timeout=2.0,
+                        check=False
+                    )
+                    if verbose:
+                        print(f"[Tray Debug] {candidate} importing {qt_mod}: code={res.returncode}, out={res.stdout.strip()!r}, err={res.stderr.strip()!r}")
+                    if res.returncode == 0 and "OK" in res.stdout:
+                        return candidate
+                except Exception as e:
+                    if verbose:
+                        print(f"[Tray Debug] {candidate} exception testing {qt_mod}: {e}")
+    return None
+
+def debug_tray_status():
+    """Runs a full diagnostic printout of system tray components."""
+    print("==================== TRAY DIAGNOSTIC REPORT ====================")
+    print(f"Platform:      {sys.platform}")
+    print(f"Frozen:        {getattr(sys, 'frozen', False)}")
+    print(f"Executable:    {sys.executable}")
+    clean_env = get_clean_host_env()
+    print(f"LD_LIBRARY_PATH_ORIG: {os.environ.get('LD_LIBRARY_PATH_ORIG')!r}")
+    print(f"Clean LD_LIBRARY_PATH: {clean_env.get('LD_LIBRARY_PATH')!r}")
+    print(f"Clean PYTHONHOME:      {clean_env.get('PYTHONHOME')!r}")
+    print(f"Clean PYTHONPATH:      {clean_env.get('PYTHONPATH')!r}")
+    qt_python = find_qt_python(verbose=True)
+    tray_script = get_tray_script_path()
+    icon_path = get_tray_icon_path()
+    print(f"Resolved qt_python:    {qt_python}")
+    print(f"Resolved tray_script:  {tray_script} (exists={tray_script.exists() if tray_script else False})")
+    print(f"Resolved icon_path:    {icon_path} (exists={icon_path.exists() if icon_path else False})")
+    print("================================================================")
+
+def get_tray_script_path() -> Optional[Path]:
+    """Finds or extracts a standalone tray.py file for the external Qt runner."""
+    this_file = Path(__file__).resolve()
+    if this_file.exists() and this_file.suffix == ".py":
+        return this_file
+
+    candidates = []
+    if getattr(sys, "frozen", False):
+        exe_dir = Path(sys.executable).resolve().parent
+        candidates.extend([
+            exe_dir / "tray.py",
+            exe_dir / "_internal" / "tray.py",
+            exe_dir.parent / "bin" / "tray.py",
+        ])
+        if hasattr(sys, "_MEIPASS"):
+            meipass = Path(sys._MEIPASS).resolve()
+            candidates.extend([
+                meipass / "tray.py",
+                meipass.parent / "tray.py",
+            ])
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+
+    return None
 
 def run_qt_tray_daemon(args):
     """
@@ -83,11 +198,15 @@ def run_qt_tray_daemon(args):
     app = QApplication([args.bar_name])
     app.setQuitOnLastWindowClosed(False)
 
-    icon_path = get_tray_icon_path()
-    if icon_path:
-        icon = QIcon(str(icon_path))
+    icon = None
+    if getattr(args, "icon", None) and Path(args.icon).exists():
+        icon = QIcon(str(args.icon))
     else:
-        icon = QIcon()
+        icon_path = get_tray_icon_path()
+        if icon_path and icon_path.exists():
+            icon = QIcon(str(icon_path))
+        else:
+            icon = QIcon()
 
     tray = QSystemTrayIcon(icon, app)
     tray.setToolTip(f"🌴 {args.bar_name}")
@@ -186,23 +305,16 @@ def start_tray(
     public_url = urls.get("public", "")
     shutdown_url = urls.get("shutdown", "")
 
-    # On Linux: Prefer Qt StatusNotifierItem for native Wayland / KDE Plasma support (non-frozen dev runs only)
-    if sys.platform != "win32" and not getattr(sys, "frozen", False):
-        try:
-            import PyQt6.QtWidgets  # noqa: F401
-            has_qt = True
-        except ImportError:
-            try:
-                import PySide6.QtWidgets  # noqa: F401
-                has_qt = True
-            except ImportError:
-                has_qt = False
-
-        if has_qt:
-            try:
+    # On Linux: Prefer Qt StatusNotifierItem for native Wayland / KDE Plasma / GNOME support
+    if sys.platform != "win32":
+        qt_python = find_qt_python()
+        if qt_python:
+            tray_script = get_tray_script_path()
+            if tray_script and tray_script.exists():
+                icon_path = get_tray_icon_path()
                 cmd = [
-                    sys.executable,
-                    str(Path(__file__).resolve()),
+                    qt_python,
+                    str(tray_script),
                     "--qt-daemon",
                     "--stage", stage_url,
                     "--host", host_url,
@@ -212,15 +324,21 @@ def start_tray(
                     "--public", public_url,
                     "--bar-name", bar_name,
                 ]
-                qt_tray_proc = subprocess.Popen(
-                    cmd,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL
-                )
-                print("[System Tray] ✅ Native Qt system tray icon active (Right-click icon in taskbar for options).")
-                return qt_tray_proc
-            except Exception as e:
-                print(f"[System Tray] Notice: Could not launch Qt tray daemon ({e}), falling back to pystray...")
+                if icon_path and icon_path.exists():
+                    cmd.extend(["--icon", str(icon_path)])
+
+                try:
+                    env = get_clean_host_env()
+                    qt_tray_proc = subprocess.Popen(
+                        cmd,
+                        env=env,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL
+                    )
+                    print("[System Tray] ✅ Native Qt StatusNotifierItem active (Wayland / KDE / GNOME native icon & menu).")
+                    return qt_tray_proc
+                except Exception as e:
+                    print(f"[System Tray] Notice: Could not launch Qt tray daemon ({e}), falling back to pystray...")
 
     # Windows (or Linux fallback): Use pystray Win32 / X11
     try:
@@ -335,6 +453,7 @@ if __name__ == "__main__":
     parser.add_argument("--setup", default="", help="Setup wizard URL")
     parser.add_argument("--shutdown", default="", help="Shutdown API URL")
     parser.add_argument("--public", default="", help="Public join URL")
+    parser.add_argument("--icon", default="", help="Path to tray icon file")
     parser.add_argument("--bar-name", default="The Tiki Hut Karaoke Lounge", help="Bar name")
     args = parser.parse_args()
 
