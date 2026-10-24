@@ -353,8 +353,84 @@ function onYouTubeStateChange(event) {
     }
 }
 
+let cdgRenderer = null;
+let cdgAnimFrame = null;
+let isCdgPlaying = false;
+
+function initCdgRenderer() {
+    const canvas = document.getElementById("cdgCanvas");
+    if (!canvas) return null;
+    if (!cdgRenderer && typeof CDGRenderer === "function") {
+        cdgRenderer = new CDGRenderer(canvas);
+        const sel = document.getElementById("cdgThemeSelect");
+        if (sel) sel.value = cdgRenderer.theme;
+        const glow = document.getElementById("cdgGlowToggle");
+        if (glow) glow.checked = cdgRenderer.glow;
+    }
+    return cdgRenderer;
+}
+
+function onCdgThemeChange(val) {
+    const renderer = initCdgRenderer();
+    if (renderer) renderer.setTheme(val);
+}
+
+function onCdgGlowChange(checked) {
+    const renderer = initCdgRenderer();
+    if (renderer) renderer.setGlow(checked);
+}
+
+async function startCdgPlayback(track) {
+    const canvas = document.getElementById("cdgCanvas");
+    if (!canvas) return;
+
+    const renderer = initCdgRenderer();
+    if (!renderer) return;
+
+    try {
+        canvas.style.display = "block";
+        isCdgPlaying = true;
+        const res = await fetch(`/stream-cdg/${track.track_id}`);
+        if (!res.ok) throw new Error("Failed to load CDG stream");
+        const buf = await res.arrayBuffer();
+        renderer.load(buf);
+
+        const localVideo = document.getElementById("localVideo");
+        if (cdgAnimFrame) cancelAnimationFrame(cdgAnimFrame);
+
+        function renderLoop() {
+            if (!isCdgPlaying) return;
+            const t = localVideo ? localVideo.currentTime : 0;
+            renderer.sync(t);
+            cdgAnimFrame = requestAnimationFrame(renderLoop);
+        }
+        cdgAnimFrame = requestAnimationFrame(renderLoop);
+    } catch (err) {
+        console.warn("[CDG] Playback error:", err);
+        stopCdgPlayback();
+    }
+}
+
+function stopCdgPlayback() {
+    isCdgPlaying = false;
+    if (cdgAnimFrame) {
+        cancelAnimationFrame(cdgAnimFrame);
+        cdgAnimFrame = null;
+    }
+    const canvas = document.getElementById("cdgCanvas");
+    if (canvas) {
+        canvas.style.display = "none";
+        const ctx = canvas.getContext("2d");
+        if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
+    if (cdgRenderer) {
+        cdgRenderer.resetState();
+    }
+}
+
 function startTrackPlayback(track) {
     if (!track) return;
+    stopCdgPlayback();
     currentTrack = track;
     stopIntermission();
     stopFillerPlayback();
@@ -384,6 +460,11 @@ function startTrackPlayback(track) {
         localVideo.src = `/stream/${track.track_id}`;
         if (configuredAudioSink && configuredAudioSink !== "default" && typeof localVideo.setSinkId === "function") {
             localVideo.setSinkId(configuredAudioSink).catch(() => {});
+        }
+
+        // Start CDG Canvas layer if track contains CDG subcodes
+        if (track.media_type === "cdg" || track.cdg_path) {
+            startCdgPlayback(track);
         }
         if (seekTime > 0) {
             if (localVideo.readyState >= 1) {
@@ -447,6 +528,7 @@ function onPlaybackFailure(reason, failedTrack) {
 }
 
 function onSongFinished() {
+    stopCdgPlayback();
     if (!currentTrack) return;
     if (isSpectatorViewer) return;
     fetch(`/api/queue/${currentTrack.queue_id}/complete`, { method: "POST" });
@@ -456,6 +538,7 @@ function onSongFinished() {
 }
 
 function skipCurrentTrack() {
+    stopCdgPlayback();
     const localVideo = document.getElementById("localVideo");
     if (localVideo) {
         localVideo.pause();
@@ -584,6 +667,7 @@ function triggerIntermission(nextTrack, duration = 20) {
 }
 
 function stopCurrentTrack(nextTrack) {
+    stopCdgPlayback();
     isIntermission = true;
     if (audioDSP) audioDSP.setBetweenSongs(true);
     currentTrack = null;
@@ -1613,6 +1697,7 @@ let hostDuckingEnabled = true;
 let hostDuckingDb = -6;
 let hostMicAvailable = null;   // null = unknown yet; true/false from backend router
 let hostMicLatencyMs = null;   // negotiated buffering latency estimate (native path)
+let hostMonitoringMode = "native"; // hardware_direct | native | browser
 
 // Fetch initial state from backend audio router
 fetch("/api/host/mic-state")
@@ -1624,7 +1709,14 @@ fetch("/api/host/mic-state")
             hostMicAvailable = Boolean(st.available);
             hostMicLatencyMs = (st.latency_ms_est !== undefined && st.latency_ms_est !== null)
                 ? Number(st.latency_ms_est) : null;
+            if (st.monitoring_mode) {
+                hostMonitoringMode = st.monitoring_mode;
+                const modeSel = document.getElementById("hostMonitoringModeSelect");
+                if (modeSel) modeSel.value = hostMonitoringMode;
+            }
             renderMicAvailability();
+            renderMonitoringModeGating();
+            syncBrowserWebRtcState();
             updateHostMicUI(hostMicMuted);
             const slider = document.getElementById("modalMicVolumeSlider");
             if (slider) slider.value = hostMicVolume;
@@ -1640,7 +1732,7 @@ fetch("/api/host/mic-state")
 function renderMicAvailability() {
     const warn = document.getElementById("micNativeWarning");
     if (!warn) return;
-    if (hostMicAvailable === false) {
+    if (hostMicAvailable === false && hostMonitoringMode === "native") {
         const hint = document.getElementById("micNativeWarningHint");
         if (hint) {
             const isWin = /Windows/i.test(navigator.userAgent);
@@ -1654,20 +1746,83 @@ function renderMicAvailability() {
     }
 }
 
+function renderMonitoringModeGating() {
+    // In hardware_direct mode: the interface's own monitor knob is doing the work.
+    // Disable mute toggle and volume slider — we can't control hardware directly.
+    const isHwDirect = hostMonitoringMode === "hardware_direct";
+    const toggleBtn = document.getElementById("modalMicToggleBtn");
+    const volSlider = document.getElementById("modalMicVolumeSlider");
+    const stageMicBtn = document.getElementById("stageMicToggleBtn");
+    const hint = document.getElementById("micModeHint");
+
+    if (toggleBtn) {
+        toggleBtn.disabled = isHwDirect;
+        toggleBtn.title = isHwDirect ? "Hardware Direct mode: use the interface's monitor knob" : "";
+        toggleBtn.style.opacity = isHwDirect ? "0.45" : "1";
+    }
+    if (stageMicBtn) {
+        stageMicBtn.disabled = isHwDirect;
+        stageMicBtn.style.opacity = isHwDirect ? "0.45" : "1";
+    }
+    if (volSlider) {
+        volSlider.disabled = isHwDirect;
+        volSlider.style.opacity = isHwDirect ? "0.45" : "1";
+    }
+    if (hint) {
+        hint.style.display = isHwDirect ? "block" : "none";
+    }
+    renderMicAvailability();
+}
+
+async function syncBrowserWebRtcState() {
+    if (hostMonitoringMode === "browser") {
+        if (!audioDSP) {
+            audioDSP = new AudioDSPPipeline();
+            window.audioDSP = audioDSP;
+        }
+        audioDSP.ensureContext();
+        if (!audioDSP.micStream) {
+            const devId = localStorage.getItem("tiki_mic_device") || "default";
+            await audioDSP.connectMicrophone(devId);
+        }
+        audioDSP.setMicMuted(hostMicMuted);
+        audioDSP.setMicVolume(hostMicVolume / 100.0);
+    } else {
+        // If not in browser WebRTC mode, mute the Web Audio mic so it does not echo with native route
+        if (audioDSP) {
+            audioDSP.setMicMuted(true);
+        }
+    }
+}
+
+function onHostMonitoringModeChange(newMode) {
+    if (!newMode) return;
+    hostMonitoringMode = newMode;
+    renderMonitoringModeGating();
+    syncBrowserWebRtcState();
+    broadcastHostMicState();
+}
+
 function requestHostMicPermission() {
-    // With native PipeWire loopback, no browser permission prompt is required.
-    // Triggering Connect turns mic LIVE via backend.
-    toggleStageMic();
+    if (hostMonitoringMode === "browser") {
+        syncBrowserWebRtcState();
+    } else {
+        toggleStageMic();
+    }
 }
 
 function onHostMicDeviceChange(deviceId) {
     localStorage.setItem("tiki_mic_device", deviceId);
+    if (hostMonitoringMode === "browser" && audioDSP) {
+        audioDSP.connectMicrophone(deviceId);
+    }
     broadcastHostMicState();
 }
 
 function toggleStageMic() {
     hostMicMuted = !hostMicMuted;
     updateHostMicUI(hostMicMuted);
+    syncBrowserWebRtcState();
     broadcastHostMicState();
 }
 
@@ -1700,7 +1855,18 @@ function updateHostMicUI(muted) {
 
     const badge = document.getElementById("micLiveStatusBadge");
     if (badge) {
-        if (hostMicAvailable === false) {
+        if (hostMonitoringMode === "hardware_direct") {
+            badge.innerText = "DIRECT HARDWARE (Interface Knob)";
+            badge.style.color = "#39ff14";
+        } else if (hostMonitoringMode === "browser") {
+            if (muted) {
+                badge.innerText = "MUTED";
+                badge.style.color = "#ff5555";
+            } else {
+                badge.innerText = "LIVE (Browser WebRTC)";
+                badge.style.color = "#00f0ff";
+            }
+        } else if (hostMicAvailable === false) {
             badge.innerText = "NO NATIVE ROUTING";
             badge.style.color = "#ffb703";
         } else if (muted) {
@@ -1716,8 +1882,15 @@ function updateHostMicUI(muted) {
 
     const barL = document.getElementById("vuMeterBarL");
     const barR = document.getElementById("vuMeterBarR");
-    if (barL) barL.style.width = muted ? "0%" : "75%";
-    if (barR) barR.style.width = muted ? "0%" : "75%";
+    if (barL && barR) {
+        if (muted || hostMonitoringMode === "hardware_direct") {
+            barL.style.width = "0%";
+            barR.style.width = "0%";
+        } else if (hostMonitoringMode === "native") {
+            barL.style.width = "65%";
+            barR.style.width = "65%";
+        }
+    }
 }
 
 function onHostMicVolumeChange(val) {
@@ -1725,6 +1898,7 @@ function onHostMicVolumeChange(val) {
     hostMicVolume = num;
     const txt = document.getElementById("modalMicVolumeText");
     if (txt) txt.innerText = `${num}%`;
+    syncBrowserWebRtcState();
     broadcastHostMicState();
 }
 
@@ -1750,6 +1924,7 @@ function broadcastHostMicState() {
             device: localStorage.getItem("tiki_mic_device") || "default",
             muted: hostMicMuted,
             volume: hostMicVolume,
+            monitoring_mode: hostMonitoringMode,
             ducking_enabled: hostDuckingEnabled,
             ducking_db: hostDuckingDb
         }));
@@ -1763,6 +1938,15 @@ function handleHostMicSettings(data) {
     }
     if (data.latency_ms !== undefined && data.latency_ms !== null) {
         hostMicLatencyMs = Number(data.latency_ms);
+    }
+    if (data.monitoring_mode !== undefined && data.monitoring_mode) {
+        hostMonitoringMode = data.monitoring_mode;
+        const modeSel = document.getElementById("hostMonitoringModeSelect");
+        if (modeSel && modeSel.value !== hostMonitoringMode) {
+            modeSel.value = hostMonitoringMode;
+        }
+        renderMonitoringModeGating();
+        syncBrowserWebRtcState();
     }
     if (data.device !== undefined && data.device) {
         localStorage.setItem("tiki_mic_device", data.device);
@@ -1835,12 +2019,21 @@ function startHostMicVULoop() {
     if (hostMicVuAnimFrame) cancelAnimationFrame(hostMicVuAnimFrame);
     function updateLoop() {
         if (!hostMicModalOpen) return;
-        if (audioDSP) {
-            const levels = audioDSP.getMicLevels();
-            const barL = document.getElementById("vuMeterBarL");
-            const barR = document.getElementById("vuMeterBarR");
-            if (barL) barL.style.width = levels.isLive ? `${levels.peakL}%` : "0%";
-            if (barR) barR.style.width = levels.isLive ? `${levels.peakR}%` : "0%";
+        const barL = document.getElementById("vuMeterBarL");
+        const barR = document.getElementById("vuMeterBarR");
+        if (barL && barR) {
+            if (hostMicMuted || hostMonitoringMode === "hardware_direct") {
+                barL.style.width = "0%";
+                barR.style.width = "0%";
+            } else if (hostMonitoringMode === "browser" && audioDSP) {
+                const levels = audioDSP.getMicLevels();
+                barL.style.width = levels.isLive ? `${levels.peakL}%` : "0%";
+                barR.style.width = levels.isLive ? `${levels.peakR}%` : "0%";
+            } else {
+                // Native loopback direct routing is active
+                barL.style.width = "70%";
+                barR.style.width = "70%";
+            }
         }
         hostMicVuAnimFrame = requestAnimationFrame(updateLoop);
     }

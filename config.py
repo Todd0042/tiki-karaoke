@@ -64,15 +64,26 @@ def get_bundled_binary_path(binary_name: str) -> Path:
         if meipass_root.exists():
             return meipass_root
 
-    # 2. Check project bin directory
+    # 2. Check project / application bin directory
+    app_bin = APP_DIR / "bin" / full_name
+    if app_bin.exists():
+        return app_bin
+    app_root = APP_DIR / full_name
+    if app_root.exists():
+        return app_root
+
     local_bin = BASE_DIR / "bin" / full_name
     if local_bin.exists():
         return local_bin
 
-    # 2b. Check staging packaging bin directory
+    # 2b. Check staging packaging bin directory (including sibling windows repo)
     pkg_bin = BASE_DIR / "packaging" / "windows" / "bin" / full_name
     if pkg_bin.exists():
         return pkg_bin
+
+    sibling_win_bin = BASE_DIR.parent / "tiki-karaoke-windows" / "bin" / full_name
+    if sibling_win_bin.exists():
+        return sibling_win_bin
 
     # 3. Fallback to system PATH lookup
     sys_which = shutil.which(full_name) or shutil.which(binary_name)

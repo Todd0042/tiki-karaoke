@@ -14,6 +14,8 @@ import shutil
 import tempfile
 import urllib.parse
 import urllib.request
+import hashlib
+import zipfile
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Callable, Tuple
 from contextlib import asynccontextmanager
@@ -28,7 +30,7 @@ import qrcode
 from config import (
     STATIC_DIR, TEMPLATES_DIR, TRACKS_DIR, HOST_TOKEN, HOST_PIN,
     PORT, DEFAULT_INTERMISSION_SECONDS, PUBLIC_HOST, REMOTE_MODE, BAR_NAME,
-    load_config, save_config, is_configured,
+    load_config, save_config, is_configured, get_user_data_root,
     get_library_dir, get_tracks_dir, get_playlists_dir, get_data_dir,
     get_db_path, get_path_info, ensure_storage_dirs, get_storage_status,
     get_available_displays, get_available_audio_sinks, get_available_audio_sources, get_bundled_binary_path,
@@ -399,6 +401,9 @@ async def background_metadata_enricher():
 async def lifespan(app: FastAPI):
     init_db()
     clear_queue_on_startup()
+    # Restore persisted monitoring mode before any connections arrive
+    saved_mode = get_setting("mic_monitoring_mode", "native")
+    audio_router.set_monitoring_mode(saved_mode)
     worker_task = asyncio.create_task(downloader_worker())
     filler_worker_task = asyncio.create_task(filler_downloader_worker())
     watchdog_task = asyncio.create_task(intermission_watchdog_loop())
@@ -916,6 +921,12 @@ async def api_save_setup(payload: Dict[str, Any], request: Request, response: Re
             set_setting("host_kiosk_mode", "true" if payload["host_kiosk_mode"] else "false")
         if "video_quality_profile" in payload:
             set_setting("video_quality_profile", str(payload["video_quality_profile"]))
+        if "mic_monitoring_mode" in payload:
+            from audio_router import MONITORING_MODES
+            mode = str(payload["mic_monitoring_mode"]).strip()
+            if mode in MONITORING_MODES:
+                set_setting("mic_monitoring_mode", mode)
+                audio_router.set_monitoring_mode(mode)
 
         # Automatically log host in with cookie
         response.set_cookie(
@@ -1054,6 +1065,19 @@ async def stream_local_video(track_id: int):
     import mimetypes
     mime, _ = mimetypes.guess_type(file_path)
     return FileResponse(file_path, media_type=mime or "video/mp4")
+
+# Local CDG Subcode Stream
+@app.get("/stream-cdg/{track_id}")
+async def stream_local_cdg(track_id: int):
+    track = get_track_by_id(track_id)
+    if not track or not track.get("cdg_path"):
+        raise HTTPException(status_code=404, detail="CDG lyrics not available for this track")
+    
+    cdg_path = track["cdg_path"]
+    if not os.path.exists(cdg_path):
+        raise HTTPException(status_code=404, detail="CDG file missing on disk")
+
+    return FileResponse(cdg_path, media_type="application/octet-stream")
 
 @app.get("/stream/filler/{filler_id}")
 async def stream_filler_video(filler_id: int):
@@ -1317,7 +1341,7 @@ async def api_enqueue_song(req: QueueSongRequest, request: Request):
                 }
             )
 
-    # Strict Commercial / BYOM Mode Lockdown: Reject non-imported tracks
+    # Curated Local Library / Offline Mode: Reject non-imported tracks
     if get_setting("strict_byom_only", "false") == "true":
         track_obj = get_track_by_id(req.track_id) if req.track_id else (get_track_by_video_id(req.video_id) if req.video_id else None)
         is_imported = False
@@ -1329,7 +1353,7 @@ async def api_enqueue_song(req: QueueSongRequest, request: Request):
         if not is_imported:
             raise HTTPException(
                 status_code=403,
-                detail="🔒 Strict Commercial Mode Active: Online downloads and unpurchased tracks are disabled by the Host DJ. Only legally imported tracks in the venue library can be queued."
+                detail="🔒 Curated Local Library Mode Active: Online downloads are disabled by the Host DJ. Only imported songs in the local crate can be queued."
             )
 
     # Ensure track is in DB
@@ -1615,7 +1639,37 @@ async def api_update_settings(settings: Dict[str, str], request: Request):
 
 @app.get("/api/host/mic-state")
 async def api_get_host_mic_state():
-    return JSONResponse(audio_router.get_state())
+    st = audio_router.get_state()
+    # Persist monitoring_mode in settings so it survives restarts
+    st["monitoring_mode"] = get_setting("mic_monitoring_mode", st.get("monitoring_mode", "native"))
+    return JSONResponse(st)
+
+
+@app.post("/api/host/mic-monitoring-mode")
+async def api_set_mic_monitoring_mode(request: Request):
+    if not is_host_request(request):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
+    data = await request.json()
+    mode = str(data.get("mode", "native")).strip()
+    from audio_router import MONITORING_MODES
+    if mode not in MONITORING_MODES:
+        raise HTTPException(status_code=400, detail=f"Invalid mode '{mode}'. Valid: {MONITORING_MODES}")
+    audio_router.set_monitoring_mode(mode)
+    set_setting("mic_monitoring_mode", mode)
+    if mode == "native" and not audio_router.is_muted:
+        audio_router.start_loopback()
+    st = audio_router.get_state()
+    msg = {
+        "type": "host_mic_settings",
+        "monitoring_mode": mode,
+        "available": st.get("available", False),
+        "muted": st.get("muted", True),
+        "volume": st.get("volume", 80),
+        "device": st.get("device", "default"),
+        "latency_ms": st.get("latency_ms_est"),
+    }
+    await manager.broadcast(msg)
+    return {"status": "ok", "monitoring_mode": mode}
 
 @app.get("/api/bgm-tracks")
 async def api_get_bgm_tracks():
@@ -1910,6 +1964,32 @@ class ImportLocalMediaRequest(BaseModel):
     is_sing_along: bool = False
     target_destination: str = "karaoke"  # "karaoke", "sing_along", "filler"
 
+def extract_cdg_zip(zip_path: Path) -> Optional[Tuple[str, str]]:
+    """Inspects a zip archive. If it contains a .cdg and an audio file, extracts them to persistent cdg_cache."""
+    try:
+        cache_dir = get_user_data_root() / "cdg_cache"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(zip_path, 'r') as zf:
+            names = zf.namelist()
+            cdg_names = [n for n in names if n.lower().endswith(".cdg") and not n.startswith("__MACOSX") and not Path(n).name.startswith(".")]
+            audio_names = [n for n in names if Path(n).suffix.lower() in {".mp3", ".ogg", ".wav", ".m4a", ".flac"} and not n.startswith("__MACOSX") and not Path(n).name.startswith(".")]
+            if cdg_names and audio_names:
+                h = hashlib.sha256(str(zip_path.resolve()).encode()).hexdigest()[:12]
+                out_dir = cache_dir / h
+                out_dir.mkdir(parents=True, exist_ok=True)
+                audio_entry = audio_names[0]
+                cdg_entry = cdg_names[0]
+                extracted_audio = out_dir / Path(audio_entry).name
+                extracted_cdg = out_dir / Path(cdg_entry).name
+                with open(extracted_audio, "wb") as f_out, zf.open(audio_entry) as f_in:
+                    shutil.copyfileobj(f_in, f_out)
+                with open(extracted_cdg, "wb") as f_out, zf.open(cdg_entry) as f_in:
+                    shutil.copyfileobj(f_in, f_out)
+                return str(extracted_audio), str(extracted_cdg)
+    except Exception as e:
+        print(f"[CDG] Error extracting zip {zip_path.name}: {e}")
+    return None
+
 @app.post("/api/host/import-local-library")
 async def api_import_local_library(payload: ImportLocalMediaRequest, request: Request):
     if not (is_host_request(request) or is_local_request(request)):
@@ -1923,47 +2003,102 @@ async def api_import_local_library(payload: ImportLocalMediaRequest, request: Re
     if not folder.exists() or not folder.is_dir():
         raise HTTPException(status_code=400, detail=f"Directory does not exist or is not a folder: {folder_str}")
 
-    VALID_EXTS = {".mp4", ".mkv", ".webm", ".avi", ".mov", ".m4v"}
-    if payload.recursive:
-        candidate_files = [p for p in folder.rglob("*") if p.is_file() and p.suffix.lower() in VALID_EXTS]
-    else:
-        candidate_files = [p for p in folder.glob("*") if p.is_file() and p.suffix.lower() in VALID_EXTS]
+    VIDEO_EXTS = {".mp4", ".mkv", ".webm", ".avi", ".mov", ".m4v"}
+    AUDIO_EXTS = {".mp3", ".ogg", ".wav", ".m4a", ".flac"}
+    CDG_EXTS = {".cdg"}
+    ZIP_EXTS = {".zip"}
+    ALL_VALID = VIDEO_EXTS | AUDIO_EXTS | CDG_EXTS | ZIP_EXTS
 
-    if not candidate_files:
+    if payload.recursive:
+        all_files = [p for p in folder.rglob("*") if p.is_file() and p.suffix.lower() in ALL_VALID]
+    else:
+        all_files = [p for p in folder.glob("*") if p.is_file() and p.suffix.lower() in ALL_VALID]
+
+    if not all_files:
         return {
             "status": "ok",
             "imported_count": 0,
             "total_found": 0,
-            "message": "No supported video karaoke files found in folder (.mp4, .mkv, .webm, .avi)"
+            "message": "No supported karaoke files found in folder (.mp4, .zip, .mp3+cdg, .mkv, .webm)"
         }
 
     imported = []
     is_filler = (payload.target_destination == "filler")
     is_sa = payload.is_sing_along or (payload.target_destination == "sing_along")
 
-    for f in candidate_files:
-        artist, title = parse_karaoke_filename(f.name)
-        dur = get_local_media_duration(str(f))
+    processed_audio_paths = set()
+    cdg_items = []
+
+    # 1. Inspect .zip archives for MP3+CDG
+    for p in all_files:
+        if p.suffix.lower() == ".zip":
+            extracted = extract_cdg_zip(p)
+            if extracted:
+                audio_p, cdg_p = extracted
+                cdg_items.append((p.name, audio_p, cdg_p))
+
+    # 2. Inspect uncompressed .cdg pairs
+    for p in all_files:
+        if p.suffix.lower() == ".cdg":
+            parent = p.parent
+            stem = p.stem
+            found_audio = None
+            for a_ext in (".mp3", ".ogg", ".wav", ".m4a", ".flac"):
+                cand = parent / f"{stem}{a_ext}"
+                if cand.exists():
+                    found_audio = cand
+                    break
+            if found_audio:
+                audio_res = str(found_audio.resolve())
+                processed_audio_paths.add(audio_res)
+                cdg_items.append((p.name, audio_res, str(p.resolve())))
+
+    # Import CDG tracks
+    for display_name, audio_p, cdg_p in cdg_items:
+        artist, title = parse_karaoke_filename(display_name)
+        dur = get_local_media_duration(audio_p)
         try:
-            if is_filler:
-                fid = import_local_filler_track(
-                    file_path=str(f),
-                    title=title,
-                    artist=artist,
-                    duration=dur
-                )
-                imported.append({"id": fid, "title": title, "artist": artist, "file": f.name, "type": "filler"})
-            else:
-                tid = import_local_track(
-                    file_path=str(f),
-                    title=title,
-                    artist=artist,
-                    duration=dur,
-                    is_sing_along=is_sa
-                )
-                imported.append({"id": tid, "title": title, "artist": artist, "file": f.name, "type": "sing_along" if is_sa else "karaoke"})
+            tid = import_local_track(
+                file_path=audio_p,
+                title=title,
+                artist=artist,
+                duration=dur,
+                is_sing_along=is_sa,
+                media_type="cdg",
+                cdg_path=cdg_p
+            )
+            imported.append({"id": tid, "title": title, "artist": artist, "file": display_name, "type": "cdg"})
         except Exception as e:
-            print(f"[Import] Error importing {f.name}: {e}")
+            print(f"[Import] Error importing CDG {display_name}: {e}")
+
+    # 3. Import regular video files (and standalone audio if filler)
+    for f in all_files:
+        ext = f.suffix.lower()
+        res_str = str(f.resolve())
+        if ext in VIDEO_EXTS or (ext in AUDIO_EXTS and res_str not in processed_audio_paths and is_filler):
+            artist, title = parse_karaoke_filename(f.name)
+            dur = get_local_media_duration(res_str)
+            try:
+                if is_filler:
+                    fid = import_local_filler_track(
+                        file_path=res_str,
+                        title=title,
+                        artist=artist,
+                        duration=dur
+                    )
+                    imported.append({"id": fid, "title": title, "artist": artist, "file": f.name, "type": "filler"})
+                else:
+                    tid = import_local_track(
+                        file_path=res_str,
+                        title=title,
+                        artist=artist,
+                        duration=dur,
+                        is_sing_along=is_sa,
+                        media_type="video"
+                    )
+                    imported.append({"id": tid, "title": title, "artist": artist, "file": f.name, "type": "sing_along" if is_sa else "karaoke"})
+            except Exception as e:
+                print(f"[Import] Error importing {f.name}: {e}")
 
     if is_filler:
         await manager.broadcast({"type": "filler_tracks_updated"})
@@ -1974,7 +2109,7 @@ async def api_import_local_library(payload: ImportLocalMediaRequest, request: Re
     return {
         "status": "ok",
         "imported_count": len(imported),
-        "total_found": len(candidate_files),
+        "total_found": len(all_files),
         "target_destination": payload.target_destination,
         "message": f"Successfully imported {len(imported)} media tracks into {dest_label}!",
         "tracks": imported[:50]
@@ -2522,12 +2657,20 @@ async def websocket_endpoint(websocket: WebSocket):
                     muted = data.get("muted")
                     volume = data.get("volume")
                     device = data.get("device")
+                    monitoring_mode = data.get("monitoring_mode")
                     if muted is not None:
                         audio_router.set_muted(bool(muted))
                     if volume is not None:
                         audio_router.set_volume(int(volume))
                     if device is not None and str(device).strip():
                         audio_router.set_device(str(device).strip())
+                    if monitoring_mode is not None:
+                        from audio_router import MONITORING_MODES
+                        if monitoring_mode in MONITORING_MODES:
+                            audio_router.set_monitoring_mode(monitoring_mode)
+                            set_setting("mic_monitoring_mode", monitoring_mode)
+                            if monitoring_mode == "native" and not audio_router.is_muted:
+                                audio_router.start_loopback()
 
                     st = audio_router.get_state()
                     msg = {
@@ -2537,6 +2680,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         "device": st["device"],
                         "available": st.get("available", False),
                         "latency_ms": st.get("latency_ms_est"),
+                        "monitoring_mode": get_setting("mic_monitoring_mode", st.get("monitoring_mode", "native")),
                         "reverb": data.get("reverb", False),
                         "ducking_enabled": data.get("ducking_enabled", True),
                         "ducking_db": data.get("ducking_db", -6)

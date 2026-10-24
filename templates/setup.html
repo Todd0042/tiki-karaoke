@@ -461,6 +461,23 @@
                         </div>
                     </div>
                 </div>
+
+                <!-- Monitoring Mode Selector -->
+                <div class="field-group" style="margin-top: 18px; padding-top: 14px; border-top: 1px solid rgba(255,255,255,0.08);">
+                    <label for="micMonitoringModeSelect">🎧 Mic Monitoring Mode</label>
+                    <select id="micMonitoringModeSelect" name="mic_monitoring_mode" onchange="onMonitoringModeChanged(this.value)" style="width: 100%;">
+                        <option value="native">Native OS Routing — Low-latency pactl / WASAPI loopback (recommended for wired speakers)</option>
+                        <option value="hardware_direct">Hardware Direct — Interface has its own zero-latency monitor knob (no software routing)</option>
+                        <option value="browser">Browser WebRTC — Software mic processing via browser (80–300ms, safe for Bluetooth / TV)</option>
+                    </select>
+                    <div id="monitoringModeDesc" class="field-desc" style="margin-top: 6px;"></div>
+
+                    <!-- Bluetooth / HDMI / TV latency warning -->
+                    <div id="btLatencyWarning" style="display: none; margin-top: 10px; padding: 10px 14px; border-radius: 10px; background: rgba(255, 183, 3, 0.1); border: 1px solid rgba(255, 183, 3, 0.5); font-size: 0.8rem; color: #ffb703; line-height: 1.5;">
+                        ⚠️ <strong>Bluetooth / HDMI-TV detected.</strong> These outputs have 80–300ms of OS-level audio delay. Singers will hear a noticeable echo in their voice with Native or Hardware Direct modes.<br>
+                        <strong>Switch to Browser WebRTC mode</strong> above, or use a wired output (USB audio interface, 3.5mm, or PA mixer) for the stage monitors.
+                    </div>
+                </div>
             </div>
 
             <!-- Section 6: Stage Experience & DJ Settings -->
@@ -764,6 +781,40 @@
                 if (nameEl) nameEl.value = chosen.description || chosen.name;
                 if (infoEl) infoEl.innerText = `Selected Output: ${chosen.description || chosen.name}`;
             }
+            checkBtLatencyWarning(sel.value, (chosen && (chosen.description || chosen.name)) || '');
+        }
+
+        const BT_KEYWORDS = /bluetooth|wireless|a2dp|airplay|hdmi|arc|tv\b|television/i;
+
+        function checkBtLatencyWarning(deviceId, deviceName) {
+            const warn = document.getElementById('btLatencyWarning');
+            if (!warn) return;
+            const isBt = BT_KEYWORDS.test(deviceName) || BT_KEYWORDS.test(deviceId);
+            warn.style.display = isBt ? 'block' : 'none';
+            // Suggest browser mode if BT/TV detected and native/hardware_direct is selected
+            if (isBt) {
+                const modeSel = document.getElementById('micMonitoringModeSelect');
+                if (modeSel && modeSel.value !== 'browser') {
+                    warn.innerHTML = '⚠️ <strong>Bluetooth / HDMI-TV detected.</strong> These outputs have 80–300ms of OS-level audio delay. Singers will hear a noticeable echo in their voice with Native or Hardware Direct modes.<br><strong>Switch to Browser WebRTC mode</strong> above, or use a wired output for stage monitors.';
+                }
+            }
+        }
+
+        const MONITORING_MODE_DESCS = {
+            native: '✅ Recommended for wired setups. The OS routes the mic directly to your speakers at ~1–15ms latency using pactl (Linux) or tiki-mic-router (Windows). Zero browser overhead.',
+            hardware_direct: '🎛️ Your audio interface has a physical Direct Monitor knob. Tiki Karaoke won\'t route the mic in software — turn the knob on the interface to hear yourself.',
+            browser: '🌐 The browser processes the mic via WebRTC / Web Audio API. Safe for Bluetooth / HDMI-TV outputs (latency matches the speaker delay). Adds ~80–300ms round-trip.'
+        };
+
+        function onMonitoringModeChanged(mode) {
+            const desc = document.getElementById('monitoringModeDesc');
+            if (desc) desc.innerText = MONITORING_MODE_DESCS[mode] || '';
+            // Re-check BT warning with new mode context
+            const outSel = document.getElementById('audioDeviceSelect');
+            if (outSel) {
+                const chosen = detectedAudioDevices.find(d => d.id === outSel.value);
+                checkBtLatencyWarning(outSel.value, (chosen && (chosen.description || chosen.name)) || '');
+            }
         }
 
         async function testAudioChime() {
@@ -956,6 +1007,15 @@
             loadDisplays();
             loadAudioDevices();
             loadAudioSources();
+            // Restore saved monitoring mode and show its description
+            const modeSel = document.getElementById('micMonitoringModeSelect');
+            if (modeSel) {
+                const savedMode = '{{ config.mic_monitoring_mode or "native" }}';
+                if (savedMode && modeSel.querySelector(`option[value="${savedMode}"]`)) {
+                    modeSel.value = savedMode;
+                }
+                onMonitoringModeChanged(modeSel.value);
+            }
         });
 
         async function handleSetupSubmit(e) {
@@ -1003,7 +1063,8 @@
                 host_display_y: parseInt(formData.get('host_display_y') || "0"),
                 host_display_width: parseInt(formData.get('host_display_width') || "1920"),
                 host_display_height: parseInt(formData.get('host_display_height') || "1080"),
-                host_kiosk_mode: formData.get('host_kiosk_mode') === 'true'
+                host_kiosk_mode: formData.get('host_kiosk_mode') === 'true',
+                mic_monitoring_mode: document.getElementById('micMonitoringModeSelect')?.value || 'native'
             };
 
             try {

@@ -1723,7 +1723,8 @@ let hostMicState = {
     ducking_enabled: true,
     ducking_db: -6,
     available: null,   // null = unknown yet; true/false from backend router
-    latency_ms: null   // negotiated buffering latency estimate (native path)
+    latency_ms: null,  // negotiated buffering latency estimate (native path)
+    monitoring_mode: "native"  // hardware_direct | native | browser
 };
 
 async function loadHostMicDevices() {
@@ -1752,11 +1753,12 @@ async function loadHostMicDevices() {
                 hostMicState.volume = Number(st.volume) || 80;
                 if (st.device && st.device !== "default") hostMicState.device = st.device;
                 if (st.available !== undefined) hostMicState.available = Boolean(st.available);
+                if (st.monitoring_mode) hostMicState.monitoring_mode = st.monitoring_mode;
                 if (st.latency_ms_est !== undefined && st.latency_ms_est !== null) {
                     hostMicState.latency_ms = Number(st.latency_ms_est);
                 }
+                renderMobileMonitoringModeGating();
                 updateMobileHostMicUI();
-                renderMobileMicAvailability();
                 const slider = document.getElementById("mobileHostMicSlider");
                 if (slider) slider.value = hostMicState.volume;
                 const volText = document.getElementById("mobileHostMicVolText");
@@ -1767,6 +1769,39 @@ async function loadHostMicDevices() {
     } catch (e) {
         console.warn("[Host Remote] Error loading audio inputs:", e);
     }
+}
+
+function hostSetMonitoringMode(mode) {
+    if (!mode) return;
+    hostMicState.monitoring_mode = mode;
+    sendHostMicSettings({ monitoring_mode: mode });
+    renderMobileMonitoringModeGating();
+    updateMobileHostMicUI();
+}
+
+function renderMobileMonitoringModeGating() {
+    const isHwDirect = hostMicState.monitoring_mode === "hardware_direct";
+    const btn = document.getElementById("mobileHostMicToggleBtn");
+    const slider = document.getElementById("mobileHostMicSlider");
+    const hint = document.getElementById("mobileMicModeHint");
+    const modeSel = document.getElementById("mobileMonitoringModeSelect");
+
+    if (modeSel && hostMicState.monitoring_mode && modeSel.value !== hostMicState.monitoring_mode) {
+        modeSel.value = hostMicState.monitoring_mode;
+    }
+    if (btn) {
+        btn.disabled = isHwDirect;
+        btn.title = isHwDirect ? "Hardware Direct mode: use interface knob" : "";
+        btn.style.opacity = isHwDirect ? "0.45" : "1";
+    }
+    if (slider) {
+        slider.disabled = isHwDirect;
+        slider.style.opacity = isHwDirect ? "0.45" : "1";
+    }
+    if (hint) {
+        hint.style.display = isHwDirect ? "block" : "none";
+    }
+    renderMobileMicAvailability();
 }
 
 function hostSetMicDevice(dev) {
@@ -1807,6 +1842,7 @@ function sendHostMicSettings(partial) {
     if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({
             type: "host_mic_settings",
+            monitoring_mode: hostMicState.monitoring_mode,
             ...partial
         }));
     }
@@ -1827,7 +1863,24 @@ function updateMobileHostMicUI() {
         }
     }
     if (badge) {
-        if (hostMicState.available === false) {
+        if (hostMicState.monitoring_mode === "hardware_direct") {
+            badge.innerText = "DIRECT HARDWARE";
+            badge.style.background = "rgba(57, 255, 20, 0.2)";
+            badge.style.color = "#39ff14";
+            badge.style.borderColor = "rgba(57, 255, 20, 0.4)";
+        } else if (hostMicState.monitoring_mode === "browser") {
+            if (hostMicState.muted) {
+                badge.innerText = "MUTED";
+                badge.style.background = "rgba(255, 85, 85, 0.2)";
+                badge.style.color = "#ff5555";
+                badge.style.borderColor = "rgba(255, 85, 85, 0.4)";
+            } else {
+                badge.innerText = "LIVE (Browser WebRTC)";
+                badge.style.background = "rgba(0, 240, 255, 0.2)";
+                badge.style.color = "#00f0ff";
+                badge.style.borderColor = "rgba(0, 240, 255, 0.4)";
+            }
+        } else if (hostMicState.available === false) {
             badge.innerText = "NO NATIVE ROUTING";
             badge.style.background = "rgba(255, 183, 3, 0.2)";
             badge.style.color = "#ffb703";
@@ -1851,7 +1904,7 @@ function updateMobileHostMicUI() {
 function renderMobileMicAvailability() {
     const warn = document.getElementById("mobileHostMicNativeWarning");
     if (!warn) return;
-    if (hostMicState.available === false) {
+    if (hostMicState.available === false && hostMicState.monitoring_mode === "native") {
         const hint = document.getElementById("mobileHostMicNativeWarningHint");
         if (hint) {
             const isWin = /Windows/i.test(navigator.userAgent);
@@ -1872,6 +1925,11 @@ function syncHostMicSettingsUI(data) {
     }
     if (data.latency_ms !== undefined && data.latency_ms !== null) {
         hostMicState.latency_ms = Number(data.latency_ms);
+    }
+    if (data.monitoring_mode !== undefined && data.monitoring_mode) {
+        hostMicState.monitoring_mode = data.monitoring_mode;
+        renderMobileMonitoringModeGating();
+        updateMobileHostMicUI();
     }
     if (data.device !== undefined && data.device) {
         hostMicState.device = data.device;
@@ -3676,9 +3734,9 @@ async function toggleStrictByomMode(enabled) {
             const data = await res.json();
             syncHostStrictModeUI(data.strict_byom_only);
             if (data.strict_byom_only) {
-                showToast("🔒 Strict Commercial Mode ON: YouTube downloader & online requests disabled.");
+                showToast("🔒 Curated Local Mode ON: Online requests disabled; only local crate active.");
             } else {
-                showToast("🔓 Strict Commercial Mode OFF: Hybrid library & online requests active.");
+                showToast("🔓 Curated Local Mode OFF: Hybrid local crate & online requests active.");
             }
         } else {
             showToast("⚠️ Failed to update Strict Mode setting");

@@ -208,6 +208,7 @@
         <div id="videoViewport">
             <video id="localVideo" style="display: none;" playsinline webkit-playsinline></video>
             <video id="fillerVideo" style="display: none;" playsinline webkit-playsinline></video>
+            <canvas id="cdgCanvas" width="300" height="216" style="display: none; position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; z-index: 4; pointer-events: none;"></canvas>
             <div id="youtubeContainer" style="display: none;">
                 <div id="youtubePlayer"></div>
             </div>
@@ -377,6 +378,16 @@
             </div>
 
             <!-- Input Device Selector -->
+            <!-- Monitoring Mode Selector -->
+            <div style="margin-bottom: 16px;">
+                <label for="hostMonitoringModeSelect" style="display: block; font-size: 0.85rem; font-weight: 700; color: #fff; margin-bottom: 6px;">🎧 Mic Monitoring Mode:</label>
+                <select id="hostMonitoringModeSelect" onchange="onHostMonitoringModeChange(this.value)" style="width: 100%; padding: 10px 12px; border-radius: 10px; background: rgba(16, 28, 45, 0.95); border: 1px solid var(--border-neon); color: #fff; font-size: 0.85rem; outline: none;">
+                    <option value="native">Native OS Direct (Low latency pactl / WASAPI loopback)</option>
+                    <option value="hardware_direct">Hardware Direct (Audio Interface Monitor Knob)</option>
+                    <option value="browser">Browser WebRTC (80–300ms, Bluetooth / TV / Fallback)</option>
+                </select>
+            </div>
+
             <div style="margin-bottom: 16px;">
                 <label style="display: block; font-size: 0.85rem; font-weight: 700; color: #fff; margin-bottom: 6px;">Audio Input Device (Line-In / Mic / Receiver):</label>
                 <div style="display: flex; gap: 8px;">
@@ -393,6 +404,10 @@
                 <div id="micNativeWarning" style="display: none; margin-top: 8px; padding: 10px 12px; border-radius: 10px; background: rgba(255, 183, 3, 0.12); border: 1px solid rgba(255, 183, 3, 0.45); font-size: 0.75rem; color: #ffb703; line-height: 1.45;">
                     ⚠️ <strong>Native mic routing unavailable.</strong> Singers will not hear themselves through the venue speakers.
                     <span id="micNativeWarningHint"></span>
+                </div>
+                <!-- Hardware Direct mode hint: controls disabled intentionally -->
+                <div id="micModeHint" style="display: none; margin-top: 8px; padding: 10px 12px; border-radius: 10px; background: rgba(57,255,20,0.08); border: 1px solid rgba(57,255,20,0.3); font-size: 0.75rem; color: #39ff14; line-height: 1.45;">
+                    🎛️ <strong>Hardware Direct mode.</strong> Your interface's monitor knob controls the mic level. Mute and volume controls are disabled — use the physical interface.
                 </div>
             </div>
 
@@ -470,6 +485,26 @@
                 </div>
             </div>
 
+            <!-- CDG Karaoke Disc Styles & Themes -->
+            <div style="border-top: 1px solid rgba(255,255,255,0.08); padding-top: 14px; margin-bottom: 18px;">
+                <div style="font-size: 0.82rem; font-weight: 700; color: #fff; margin-bottom: 8px;">💿 Karaoke CD (CD+G) Visual Theme:</div>
+                <div style="display: flex; gap: 8px; margin-bottom: 10px;">
+                    <select id="cdgThemeSelect" onchange="onCdgThemeChange(this.value)" style="flex: 1; padding: 8px 10px; border-radius: 8px; background: rgba(16, 28, 45, 0.95); border: 1px solid var(--border-neon); color: #fff; font-size: 0.8rem; outline: none;">
+                        <option value="neon">🌴 Tiki Neon (Transparent Stage + Glowing Lyrics)</option>
+                        <option value="sunset">🌅 Tropical Sunset (Amber Gold + Coral Wipe)</option>
+                        <option value="cyberpunk">⚡ Cyberpunk (Cyan + Laser Yellow)</option>
+                        <option value="classic">📻 Authentic 90s CD+G (Original Disc Colors)</option>
+                    </select>
+                </div>
+                <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.78rem;">
+                    <span>Neon Lyric Glow</span>
+                    <label class="switch-toggle">
+                        <input type="checkbox" id="cdgGlowToggle" checked onchange="onCdgGlowChange(this.checked)">
+                        <span class="slider-round"></span>
+                    </label>
+                </div>
+            </div>
+
             <div style="text-align: right;">
                 <button onclick="toggleHostMicModal()" class="btn-ghost" style="padding: 8px 24px;">Done</button>
             </div>
@@ -482,6 +517,7 @@
     </audio>
 
     <script src="/static/js/audio-dsp.js?v=20261020_mic_mixing"></script>
+    <script src="/static/js/cdg-renderer.js"></script>
     <script src="/static/js/host-player.js?v=20261020_mic_mixing"></script>
 </body>
 </html>

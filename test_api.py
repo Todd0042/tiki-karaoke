@@ -944,16 +944,11 @@ class TestAPIEndpoints(unittest.TestCase):
         res = self.client.get("/legal")
         self.assertEqual(res.status_code, 200)
         content = res.text
-        self.assertIn("Legal Rights, Licensing & Media Store Guide", content)
+        self.assertIn("About & Bring-Your-Own-Media Guide", content)
         self.assertIn("karaoke-version.com", content)
         self.assertIn("sunflykaraoke.com", content)
-        self.assertIn("promoonly.com", content)
-        self.assertIn("xtendamix.com", content)
-        self.assertIn("ascap.com", content)
-        self.assertIn("bmi.com", content)
-        self.assertIn("Nominative Fair Use", content)
-        self.assertIn("Zero Affiliate Compensation", content)
-        self.assertIn("True Karaoke", content)
+        self.assertIn("PolyForm Noncommercial License", content)
+        self.assertIn("Bring Your Own Media (BYOM)", content)
 
     def test_strict_commercial_byom_lockdown(self):
         from config import HOST_TOKEN
@@ -1011,7 +1006,7 @@ class TestAPIEndpoints(unittest.TestCase):
             "artist": "AC/DC"
         })
         self.assertEqual(res_yt.status_code, 403)
-        self.assertIn("Strict Commercial Mode Active", res_yt.json()["detail"])
+        self.assertIn("Curated Local Library Mode Active", res_yt.json()["detail"])
 
         # 9. Enqueue success for imported track
         res_imp = self.client.post("/api/queue", json={

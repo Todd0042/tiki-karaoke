@@ -38,6 +38,7 @@ _backup*/
 
 # User runtime configuration
 config.json
+cdg_cache/
 data/
 BETA_ANNOUNCEMENT_POST.md
 social_post*.md

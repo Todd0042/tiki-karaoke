@@ -427,6 +427,21 @@
                         <span id="mobileHostMicNativeWarningHint"></span>
                     </div>
 
+                    <!-- Hardware Direct mode hint -->
+                    <div id="mobileMicModeHint" style="display: none; margin-bottom: 10px; padding: 10px 12px; border-radius: 10px; background: rgba(57,255,20,0.08); border: 1px solid rgba(57,255,20,0.3); font-size: 0.75rem; color: #39ff14; line-height: 1.45;">
+                        🎛️ <strong>Hardware Direct mode.</strong> Your audio interface's monitor knob controls the mic level. Mute and volume controls are disabled — use the interface.
+                    </div>
+
+                    <!-- Monitoring Mode Selector -->
+                    <div style="margin-bottom: 12px;">
+                        <label for="mobileMonitoringModeSelect" style="display: block; font-size: 0.74rem; font-weight: 700; color: var(--text-muted); margin-bottom: 4px;">🎧 Monitoring Mode:</label>
+                        <select id="mobileMonitoringModeSelect" onchange="hostSetMonitoringMode(this.value)" style="width: 100%; padding: 8px 10px; border-radius: 8px; background: rgba(16, 28, 45, 0.95); border: 1px solid var(--border-neon); color: #fff; font-size: 0.8rem; outline: none;">
+                            <option value="native">Native OS Direct (Low latency pactl / WASAPI)</option>
+                            <option value="hardware_direct">Hardware Direct (Interface Monitor Knob)</option>
+                            <option value="browser">Browser WebRTC (Bluetooth / TV / Fallback)</option>
+                        </select>
+                    </div>
+
                     <!-- Audio Input Source Selector -->
                     <div style="margin-bottom: 12px;">
                         <label for="mobileHostMicDeviceSelect" style="display: block; font-size: 0.74rem; font-weight: 700; color: var(--text-muted); margin-bottom: 4px;">Host PC Input Device (Mic / Line-In):</label>
@@ -665,24 +680,24 @@
                     <div id="hostImportResultContainer" style="display: none; margin-top: 10px; padding: 10px; border-radius: 8px; font-size: 0.78rem; line-height: 1.4;">
                     </div>
 
-                    <!-- Strict Commercial / BYOM Only Mode (Disable Downloader) -->
-                    <div style="margin-top: 14px; padding: 12px; border-radius: 8px; background: rgba(255, 0, 127, 0.08); border: 1px solid rgba(255, 0, 127, 0.4);">
+                    <!-- Curated Local Library Only Mode (Disable Downloader) -->
+                    <div style="margin-top: 14px; padding: 12px; border-radius: 8px; background: rgba(0, 240, 255, 0.08); border: 1px solid rgba(0, 240, 255, 0.35);">
                         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-                            <span style="font-size: 0.85rem; color: #ff007f; font-weight: 700; display: flex; align-items: center; gap: 6px;">
-                                🔒 Strict Commercial Mode (Disable Downloader)
+                            <span style="font-size: 0.85rem; color: var(--neon-cyan); font-weight: 700; display: flex; align-items: center; gap: 6px;">
+                                🔒 Curated Local Library Mode (Downloader Lock)
                             </span>
                             <label style="display: flex; align-items: center; cursor: pointer; margin: 0;">
-                                <input type="checkbox" id="hostStrictByomToggle" onchange="toggleStrictByomMode(this.checked)" style="transform: scale(1.4); accent-color: #ff007f; cursor: pointer;">
+                                <input type="checkbox" id="hostStrictByomToggle" onchange="toggleStrictByomMode(this.checked)" style="transform: scale(1.4); accent-color: var(--neon-cyan); cursor: pointer;">
                             </label>
                         </div>
                         <div style="font-size: 0.74rem; color: #cbd5e1; line-height: 1.4;">
-                            Locks down software for commercial bar/venue compliance: shuts down the online YouTube downloader, restricts singer searches solely to imported media, and blocks non-purchased stream tracks from being queued.
+                            Locks down software to offline / curated library: shuts down online search and downloads, restricting singer requests exclusively to tracks imported in your local crate.
                         </div>
                     </div>
 
                     <div style="margin-top: 10px; text-align: center;">
                         <a href="/legal" target="_blank" rel="noopener noreferrer" style="font-size: 0.74rem; color: var(--neon-cyan); text-decoration: none; font-weight: 600;">
-                            🛒 Need karaoke songs? View Authorized Stores & Venue Rights Guide ↗
+                            ℹ️ About Tiki Karaoke & Bring-Your-Own-Media Guidance ↗
                         </a>
                     </div>
                 </div>
@@ -849,9 +864,9 @@
 
         <!-- Row 2: Host DJ Navigation (Visible only when host authenticated) -->
         <div id="hostNavRow" style="display: none; justify-content: space-around; width: 100%; padding: 4px 6px 8px; border-top: 1px solid rgba(255, 42, 133, 0.35); background: rgba(14, 20, 32, 0.98);">
-            <button class="nav-tab-btn host-tab-btn" onclick="window.open('/legal', '_blank')" style="color: var(--neon-gold);" title="Buy Legal Media & Venue Licensing Guide">
-                <span style="font-size: 1.2rem;">🛒</span>
-                <span>Get Media</span>
+            <button class="nav-tab-btn host-tab-btn" onclick="window.open('/legal', '_blank')" style="color: var(--neon-gold);" title="About & Bring-Your-Own-Media Guide">
+                <span style="font-size: 1.2rem;">ℹ️</span>
+                <span>About</span>
             </button>
             <button class="nav-tab-btn host-tab-btn" data-tab="hostTab" style="color: var(--neon-pink);">
                 <span style="font-size: 1.2rem;">👑</span>

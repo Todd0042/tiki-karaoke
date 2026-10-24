@@ -165,6 +165,10 @@ def init_db():
             conn.execute("ALTER TABLE tracks ADD COLUMN release_year INTEGER DEFAULT 0")
         if "media_source" not in cols:
             conn.execute("ALTER TABLE tracks ADD COLUMN media_source TEXT DEFAULT 'youtube'")
+        if "media_type" not in cols:
+            conn.execute("ALTER TABLE tracks ADD COLUMN media_type TEXT DEFAULT 'video'")
+        if "cdg_path" not in cols:
+            conn.execute("ALTER TABLE tracks ADD COLUMN cdg_path TEXT DEFAULT ''")
 
         # Ensure media_source exists on filler_tracks
         cols_filler = [r["name"] for r in conn.execute("PRAGMA table_info(filler_tracks)").fetchall()]
@@ -493,14 +497,25 @@ def purge_all_singers(include_history: bool = True) -> Dict[str, int]:
     return {"singers_deleted": s_cnt, "queue_deleted": q_cnt, "history_deleted": h_cnt}
 
 # Track Operations
-def save_track(video_id: str, title: str, artist: str, original_title: str, channel: str = "", duration: int = 0, is_sing_along: bool = False, media_source: str = "youtube") -> int:
+def save_track(
+    video_id: str,
+    title: str,
+    artist: str,
+    original_title: str,
+    channel: str = "",
+    duration: int = 0,
+    is_sing_along: bool = False,
+    media_source: str = "youtube",
+    media_type: str = "video",
+    cdg_path: str = ""
+) -> int:
     conn = get_db()
     if video_id.startswith("local_") and media_source == "youtube":
         media_source = "imported"
     with conn:
         cursor = conn.execute("""
-            INSERT INTO tracks (video_id, title, artist, original_title, channel, duration, is_sing_along, media_source)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO tracks (video_id, title, artist, original_title, channel, duration, is_sing_along, media_source, media_type, cdg_path)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(video_id) DO UPDATE SET
                 title = CASE WHEN tracks.is_downloaded = 1 THEN tracks.title ELSE excluded.title END,
                 artist = CASE WHEN tracks.is_downloaded = 1 THEN tracks.artist ELSE excluded.artist END,
@@ -508,8 +523,10 @@ def save_track(video_id: str, title: str, artist: str, original_title: str, chan
                 channel = excluded.channel,
                 duration = CASE WHEN excluded.duration > 0 THEN excluded.duration ELSE tracks.duration END,
                 is_sing_along = CASE WHEN excluded.is_sing_along = 1 THEN 1 ELSE tracks.is_sing_along END,
-                media_source = CASE WHEN tracks.media_source = 'imported' THEN 'imported' ELSE excluded.media_source END
-        """, (video_id, title, artist, original_title, channel, duration, 1 if is_sing_along else 0, media_source))
+                media_source = CASE WHEN tracks.media_source = 'imported' THEN 'imported' ELSE excluded.media_source END,
+                media_type = CASE WHEN excluded.media_type != '' THEN excluded.media_type ELSE tracks.media_type END,
+                cdg_path = CASE WHEN excluded.cdg_path != '' THEN excluded.cdg_path ELSE tracks.cdg_path END
+        """, (video_id, title, artist, original_title, channel, duration, 1 if is_sing_along else 0, media_source, media_type, cdg_path))
         
         cursor = conn.execute("SELECT id FROM tracks WHERE video_id = ?", (video_id,))
         track_id = cursor.fetchone()["id"]
@@ -530,7 +547,7 @@ def get_track_by_video_id(video_id: str) -> Optional[Dict[str, Any]]:
     conn.close()
     return dict(row) if row else None
 
-def update_track_download_status(track_id: int, status: str, local_path: str = "", normalized_lufs: float = -16.0):
+def update_track_download_status(track_id: int, status: str, local_path: str = "", normalized_lufs: float = -16.0, cdg_path: str = ""):
     conn = get_db()
     with conn:
         is_dl = 1 if status == "ready" and local_path else 0
@@ -539,9 +556,10 @@ def update_track_download_status(track_id: int, status: str, local_path: str = "
             SET download_status = ?,
                 is_downloaded = CASE WHEN ? = 1 THEN 1 ELSE is_downloaded END,
                 local_path = CASE WHEN ? != '' THEN ? ELSE local_path END,
+                cdg_path = CASE WHEN ? != '' THEN ? ELSE cdg_path END,
                 normalized_lufs = ?
             WHERE id = ?
-        """, (status, is_dl, local_path, local_path, normalized_lufs, track_id))
+        """, (status, is_dl, local_path, local_path, cdg_path, cdg_path, normalized_lufs, track_id))
     conn.close()
 
 def set_track_sing_along(track_id: int, is_sing_along: bool = True):
@@ -566,11 +584,14 @@ def import_local_track(
     title: str,
     artist: str,
     duration: int = 0,
-    is_sing_along: bool = False
+    is_sing_along: bool = False,
+    media_type: str = "video",
+    cdg_path: str = ""
 ) -> int:
     """Imports an existing local video or karaoke track into the Tiki library."""
     resolved = str(Path(file_path).resolve())
-    vid = f"local_{hashlib.sha256(resolved.encode()).hexdigest()[:12]}"
+    resolved_cdg = str(Path(cdg_path).resolve()) if cdg_path else ""
+    vid = f"local_{hashlib.sha256((resolved + resolved_cdg).encode()).hexdigest()[:12]}"
     track_id = save_track(
         video_id=vid,
         title=title,
@@ -579,9 +600,11 @@ def import_local_track(
         channel="Local Library",
         duration=duration,
         is_sing_along=is_sing_along,
-        media_source="imported"
+        media_source="imported",
+        media_type=media_type,
+        cdg_path=resolved_cdg
     )
-    update_track_download_status(track_id, status="ready", local_path=resolved, normalized_lufs=-16.0)
+    update_track_download_status(track_id, status="ready", local_path=resolved, normalized_lufs=-16.0, cdg_path=resolved_cdg)
     return track_id
 
 def search_local_tracks(query: str, limit: int = 25, sing_along_only: bool = False) -> List[Dict[str, Any]]:
@@ -782,6 +805,8 @@ def get_queue() -> List[Dict[str, Any]]:
             t.local_path,
             t.download_status,
             coalesce(t.is_sing_along, 0) as is_sing_along,
+            coalesce(t.media_type, 'video') as media_type,
+            coalesce(t.cdg_path, '') as cdg_path,
             s.id as singer_id,
             s.name as singer_name,
             s.avatar as singer_avatar
@@ -821,6 +846,8 @@ def get_current_playing() -> Optional[Dict[str, Any]]:
             t.is_downloaded,
             t.local_path,
             coalesce(t.is_sing_along, 0) as is_sing_along,
+            coalesce(t.media_type, 'video') as media_type,
+            coalesce(t.cdg_path, '') as cdg_path,
             s.name as singer_name,
             s.avatar as singer_avatar
         FROM queue q
