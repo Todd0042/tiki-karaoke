@@ -178,6 +178,45 @@ class TestAPIEndpoints(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertIn("Storage & Media Library", r.text)
 
+        # 3. Test Display Identification endpoints
+        r = self.client.post("/api/setup/test-display", json={
+            "display_id": 0,
+            "name": "Test Monitor 0",
+            "role": "stage",
+            "x": 0,
+            "y": 0,
+            "width": 1920,
+            "height": 1080
+        }, headers={"X-Host-Token": HOST_TOKEN})
+        self.assertEqual(r.status_code, 200)
+        disp_data = r.json()
+        self.assertEqual(disp_data.get("status"), "ok")
+        self.assertIn("url", disp_data)
+
+        # Test Identify page HTML content and closing script
+        r = self.client.get("/stage/identify?id=0&name=Test+Monitor&role=stage")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("STAGE DISPLAY #0", r.text)
+        self.assertIn("window.close()", r.text)
+
+        # 4. Test Directory Browsing and Drive Switching
+        r = self.client.get("/api/setup/browse-directories", headers={"X-Host-Token": HOST_TOKEN})
+        self.assertEqual(r.status_code, 200)
+        browse_data = r.json()
+        self.assertEqual(browse_data.get("status"), "ok")
+        self.assertIn("current", browse_data)
+        self.assertIn("directories", browse_data)
+
+        # Test Native Directory Picker endpoint
+        r = self.client.post("/api/setup/pick-directory", json={"initial_path": "."}, headers={"X-Host-Token": HOST_TOKEN})
+        self.assertEqual(r.status_code, 200)
+        self.assertIn(r.json().get("status"), ["ok", "fallback", "cancelled"])
+
+        # 5. Test Audio Output Test endpoint
+        r = self.client.post("/api/setup/test-audio", json={"device": "default"}, headers={"X-Host-Token": HOST_TOKEN})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json().get("status"), "ok")
+
     def test_library_browsing_and_storage_management(self):
         from config import HOST_TOKEN
         # 1. Test Library browsing endpoint

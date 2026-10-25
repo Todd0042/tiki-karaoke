@@ -607,16 +607,17 @@
                 const configuredHostId = parseInt('{{ config.host_display or 1 }}');
 
                 detectedDisplays.forEach(d => {
+                    const labelText = d.label ? (d.label.includes('★ Primary') ? d.label : (d.label + (d.is_primary ? ' ★ Primary' : ''))) : `Monitor ${d.id}`;
                     const opt = document.createElement('option');
                     opt.value = d.id;
-                    opt.text = `${d.label}${d.is_primary ? ' ★ Primary' : ''}`;
+                    opt.text = labelText;
                     if (d.id === configuredId) opt.selected = true;
                     sel.appendChild(opt);
 
                     if (hostSel) {
                         const hOpt = document.createElement('option');
                         hOpt.value = d.id;
-                        hOpt.text = `${d.label}${d.is_primary ? ' ★ Primary' : ''}`;
+                        hOpt.text = labelText;
                         if (d.id === configuredHostId) hOpt.selected = true;
                         hostSel.appendChild(hOpt);
                     }
@@ -676,22 +677,32 @@
         async function testDisplayFlash() {
             const sel = document.getElementById('stageDisplaySelect');
             const chosenId = sel ? parseInt(sel.value) : 0;
-            const disp = detectedDisplays.find(d => d.id === chosenId) || {x: 0, y: 0, name: `Monitor ${chosenId}`};
+            const disp = detectedDisplays.find(d => d.id === chosenId) || {x: 0, y: 0, width: 1920, height: 1080, name: `Monitor ${chosenId}`};
             const btn = event ? event.target : null;
             const oldText = btn ? btn.innerText : "";
             if (btn) btn.innerText = "📺 Flashing Screen...";
             
             try {
-                await fetch('/api/setup/test-display', {
+                const res = await fetch('/api/setup/test-display', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({
                         display_id: chosenId,
                         name: disp.label || disp.name,
                         role: 'stage',
+                        x: disp.x || 0,
+                        y: disp.y || 0,
+                        width: disp.width || 1920,
+                        height: disp.height || 1080,
                         port: window.location.port || 8000
                     })
                 });
+                const data = await res.json();
+                const identUrl = (data && data.url) ? data.url : `/stage/identify?id=${chosenId}&name=${encodeURIComponent(disp.label || disp.name)}&role=stage`;
+                try {
+                    const pop = window.open(identUrl, `tiki_ident_${chosenId}`, `left=${disp.x || 0},top=${disp.y || 0},width=${disp.width || 1280},height=${disp.height || 720},menubar=no,toolbar=no,location=no,status=no`);
+                    if (pop) setTimeout(() => { try { pop.close(); } catch(e){} }, 3500);
+                } catch(e){}
             } catch (e) {
                 console.error("Test display error:", e);
             } finally {
@@ -704,22 +715,32 @@
         async function testHostDisplayFlash() {
             const sel = document.getElementById('hostDisplaySelect');
             const chosenId = sel ? parseInt(sel.value) : 1;
-            const disp = detectedDisplays.find(d => d.id === chosenId) || {x: 0, y: 0, name: `Monitor ${chosenId}`};
+            const disp = detectedDisplays.find(d => d.id === chosenId) || {x: 0, y: 0, width: 1920, height: 1080, name: `Monitor ${chosenId}`};
             const btn = event ? event.target : null;
             const oldText = btn ? btn.innerText : "";
             if (btn) btn.innerText = "👑 Flashing Host Screen...";
             
             try {
-                await fetch('/api/setup/test-display', {
+                const res = await fetch('/api/setup/test-display', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({
                         display_id: chosenId,
                         name: disp.label || disp.name,
                         role: 'host',
+                        x: disp.x || 0,
+                        y: disp.y || 0,
+                        width: disp.width || 1920,
+                        height: disp.height || 1080,
                         port: window.location.port || 8000
                     })
                 });
+                const data = await res.json();
+                const identUrl = (data && data.url) ? data.url : `/stage/identify?id=${chosenId}&name=${encodeURIComponent(disp.label || disp.name)}&role=host`;
+                try {
+                    const pop = window.open(identUrl, `tiki_ident_host_${chosenId}`, `left=${disp.x || 0},top=${disp.y || 0},width=${disp.width || 1280},height=${disp.height || 720},menubar=no,toolbar=no,location=no,status=no`);
+                    if (pop) setTimeout(() => { try { pop.close(); } catch(e){} }, 3500);
+                } catch(e){}
             } catch (e) {
                 console.error("Test host display error:", e);
             } finally {
@@ -1147,7 +1168,7 @@
             listEl.innerHTML = '<div style="color: var(--text-muted); padding: 15px; text-align: center;">⏳ Loading folders...</div>';
 
             try {
-                const res = await fetch(`/api/setup/browse-directories?path=${encodeURIComponent(path)}`);
+                const res = await fetch(`/api/setup/browse-directories?path=${encodeURIComponent(path || '')}`);
                 const data = await res.json();
                 if (data.status === 'ok') {
                     currentBrowserPath = data.current;
@@ -1157,12 +1178,13 @@
                     if (data.parent) {
                         const upBtn = document.createElement('div');
                         upBtn.style.cssText = 'padding: 8px 12px; background: rgba(255,255,255,0.05); border-radius: 8px; cursor: pointer; display: flex; align-items: center; gap: 8px; font-weight: bold; color: var(--neon-cyan);';
-                        upBtn.innerHTML = '📁 <strong>.. (Up one level)</strong>';
+                        const upLabel = data.parent === 'This PC' ? '📁 <strong>.. (Up to This PC / Change Drive)</strong>' : '📁 <strong>.. (Up one level)</strong>';
+                        upBtn.innerHTML = upLabel;
                         upBtn.onclick = () => loadDirListing(data.parent);
                         listEl.appendChild(upBtn);
                     }
 
-                    if (data.directories.length === 0) {
+                    if (!data.directories || data.directories.length === 0) {
                         const empty = document.createElement('div');
                         empty.style.cssText = 'padding: 12px; color: var(--text-muted); font-style: italic;';
                         empty.innerText = 'No subdirectories found.';
@@ -1173,9 +1195,23 @@
                             item.style.cssText = 'padding: 8px 12px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.05); border-radius: 8px; cursor: pointer; display: flex; align-items: center; gap: 8px; transition: background 0.15s ease;';
                             item.onmouseover = () => item.style.background = 'rgba(255,255,255,0.1)';
                             item.onmouseout = () => item.style.background = 'rgba(255,255,255,0.03)';
-                            item.innerHTML = `📁 <span>${dir}</span>`;
-                            const fullSubPath = (currentBrowserPath === '/' ? '' : currentBrowserPath) + '/' + dir;
-                            item.onclick = () => loadDirListing(fullSubPath);
+                            
+                            const isDrive = dir.includes(':\\') || dir.endsWith(':') || dir.endsWith(':\\');
+                            const icon = isDrive ? '💾' : '📁';
+                            item.innerHTML = `${icon} <span>${dir}</span>`;
+
+                            let nextPath;
+                            if (isDrive || currentBrowserPath === 'This PC') {
+                                nextPath = dir;
+                            } else {
+                                const sep = (currentBrowserPath.includes('\\') && !currentBrowserPath.includes('/')) ? '\\' : '/';
+                                const base = currentBrowserPath.endsWith('\\') || currentBrowserPath.endsWith('/') 
+                                    ? currentBrowserPath 
+                                    : currentBrowserPath + sep;
+                                nextPath = base + dir;
+                            }
+
+                            item.onclick = () => loadDirListing(nextPath);
                             listEl.appendChild(item);
                         });
                     }
@@ -1188,13 +1224,15 @@
         }
 
         function selectCurrentModalDir() {
-            if (activePickerInputId && currentBrowserPath) {
+            if (activePickerInputId && currentBrowserPath && currentBrowserPath !== 'This PC') {
                 document.getElementById(activePickerInputId).value = currentBrowserPath;
                 if (activePickerInfoId) {
                     checkStoragePath(activePickerInputId, activePickerInfoId);
                 }
+                closeDirModal();
+            } else if (currentBrowserPath === 'This PC') {
+                alert("Please select a specific hard drive or folder first.");
             }
-            closeDirModal();
         }
     </script>
 

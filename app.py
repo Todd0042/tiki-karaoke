@@ -34,7 +34,7 @@ from config import (
     get_library_dir, get_tracks_dir, get_playlists_dir, get_data_dir,
     get_db_path, get_path_info, ensure_storage_dirs, get_storage_status,
     get_available_displays, get_available_audio_sinks, get_available_audio_sources, get_bundled_binary_path,
-    get_default_library_dir, get_default_data_dir
+    get_default_library_dir, get_default_data_dir, find_system_browser, get_system_drives
 )
 from database import (
     init_db, get_or_create_singer, get_singer_by_token,
@@ -631,6 +631,11 @@ async def stage_identify_page(request: Request, id: int = 0, name: str = "Displa
             <p>✅ Target Screen Identified Successfully!</p>
             <div class="sub">Closing automatically...</div>
         </div>
+        <script>
+            setTimeout(function() {{
+                try {{ window.close(); }} catch (e) {{}}
+            }}, 3500);
+        </script>
     </body>
     </html>
     """
@@ -646,31 +651,74 @@ async def api_test_display(payload: Dict[str, Any], request: Request):
     badge_prefix = "👑 HOST DJ CONTROL DISPLAY" if role == "host" else "📺 MAIN STAGE DISPLAY"
     badge = payload.get("badge", f"{badge_prefix} #{disp_id}: {disp_name}")
     
-    # 1. Broadcast test badge to any connected stage displays
+    # 1. Broadcast test badge to any connected stage displays via WebSocket
     await manager.broadcast({
         "type": "test_display",
         "badge": badge
     })
 
-    # 2. Launch momentary popup on that exact physical monitor
-    firefox_bin = shutil.which("firefox")
-    if firefox_bin:
+    # 2. Resolve target physical screen coordinates
+    displays = get_available_displays()
+    target_disp = next((d for d in displays if d.get("id") == disp_id), None)
+    disp_x = payload.get("x", target_disp.get("x", 0) if target_disp else 0)
+    disp_y = payload.get("y", target_disp.get("y", 0) if target_disp else 0)
+    disp_w = payload.get("width", target_disp.get("width", 1920) if target_disp else 1920)
+    disp_h = payload.get("height", target_disp.get("height", 1080) if target_disp else 1080)
+
+    port = int(payload.get("port", PORT))
+    encoded_name = urllib.parse.quote(disp_name)
+    ident_url = f"http://127.0.0.1:{port}/stage/identify?id={disp_id}&name={encoded_name}&role={role}"
+
+    # 3. Locate available browser (Edge, Chrome, Chromium, Brave, or Firefox)
+    browser_bin = None
+    browser_type = None
+    for b_name in ["microsoft-edge", "google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "brave-browser", "firefox"]:
+        found = find_system_browser(b_name)
+        if found:
+            browser_bin = found
+            browser_type = "firefox" if "firefox" in b_name else "chromium"
+            break
+
+    # In automated test suite or headless run, skip launching real desktop process
+    if os.environ.get("TIKI_DATA_DIR") or os.environ.get("TIKI_TESTING"):
+        return {
+            "status": "ok",
+            "url": ident_url,
+            "x": disp_x,
+            "y": disp_y,
+            "width": disp_w,
+            "height": disp_h
+        }
+
+    if browser_bin:
         try:
             temp_root = Path(tempfile.gettempdir())
-            profile_dir = temp_root / f"tiki_identify_profile_{disp_id}"
+            profile_dir = temp_root / f"tiki_ident_profile_{disp_id}_{os.getpid()}"
             profile_dir.mkdir(parents=True, exist_ok=True)
-            port = int(payload.get("port", PORT))
-            encoded_name = urllib.parse.quote(disp_name)
-            ident_url = f"http://localhost:{port}/stage/identify?id={disp_id}&name={encoded_name}&role={role}"
-            cmd = [
-                firefox_bin,
-                "--no-remote",
-                "--profile", str(profile_dir),
-                "--new-instance",
-                "--kiosk",
-                f"--kiosk-monitor={disp_id}",
-                ident_url
-            ]
+
+            if browser_type == "firefox":
+                cmd = [
+                    browser_bin,
+                    "--no-remote",
+                    "--profile", str(profile_dir),
+                    "--new-instance",
+                    "--kiosk",
+                    f"--kiosk-monitor={disp_id}",
+                    ident_url
+                ]
+            else:
+                # Microsoft Edge / Google Chrome / Chromium / Brave:
+                cmd = [
+                    browser_bin,
+                    f"--app={ident_url}",
+                    f"--user-data-dir={profile_dir}",
+                    "--no-first-run",
+                    "--no-default-browser-check",
+                    f"--window-position={disp_x},{disp_y}",
+                    f"--window-size={disp_w},{disp_h}",
+                    "--start-fullscreen"
+                ]
+
             kwargs = {}
             if sys.platform == "win32":
                 kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
@@ -695,7 +743,14 @@ async def api_test_display(payload: Dict[str, Any], request: Request):
         except Exception as e:
             print(f"[Test Display] Could not launch identification window: {e}")
 
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "url": ident_url,
+        "x": disp_x,
+        "y": disp_y,
+        "width": disp_w,
+        "height": disp_h
+    }
 
 @app.post("/api/setup/test-audio")
 async def api_test_audio(payload: Dict[str, Any], request: Request):
@@ -730,6 +785,16 @@ async def api_test_audio(payload: Dict[str, Any], request: Request):
                 frames.extend(struct.pack('<hh', s, s))
             wav_file.writeframes(frames)
 
+    # 1. Windows: Native winsound asynchronous audio playback
+    if sys.platform == "win32" and chime_path.exists():
+        try:
+            import winsound
+            winsound.PlaySound(str(chime_path), winsound.SND_FILENAME | winsound.SND_ASYNC)
+            return {"status": "ok", "played": True, "device": device}
+        except Exception as e:
+            print(f"[Test Audio] Windows winsound error: {e}")
+
+    # 2. Linux: PulseAudio / PipeWire playback
     paplay_bin = shutil.which("paplay")
     pw_play_bin = shutil.which("pw-play")
 
@@ -777,49 +842,88 @@ async def api_pick_directory(payload: Dict[str, Any], request: Request):
     else:
         current_path = str(Path(current_path).expanduser().resolve())
 
-    # Attempt native desktop file dialog if running on local desktop with display
-    has_display = bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
-    if has_display and is_local_request(request):
-        zenity_bin = shutil.which("zenity")
-        kdialog_bin = shutil.which("kdialog")
-
-        if zenity_bin:
+    # Attempt native desktop folder picker if request is local
+    if is_local_request(request):
+        # 1. Windows: Use PowerShell FolderBrowserDialog with AutoUpgradeEnabled = True
+        # This opens the standard Vista+ Windows Explorer folder chooser showing all drives and network locations
+        if sys.platform == "win32":
             try:
-                cmd = [
-                    zenity_bin,
-                    "--file-selection",
-                    "--directory",
-                    "--title=Select Directory for Tiki Karaoke",
-                    f"--filename={current_path}/"
-                ]
-                proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-                if proc.returncode == 0:
-                    chosen = proc.stdout.strip()
-                    if chosen and Path(chosen).is_dir():
-                        return {"status": "ok", "path": chosen, "native": True}
-                elif proc.returncode == 1:
+                safe_path = current_path.replace("'", "''")
+                ps_script = (
+                    "[System.Reflection.Assembly]::LoadWithPartialName('System.Windows.Forms') | Out-Null; "
+                    "$f = New-Object System.Windows.Forms.FolderBrowserDialog; "
+                    "$f.Description = 'Select Directory for Tiki Karaoke'; "
+                    f"$f.SelectedPath = '{safe_path}'; "
+                    "$f.ShowNewFolderButton = $true; "
+                    "$f.AutoUpgradeEnabled = $true; "
+                    "$top = New-Object System.Windows.Forms.Form; "
+                    "$top.TopMost = $true; "
+                    "$top.WindowState = [System.Windows.Forms.FormWindowState]::Minimized; "
+                    "$res = $f.ShowDialog($top); "
+                    "if ($res -eq [System.Windows.Forms.DialogResult]::OK) { "
+                    "  [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; "
+                    "  Write-Output $f.SelectedPath "
+                    "}"
+                )
+                creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+                proc = subprocess.run(
+                    ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_script],
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                    creationflags=creationflags
+                )
+                chosen = proc.stdout.strip()
+                if proc.returncode == 0 and chosen and Path(chosen).is_dir():
+                    return {"status": "ok", "path": chosen, "native": True}
+                elif proc.returncode == 0 and not chosen:
                     return {"status": "cancelled", "native": True}
             except Exception as e:
-                print(f"[Pick Directory] zenity error: {e}")
+                print(f"[Pick Directory] Windows PowerShell picker error: {e}")
 
-        if kdialog_bin:
-            try:
-                cmd = [
-                    kdialog_bin,
-                    "--getexistingdirectory",
-                    current_path,
-                    "--title",
-                    "Select Directory for Tiki Karaoke"
-                ]
-                proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-                if proc.returncode == 0:
-                    chosen = proc.stdout.strip()
-                    if chosen and Path(chosen).is_dir():
-                        return {"status": "ok", "path": chosen, "native": True}
-                elif proc.returncode == 1:
-                    return {"status": "cancelled", "native": True}
-            except Exception as e:
-                print(f"[Pick Directory] kdialog error: {e}")
+        # 2. Linux: Native zenity or kdialog if desktop display server is present
+        has_display = bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+        if has_display:
+            zenity_bin = shutil.which("zenity")
+            kdialog_bin = shutil.which("kdialog")
+
+            if zenity_bin:
+                try:
+                    cmd = [
+                        zenity_bin,
+                        "--file-selection",
+                        "--directory",
+                        "--title=Select Directory for Tiki Karaoke",
+                        f"--filename={current_path}/"
+                    ]
+                    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+                    if proc.returncode == 0:
+                        chosen = proc.stdout.strip()
+                        if chosen and Path(chosen).is_dir():
+                            return {"status": "ok", "path": chosen, "native": True}
+                    elif proc.returncode == 1:
+                        return {"status": "cancelled", "native": True}
+                except Exception as e:
+                    print(f"[Pick Directory] zenity error: {e}")
+
+            if kdialog_bin:
+                try:
+                    cmd = [
+                        kdialog_bin,
+                        "--getexistingdirectory",
+                        current_path,
+                        "--title",
+                        "Select Directory for Tiki Karaoke"
+                    ]
+                    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+                    if proc.returncode == 0:
+                        chosen = proc.stdout.strip()
+                        if chosen and Path(chosen).is_dir():
+                            return {"status": "ok", "path": chosen, "native": True}
+                    elif proc.returncode == 1:
+                        return {"status": "cancelled", "native": True}
+                except Exception as e:
+                    print(f"[Pick Directory] kdialog error: {e}")
 
     # Fallback to web browser directory modal
     return {"status": "fallback", "native": False, "initial_path": current_path}
@@ -829,6 +933,20 @@ async def api_browse_directories(request: Request, path: str = ""):
     if is_configured() and not (is_host_request(request) or is_local_request(request)):
         raise HTTPException(status_code=403, detail="Host DJ authorization required")
 
+    path = path.strip()
+
+    # Windows: Handle "This PC" / drives root listing
+    if sys.platform == "win32":
+        if not path or path.lower() in ("this pc", "computer", "drives", "root"):
+            drives = get_system_drives()
+            return {
+                "status": "ok",
+                "current": "This PC",
+                "parent": None,
+                "is_drives_view": True,
+                "directories": drives
+            }
+
     if not path or path == "~":
         target = Path.home()
     else:
@@ -837,7 +955,17 @@ async def api_browse_directories(request: Request, path: str = ""):
     if not target.exists() or not target.is_dir():
         target = Path.home()
 
-    parent_path = str(target.parent) if target.parent != target else None
+    # Determine parent path
+    parent_path = None
+    if sys.platform == "win32":
+        clean_target = str(target).rstrip("\\/").upper()
+        drive_roots = [d.rstrip("\\/").upper() for d in get_system_drives()]
+        if clean_target in drive_roots or target.parent == target:
+            parent_path = "This PC"
+        else:
+            parent_path = str(target.parent)
+    else:
+        parent_path = str(target.parent) if target.parent != target else None
 
     subdirs = []
     try:

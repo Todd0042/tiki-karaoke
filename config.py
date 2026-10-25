@@ -93,6 +93,79 @@ def get_bundled_binary_path(binary_name: str) -> Path:
     return local_bin
 
 
+def find_system_browser(name: str) -> Optional[str]:
+    """Finds browser executable across Linux and Windows systems."""
+    sys_path = shutil.which(name)
+    if sys_path:
+        return sys_path
+
+    if sys.platform == "win32":
+        prog_x86 = os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")
+        prog_64 = os.environ.get("ProgramFiles", r"C:\Program Files")
+        local_app = os.environ.get("LocalAppData", "")
+
+        candidates = {
+            "microsoft-edge": [
+                Path(prog_x86) / "Microsoft" / "Edge" / "Application" / "msedge.exe",
+                Path(prog_64) / "Microsoft" / "Edge" / "Application" / "msedge.exe",
+            ],
+            "msedge": [
+                Path(prog_x86) / "Microsoft" / "Edge" / "Application" / "msedge.exe",
+                Path(prog_64) / "Microsoft" / "Edge" / "Application" / "msedge.exe",
+            ],
+            "google-chrome": [
+                Path(prog_64) / "Google" / "Chrome" / "Application" / "chrome.exe",
+                Path(prog_x86) / "Google" / "Chrome" / "Application" / "chrome.exe",
+                Path(local_app) / "Google" / "Chrome" / "Application" / "chrome.exe",
+            ],
+            "chrome": [
+                Path(prog_64) / "Google" / "Chrome" / "Application" / "chrome.exe",
+                Path(prog_x86) / "Google" / "Chrome" / "Application" / "chrome.exe",
+                Path(local_app) / "Google" / "Chrome" / "Application" / "chrome.exe",
+            ],
+            "firefox": [
+                Path(prog_64) / "Mozilla Firefox" / "firefox.exe",
+                Path(prog_x86) / "Mozilla Firefox" / "firefox.exe",
+            ],
+            "brave-browser": [
+                Path(prog_64) / "BraveSoftware" / "Brave-Browser" / "Application" / "brave.exe",
+                Path(local_app) / "BraveSoftware" / "Brave-Browser" / "Application" / "brave.exe",
+            ],
+            "brave": [
+                Path(prog_64) / "BraveSoftware" / "Brave-Browser" / "Application" / "brave.exe",
+                Path(local_app) / "BraveSoftware" / "Brave-Browser" / "Application" / "brave.exe",
+            ]
+        }
+        for path in candidates.get(name.lower(), []):
+            if path.exists():
+                return str(path)
+
+    return None
+
+
+def get_system_drives() -> List[str]:
+    """Returns a list of root directory paths for available drives on Windows, or ['/'] on Unix."""
+    if sys.platform != "win32":
+        return ["/"]
+    import string
+    drives = []
+    try:
+        import ctypes
+        bitmask = ctypes.windll.kernel32.GetLogicalDrives()
+        for letter in string.ascii_uppercase:
+            if bitmask & 1:
+                p = f"{letter}:\\"
+                if os.path.exists(p):
+                    drives.append(p)
+            bitmask >>= 1
+    except Exception:
+        for letter in string.ascii_uppercase:
+            p = f"{letter}:\\"
+            if os.path.exists(p):
+                drives.append(p)
+    return drives or ["C:\\"]
+
+
 DEFAULT_CONFIG = {
     "configured": False,
     "bar_name": "The Tiki Hut Karaoke Lounge",
@@ -224,15 +297,47 @@ def get_available_displays() -> List[Dict[str, Any]]:
             cb = MonitorEnumProc(_enum_callback)
             user32.EnumDisplayMonitors(None, None, cb, 0)
 
+            class DISPLAY_DEVICEW(ctypes.Structure):
+                _fields_ = [
+                    ("cb", wintypes.DWORD),
+                    ("DeviceName", wintypes.WCHAR * 32),
+                    ("DeviceString", wintypes.WCHAR * 128),
+                    ("StateFlags", wintypes.DWORD),
+                    ("DeviceID", wintypes.WCHAR * 128),
+                    ("DeviceKey", wintypes.WCHAR * 128)
+                ]
+
             for idx, mon in enumerate(raw_monitors):
                 is_prim = bool(mon.dwFlags & 1)  # MONITORINFOF_PRIMARY = 1
                 w = mon.rcMonitor.right - mon.rcMonitor.left
                 h = mon.rcMonitor.bottom - mon.rcMonitor.top
                 dev_name = mon.szDevice or f"Display {idx}"
+                friendly_name = ""
+
+                try:
+                    disp_dev = DISPLAY_DEVICEW()
+                    disp_dev.cb = ctypes.sizeof(DISPLAY_DEVICEW)
+                    if user32.EnumDisplayDevicesW(mon.szDevice, 0, ctypes.byref(disp_dev), 0):
+                        # Query monitor attached to this adapter
+                        mon_dev = DISPLAY_DEVICEW()
+                        mon_dev.cb = ctypes.sizeof(DISPLAY_DEVICEW)
+                        if user32.EnumDisplayDevicesW(disp_dev.DeviceName, 0, ctypes.byref(mon_dev), 0):
+                            friendly_name = mon_dev.DeviceString.strip()
+                        if not friendly_name:
+                            friendly_name = disp_dev.DeviceString.strip()
+                except Exception:
+                    pass
+
+                display_title = f"{friendly_name} ({dev_name})" if friendly_name and friendly_name != dev_name else dev_name
+                label = f"Monitor {idx}: {display_title} [{w}x{h}]"
+                if is_prim:
+                    label += " ★ Primary"
+
                 monitors.append({
                     "id": idx,
-                    "name": dev_name,
-                    "label": f"Monitor {idx}: {dev_name} [{w}x{h}]" + (" ★ Primary" if is_prim else ""),
+                    "name": friendly_name or dev_name,
+                    "device": dev_name,
+                    "label": label,
                     "is_primary": is_prim,
                     "width": int(w),
                     "height": int(h),

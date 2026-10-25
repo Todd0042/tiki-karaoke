@@ -40,7 +40,8 @@ if sys.platform == "win32":
 
 from config import (
     DATA_DIR, HOST_TOKEN, HOST_PIN, PORT, TARGET_LUFS,
-    load_config, is_configured, get_bundled_binary_path
+    load_config, is_configured, get_bundled_binary_path,
+    find_system_browser
 )
 from app import LOCAL_IP, PUBLIC_IP, get_base_url, get_public_host, register_shutdown_trigger
 from tray import start_tray, stop_tray
@@ -94,42 +95,6 @@ def kill_process_tree(proc: Optional[subprocess.Popen], timeout: float = 2.0):
                 os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
             except Exception:
                 pass
-
-def find_system_browser(name: str) -> Optional[str]:
-    """Finds browser executable across Linux and Windows systems."""
-    sys_path = shutil.which(name)
-    if sys_path:
-        return sys_path
-
-    if sys.platform == "win32":
-        prog_x86 = os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")
-        prog_64 = os.environ.get("ProgramFiles", r"C:\Program Files")
-        local_app = os.environ.get("LocalAppData", "")
-
-        candidates = {
-            "microsoft-edge": [
-                Path(prog_x86) / "Microsoft" / "Edge" / "Application" / "msedge.exe",
-                Path(prog_64) / "Microsoft" / "Edge" / "Application" / "msedge.exe",
-            ],
-            "google-chrome": [
-                Path(prog_64) / "Google" / "Chrome" / "Application" / "chrome.exe",
-                Path(prog_x86) / "Google" / "Chrome" / "Application" / "chrome.exe",
-                Path(local_app) / "Google" / "Chrome" / "Application" / "chrome.exe",
-            ],
-            "firefox": [
-                Path(prog_64) / "Mozilla Firefox" / "firefox.exe",
-                Path(prog_x86) / "Mozilla Firefox" / "firefox.exe",
-            ],
-            "brave-browser": [
-                Path(prog_64) / "BraveSoftware" / "Brave-Browser" / "Application" / "brave.exe",
-                Path(local_app) / "BraveSoftware" / "Brave-Browser" / "Application" / "brave.exe",
-            ]
-        }
-        for path in candidates.get(name, []):
-            if path.exists():
-                return str(path)
-
-    return None
 
 def print_terminal_qr(url: str, label: str):
     print(f"\n--- {label} ---")
