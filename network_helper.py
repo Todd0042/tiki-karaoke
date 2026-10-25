@@ -4,6 +4,7 @@ import re
 import socket
 import subprocess
 import sys
+import time
 from typing import Dict, List, Tuple
 import qrcode
 from database import get_setting, set_setting
@@ -26,20 +27,46 @@ def is_hotspot_ip(ip: str) -> bool:
         return False
     return any(ip.startswith(prefix) for prefix in HOTSPOT_SUBNET_PREFIXES)
 
-def is_internet_available(timeout: float = 1.2) -> bool:
+_last_internet_check = 0.0
+_cached_internet_available = False
+
+def is_internet_available(timeout: float = 1.2, force_recheck: bool = False) -> bool:
     """
-    Checks if active internet route exists by probing DNS roots.
-    Returns False quickly without hanging when hosting an offline party.
+    Checks if active internet route exists by probing DNS resolution and HTTPS roots.
+    Caches result for 8 seconds to prevent socket saturation during live typing.
+    Never uses TCP port 53 (which is blocked by most home routers and firewalls).
     """
-    for host in (("1.1.1.1", 53), ("8.8.8.8", 53)):
+    global _last_internet_check, _cached_internet_available
+    now = time.time()
+    if not force_recheck and (now - _last_internet_check < 8.0):
+        return _cached_internet_available
+
+    # 1. Ultra-fast DNS resolution probe (1-5ms on standard Wi-Fi/LAN)
+    try:
+        res = socket.getaddrinfo("www.google.com", 443, socket.AF_INET, socket.SOCK_STREAM)
+        if res:
+            _cached_internet_available = True
+            _last_internet_check = now
+            return True
+    except Exception:
+        pass
+
+    # 2. Universal HTTPS port 443 TCP probe across Cloudflare, Google, and OpenDNS
+    # Port 443 is universally permitted across consumer routers, public Wi-Fi, and firewalls
+    for host in ("1.1.1.1", "8.8.8.8", "208.67.222.222"):
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             s.settimeout(timeout)
-            s.connect(host)
+            s.connect((host, 443))
             s.close()
+            _cached_internet_available = True
+            _last_internet_check = now
             return True
         except Exception:
             pass
+
+    _cached_internet_available = False
+    _last_internet_check = now
     return False
 
 def get_interface_ips() -> List[Tuple[str, str]]:

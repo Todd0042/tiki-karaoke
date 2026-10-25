@@ -148,8 +148,14 @@ def init_db():
         INSERT OR IGNORE INTO settings (key, value) VALUES ('host_display_enabled', 'false');
         INSERT OR IGNORE INTO settings (key, value) VALUES ('host_display', '1');
         INSERT OR IGNORE INTO settings (key, value) VALUES ('intermission_vibe_mode', 'sing_along');
-        INSERT OR IGNORE INTO settings (key, value) VALUES ('strict_byom_only', 'true');
+        INSERT OR IGNORE INTO settings (key, value) VALUES ('strict_byom_only', 'false');
         """)
+
+        # Migration: Ensure strict_byom_only defaults to 'false' (online search ON by default)
+        migrated_strict = conn.execute("SELECT value FROM settings WHERE key = 'strict_byom_default_v103'").fetchone()
+        if not migrated_strict:
+            conn.execute("UPDATE settings SET value = 'false' WHERE key = 'strict_byom_only' AND value = 'true'")
+            conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('strict_byom_default_v103', 'true')")
 
         # Ensure play_count, last_played, is_sing_along, genre, release_year, and media_source exist on tracks
         cols = [r["name"] for r in conn.execute("PRAGMA table_info(tracks)").fetchall()]
@@ -1656,7 +1662,7 @@ def get_next_vibe_filler_track(
     4. Fair Rotation across the crate
     """
     conn = get_db()
-    strict_byom = get_setting("strict_byom_only", "true") == "true"
+    strict_byom = get_setting("strict_byom_only", "false") == "true"
     strict_filter = " AND (media_source = 'imported' OR video_id LIKE 'local_%')" if strict_byom else ""
 
     # Load ready filler tracks

@@ -8,8 +8,12 @@ from pathlib import Path
 # Create isolated test environment before importing app/config
 test_dir = tempfile.mkdtemp(prefix="tiki_api_test_")
 os.environ["TIKI_DATA_DIR"] = test_dir
+os.environ["TIKI_TESTING"] = "1"
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import webbrowser
+webbrowser.open = lambda *args, **kwargs: True
+
 from fastapi.testclient import TestClient
 from app import app
 from database import init_db
@@ -17,6 +21,7 @@ from database import init_db
 class TestAPIEndpoints(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        os.environ["TIKI_TESTING"] = "1"
         init_db()
         from database import get_setting, set_setting
         cls.default_strict_mode = get_setting("strict_byom_only")
@@ -36,6 +41,18 @@ class TestAPIEndpoints(unittest.TestCase):
             audio_router.cleanup_stale_modules()
         except Exception:
             pass
+        # Kill any browser or helper subprocesses that may have been spawned
+        try:
+            import main
+            for proc in getattr(main, "launched_browser_procs", []):
+                try:
+                    if proc and proc.poll() is None:
+                        proc.terminate()
+                        proc.wait(timeout=1.0)
+                except Exception:
+                    pass
+        except Exception:
+            pass
         shutil.rmtree(test_dir, ignore_errors=True)
 
     def setUp(self):
@@ -50,9 +67,13 @@ class TestAPIEndpoints(unittest.TestCase):
         from database import get_db
         conn = get_db()
         with conn:
+            conn.execute("PRAGMA foreign_keys = OFF")
             conn.execute("DELETE FROM queue")
             conn.execute("DELETE FROM history")
             conn.execute("DELETE FROM singer_song_log")
+            conn.execute("DELETE FROM filler_tracks")
+            conn.execute("DELETE FROM tracks")
+            conn.execute("PRAGMA foreign_keys = ON")
         conn.close()
 
     def test_pages(self):
@@ -997,8 +1018,8 @@ class TestAPIEndpoints(unittest.TestCase):
         )
         from search import tiered_search
 
-        # 1. Verify fresh install default is true
-        self.assertEqual(self.default_strict_mode, "true")
+        # 1. Verify fresh install default is false (YouTube search ON by default)
+        self.assertEqual(self.default_strict_mode, "false")
 
         # 2. Check host authentication
         res = self.client.get("/api/host/strict-mode")

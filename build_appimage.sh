@@ -11,7 +11,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILD_TMP="/tmp/tiki_build_$(date +%s)"
 OUT_DIR="${REPO_ROOT}/dist"
 APPDIR="/tmp/TikiKaraoke.AppDir"
-OUT_APPIMAGE="${OUT_DIR}/TikiKaraoke-v1.0.2-x86_64.AppImage"
+OUT_APPIMAGE="${OUT_DIR}/TikiKaraoke-v1.0.3-x86_64.AppImage"
 
 echo "=== [1/5] Setting up build directories ==="
 mkdir -p "$OUT_DIR"
@@ -57,7 +57,7 @@ pyinstaller --clean -y --onedir \
     --hidden-import uvicorn.lifespan.on \
     --hidden-import uvicorn.lifespan.off \
     --hidden-import engineio.async_drivers.asgi \
-    --hidden-import yt_dlp \
+    --collect-all yt_dlp \
     --hidden-import qrcode \
     --hidden-import jinja2 \
     --hidden-import pydantic \

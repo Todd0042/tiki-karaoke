@@ -9,9 +9,12 @@ from pathlib import Path
 # Create isolated test environment before importing database/config
 test_dir = tempfile.mkdtemp(prefix="tiki_sys_test_")
 os.environ["TIKI_DATA_DIR"] = test_dir
+os.environ["TIKI_TESTING"] = "1"
 
 # Add current dir to path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import webbrowser
+webbrowser.open = lambda *args, **kwargs: True
 
 from database import (
     init_db, get_or_create_singer, get_singer_by_token,
@@ -32,15 +35,30 @@ class TestTikiKaraoke(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
+        try:
+            import main
+            for proc in getattr(main, "launched_browser_procs", []):
+                try:
+                    if proc and proc.poll() is None:
+                        proc.terminate()
+                        proc.wait(timeout=1.0)
+                except Exception:
+                    pass
+        except Exception:
+            pass
         shutil.rmtree(test_dir, ignore_errors=True)
 
     def setUp(self):
         from database import get_db, set_setting
         conn = get_db()
         with conn:
+            conn.execute("PRAGMA foreign_keys = OFF")
             conn.execute("DELETE FROM queue")
             conn.execute("DELETE FROM history")
+            conn.execute("DELETE FROM singer_song_log")
             conn.execute("DELETE FROM filler_tracks")
+            conn.execute("DELETE FROM tracks")
+            conn.execute("PRAGMA foreign_keys = ON")
         conn.close()
         set_setting("strict_byom_only", "false")
 

@@ -19,6 +19,10 @@ class TestCDGSupport(unittest.TestCase):
         self.test_dir = tempfile.mkdtemp()
         init_db()
 
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.test_dir, ignore_errors=True)
+
     def create_dummy_cdg(self, path: Path):
         # 10 valid CDG packets (24 bytes each = 240 bytes)
         # Packet 1: MemoryPreset (command 9, instruction 1)

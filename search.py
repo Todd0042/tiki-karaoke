@@ -207,6 +207,7 @@ def query_youtube_karaoke(query: str, page: int = 1, limit: int = 15) -> Tuple[L
         "no_warnings": True,
         "socket_timeout": 8,
         "retries": 2,
+        "nocheckcertificate": True,
     }
     # Query progressively more candidates for deeper pages
     target_count = max(page * 25, 25)
@@ -215,7 +216,7 @@ def query_youtube_karaoke(query: str, page: int = 1, limit: int = 15) -> Tuple[L
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         try:
             info = ydl.extract_info(search_q, download=False)
-            raw_entries = info.get("entries", [])
+            raw_entries = list(info.get("entries") or []) if isinstance(info, dict) else []
         except Exception as e:
             print(f"[Search] YouTube query error: {e}")
             raw_entries = []
@@ -231,6 +232,21 @@ def query_youtube_karaoke(query: str, page: int = 1, limit: int = 15) -> Tuple[L
         title = e.get("title", "")
         uploader = e.get("uploader", "") or e.get("channel", "")
         if is_karaoke_track(title, uploader):
+            valid_entries.append(e)
+
+    # Fallback if strict filter yielded few results:
+    # Since ytsearch already queried "{query} karaoke", include non-junk entries
+    if len(valid_entries) < 3:
+        for e in raw_entries:
+            if not e or not e.get("id") or any(v.get("id") == e.get("id") for v in valid_entries):
+                continue
+            duration = e.get("duration") or 0
+            if duration > 660 or (duration > 0 and duration < 25):
+                continue
+            title = e.get("title", "")
+            lower = title.lower()
+            if any(re.search(pat, lower) for pat in [r"\breaction\b", r"\breacts\b", r"\btutorial\b", r"\bhow\s+to\b", r"\bparody\b", r"\bfull\s+album\b"]):
+                continue
             valid_entries.append(e)
 
     # Save discovered metadata to DB tracks for easy future reference
@@ -302,6 +318,7 @@ def query_youtube_sing_along(query: str, page: int = 1, limit: int = 15) -> Tupl
         "no_warnings": True,
         "socket_timeout": 8,
         "retries": 2,
+        "nocheckcertificate": True,
     }
     target_count = max(page * 25, 25)
     search_q = f"ytsearch{target_count}:{query} lyrics"
@@ -309,7 +326,7 @@ def query_youtube_sing_along(query: str, page: int = 1, limit: int = 15) -> Tupl
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         try:
             info = ydl.extract_info(search_q, download=False)
-            raw_entries = info.get("entries", [])
+            raw_entries = list(info.get("entries") or []) if isinstance(info, dict) else []
         except Exception as e:
             print(f"[Search Sing-Along] YouTube query error: {e}")
             raw_entries = []
@@ -384,7 +401,8 @@ def tiered_search(query: str, force_online: bool = False, sing_along: bool = Fal
     local_matches = search_local_tracks(query_str, limit=25, sing_along_only=sing_along) if page == 1 else []
     
     # Check internet connectivity for offline hotspot parties
-    if not is_internet_available() and not force_online:
+    online = is_internet_available()
+    if not online and not force_online:
         return {
             "local_results": local_matches,
             "youtube_results": [],
@@ -393,20 +411,20 @@ def tiered_search(query: str, force_online: bool = False, sing_along: bool = Fal
             "is_offline": True
         }
 
-    # If we have local matches and user didn't ask to force online search, return local first!
-    if local_matches and not force_online and page == 1:
-        return {
-            "local_results": local_matches,
-            "youtube_results": [],
-            "page": page,
-            "has_more": True
-        }
-
     # Query YouTube online based on sing_along mode
-    if sing_along:
-        yt_results, has_more = query_youtube_sing_along(query_str, page=page, limit=limit)
-    else:
-        yt_results, has_more = query_youtube_karaoke(query_str, page=page, limit=limit)
+    # Both local crate matches and YouTube results are returned together so singers see instant options AND full catalog
+    try:
+        if sing_along:
+            yt_results, has_more = query_youtube_sing_along(query_str, page=page, limit=limit)
+        else:
+            yt_results, has_more = query_youtube_karaoke(query_str, page=page, limit=limit)
+    except Exception as e:
+        print(f"[Search] YouTube query failed: {e}")
+        yt_results, has_more = [], False
+
+    # If there are local crate matches on page 1, ensure has_more is True for pagination/online expansion
+    if local_matches and page == 1:
+        has_more = True
 
     return {
         "local_results": local_matches,

@@ -25,6 +25,7 @@ document.addEventListener("DOMContentLoaded", () => {
     setupSearch();
     loadLiveQueue();
     loadLibraryTracks();
+    loadHostStrictMode();
 });
 
 function initSingAlongMode() {
@@ -146,6 +147,7 @@ function checkRole() {
                 checkYtdlpStatus();
                 loadVenueAvSync();
                 checkHostHealth();
+                loadHostStrictMode();
                 loadHostNetworkStatus();
                 loadPartyPacks();
 
@@ -804,8 +806,15 @@ function renderSearchResults(data, query, isAppend = false) {
 
         if (data.is_offline) {
             const offlineBanner = document.createElement("div");
-            offlineBanner.style.cssText = "background: rgba(255, 170, 0, 0.12); border: 1px solid rgba(255, 170, 0, 0.4); border-radius: 8px; padding: 10px 14px; margin-bottom: 12px; font-size: 0.82rem; color: #ffaa00; display: flex; align-items: center; gap: 8px;";
-            offlineBanner.innerHTML = `<span>📶</span> <span><strong>Offline Hotspot Mode:</strong> Searching downloaded library only.</span>`;
+            offlineBanner.style.cssText = "background: rgba(255, 170, 0, 0.12); border: 1px solid rgba(255, 170, 0, 0.4); border-radius: 8px; padding: 10px 14px; margin-bottom: 12px; font-size: 0.82rem; color: #ffaa00; display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap;";
+            offlineBanner.innerHTML = `
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <span>📶</span> <span><strong>Offline Hotspot Mode:</strong> Searching downloaded library only.</span>
+                </div>
+                <button type="button" class="btn-ghost" style="border-color: #ffaa00; color: #ffaa00; padding: 4px 10px; font-size: 0.75rem; border-radius: 6px; cursor: pointer;" onclick="performSearch('${escapeHtml(query)}', true, 1)">
+                    🌐 Search YouTube Anyway
+                </button>
+            `;
             container.appendChild(offlineBanner);
         }
 
@@ -813,7 +822,16 @@ function renderSearchResults(data, query, isAppend = false) {
             const emptyNotice = document.createElement("div");
             emptyNotice.style.cssText = "text-align:center; padding: 30px; color: var(--text-muted);";
             if (data.is_offline) {
-                emptyNotice.innerHTML = `<div style="font-size: 1.5rem; margin-bottom: 8px;">🌴 Library Search</div>No downloaded songs matching "<strong>${escapeHtml(query)}</strong>" found.<br><span style="font-size:0.85rem; color:#888;">Tip: Connect host to Wi-Fi / data to search & stream new songs, or browse your downloaded library! 🌺</span>`;
+                emptyNotice.innerHTML = `
+                    <div style="font-size: 1.5rem; margin-bottom: 8px;">🌴 Library Search</div>
+                    No downloaded songs matching "<strong>${escapeHtml(query)}</strong>" found.<br>
+                    <span style="font-size:0.85rem; color:#888;">If host is connected to the internet, tap below to search YouTube:</span>
+                    <div style="margin-top: 14px;">
+                        <button type="button" class="btn-neon-pink" style="padding: 10px 20px; font-size: 0.88rem; border-radius: 20px; cursor: pointer;" onclick="performSearch('${escapeHtml(query)}', true, 1)">
+                            🌐 Force Online YouTube Search
+                        </button>
+                    </div>
+                `;
             } else {
                 emptyNotice.innerHTML = `No songs found for "${escapeHtml(query)}". Try another title or artist! 🌺`;
             }
