@@ -22,3 +22,17 @@ Applies whenever any new feature, user-facing workflow, configuration option, AP
 2. **Immediate Documentation Update**: If the change affects setup steps, dependencies, CLI flags, host controls, URLs, or features, update `README.md` immediately in the same turn/commit.
 3. **Accuracy & No Feature Drift**: Ensure tables (URLs, ports, credentials), feature highlights, and troubleshooting guides reflect the true, tested state of the codebase.
 
+---
+
+# Tiki Karaoke Project Rule: Windows & Docker Windows Build Command
+
+## Trigger & Scope
+Whenever instructing, reminding, or advising the user on how to compile or build Tiki Karaoke on Windows or inside the Docker Windows environment (`WinBoat`):
+
+## Mandatory Rule
+Always instruct the user to run the build script using this exact command:
+```powershell
+powershell -ExecutionPolicy Bypass -File .\build_windows.ps1
+```
+Never omit `-ExecutionPolicy Bypass` or advise running `.\build_windows.ps1` directly without it, ensuring PowerShell script execution policies never block compilation.
+
