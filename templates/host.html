@@ -258,16 +258,44 @@
             <h3 id="intermissionSong" class="neon-cyan" style="font-size: 2rem; font-weight: 400; margin: 5px 0;">Song Title</h3>
             <div id="intermissionKey" class="badge-key" style="font-size: 1.1rem; margin-top: 8px;">Key: Standard</div>
 
-            <!-- Center Stage QR Code when Queue is Open -->
+            <!-- Center Stage QR Code when Queue is Open (Dual Wi-Fi & Songbook Cards) -->
             <div id="idleStageQRBox" style="display: none; flex-direction: column; align-items: center; margin: 16px auto;">
-                <div style="background: #fff; padding: 12px; border-radius: 18px; box-shadow: 0 0 35px rgba(0, 240, 255, 0.45); display: inline-block;">
-                    <img src="/qr/public" alt="Scan to Sing" style="width: 170px; height: 170px; display: block; border-radius: 8px;">
+                <div style="display: flex; gap: 24px; justify-content: center; align-items: stretch; flex-wrap: wrap;">
+                    <!-- Step 1: Hotspot Wi-Fi QR Card -->
+                    <div id="idleWifiQRCard" style="background: rgba(16, 28, 45, 0.95); border: 2px solid var(--neon-cyan); border-radius: 20px; padding: 16px 20px; box-shadow: 0 0 35px rgba(0, 240, 255, 0.35); text-align: center; min-width: 190px;">
+                        <div style="font-size: 0.85rem; font-weight: 800; color: var(--neon-cyan); letter-spacing: 1px; text-transform: uppercase; margin-bottom: 8px;">
+                            📶 Step 1: Join Wi-Fi
+                        </div>
+                        <div style="background: #fff; padding: 8px; border-radius: 12px; display: inline-block;">
+                            <img id="stageWifiQrImg" src="/qr/wifi" alt="Scan to Join Wi-Fi" style="width: 150px; height: 150px; display: block; border-radius: 6px;">
+                        </div>
+                        <div style="margin-top: 8px; font-size: 0.82rem; color: #fff;">
+                            Wi-Fi: <strong id="stageWifiSsid" style="color: var(--neon-cyan);">Tiki Karaoke</strong>
+                        </div>
+                        <div style="font-size: 0.76rem; color: var(--text-muted); margin-top: 2px;">
+                            Pass: <strong id="stageWifiPass" style="color: var(--neon-pink);">singalong</strong>
+                        </div>
+                    </div>
+
+                    <!-- Step 2: Songbook URL QR Card -->
+                    <div id="idleAppQRCard" style="background: rgba(16, 28, 45, 0.95); border: 2px solid var(--neon-gold); border-radius: 20px; padding: 16px 20px; box-shadow: 0 0 35px rgba(255, 183, 3, 0.35); text-align: center; min-width: 190px;">
+                        <div style="font-size: 0.85rem; font-weight: 800; color: var(--neon-gold); letter-spacing: 1px; text-transform: uppercase; margin-bottom: 8px;">
+                            📱 Step 2: Request Songs
+                        </div>
+                        <div style="background: #fff; padding: 8px; border-radius: 12px; display: inline-block;">
+                            <img id="stagePublicQrImg" src="/qr/public" alt="Scan to Sing" style="width: 150px; height: 150px; display: block; border-radius: 6px;">
+                        </div>
+                        <div style="margin-top: 8px; font-size: 0.82rem; color: #fff;">
+                            Open in phone browser:
+                        </div>
+                        <div id="stageJoinUrlText" style="font-size: 0.78rem; color: var(--neon-gold); margin-top: 2px; font-family: monospace; font-weight: 700;">
+                            {{ display_ip }}
+                        </div>
+                    </div>
                 </div>
-                <div style="margin-top: 12px; font-size: 1.15rem; font-weight: 700; color: var(--neon-gold); letter-spacing: 0.5px;">
-                    Scan with your phone to request songs!
-                </div>
-                <div style="font-size: 0.95rem; color: var(--neon-cyan); margin-top: 4px; font-family: monospace;">
-                    {{ display_ip }}
+
+                <div style="margin-top: 14px; font-size: 1.1rem; font-weight: 700; color: var(--neon-gold); letter-spacing: 0.5px;">
+                    Scan with your camera to connect & pick songs! 🌺
                 </div>
             </div>
 
@@ -299,11 +327,11 @@
 
         <!-- BGM Filler Playing HUD Overlays -->
         <div id="fillerQRCard" style="display: none; position: absolute; bottom: 46px; right: 28px; z-index: 50; overflow: visible; align-items: center; gap: 14px; padding: 12px 18px; border-radius: 18px; background: rgba(8, 14, 24, 0.88); backdrop-filter: blur(12px); border: 2px solid var(--neon-cyan); box-shadow: 0 0 25px rgba(0, 240, 255, 0.35);">
-            <img src="/qr/public" alt="Scan to Sing" style="width: 90px; height: 90px; border-radius: 8px; background: #fff; padding: 4px;">
+            <img id="stageFillerQrImg" src="/qr/public" alt="Scan to Sing" style="width: 90px; height: 90px; border-radius: 8px; background: #fff; padding: 4px;">
             <div>
                 <div style="font-size: 0.78rem; color: var(--neon-pink); font-weight: 700; letter-spacing: 0.5px;">🌴 OPEN MIC KARAOKE</div>
                 <div style="font-size: 1.1rem; font-weight: 700; color: #fff;">Scan to Sing Next!</div>
-                <div style="font-size: 0.75rem; color: var(--neon-gold); margin-top: 2px;">{{ display_ip }}</div>
+                <div id="stageFillerDisplayIp" style="font-size: 0.75rem; color: var(--neon-gold); margin-top: 2px;">{{ display_ip }}</div>
             </div>
         </div>
 
@@ -340,11 +368,11 @@
             <!-- Floating Reactions Container: Affixed directly to top roof of QR card -->
             <div id="reactionContainer"></div>
 
-            <img src="/qr/public" alt="Scan to Sing">
+            <img id="stageJoinQrImg" src="/qr/public" alt="Scan to Sing">
             <div>
                 <div style="font-size: 0.75rem; color: var(--neon-cyan); font-weight: 700;">JOIN THE PARTY</div>
                 <div style="font-size: 0.85rem; font-weight: 600;">Scan to Sing</div>
-                <div style="font-size: 0.65rem; color: var(--text-muted);">{{ display_ip }}</div>
+                <div id="stageJoinDisplayIp" style="font-size: 0.65rem; color: var(--text-muted);">{{ display_ip }}</div>
             </div>
         </div>
     </div>

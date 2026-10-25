@@ -541,6 +541,10 @@ function initWebSocket() {
                 if (isHost) {
                     syncHostStrictModeUI(data.strict_byom_only);
                 }
+            } else if (data.type === "network_updated") {
+                if (isHost) {
+                    loadHostNetworkStatus();
+                }
             } else if (data.type === "server_shutting_down") {
                 showToast("🛑 Host closed the session. Aloha! 🌺");
                 setTimeout(() => {
@@ -644,6 +648,7 @@ function setupNavigation() {
                 loadVenueAvSync();
                 loadHostDefaultPaths();
                 loadHostStrictMode();
+                loadHostNetworkStatus();
             }
             if (target === "fillerCrateTab") {
                 loadFillerTracks();
@@ -793,10 +798,23 @@ function renderSearchResults(data, query, isAppend = false) {
 
     if (!isAppend) {
         container.innerHTML = "";
+
+        if (data.is_offline) {
+            const offlineBanner = document.createElement("div");
+            offlineBanner.style.cssText = "background: rgba(255, 170, 0, 0.12); border: 1px solid rgba(255, 170, 0, 0.4); border-radius: 8px; padding: 10px 14px; margin-bottom: 12px; font-size: 0.82rem; color: #ffaa00; display: flex; align-items: center; gap: 8px;";
+            offlineBanner.innerHTML = `<span>📶</span> <span><strong>Offline Hotspot Mode:</strong> Searching downloaded library only.</span>`;
+            container.appendChild(offlineBanner);
+        }
+
         if (localList.length === 0 && ytList.length === 0) {
-            container.innerHTML = `<div style="text-align:center; padding: 30px; color: var(--text-muted);">
-                No songs found for "${escapeHtml(query)}". Try another title or artist! 🌺
-            </div>`;
+            const emptyNotice = document.createElement("div");
+            emptyNotice.style.cssText = "text-align:center; padding: 30px; color: var(--text-muted);";
+            if (data.is_offline) {
+                emptyNotice.innerHTML = `<div style="font-size: 1.5rem; margin-bottom: 8px;">🌴 Library Search</div>No downloaded songs matching "<strong>${escapeHtml(query)}</strong>" found.<br><span style="font-size:0.85rem; color:#888;">Tip: Connect host to Wi-Fi / data to search & stream new songs, or browse your downloaded library! 🌺</span>`;
+            } else {
+                emptyNotice.innerHTML = `No songs found for "${escapeHtml(query)}". Try another title or artist! 🌺`;
+            }
+            container.appendChild(emptyNotice);
             return;
         }
 
@@ -3746,6 +3764,112 @@ async function toggleStrictByomMode(enabled) {
         showToast("⚠️ Failed to update Strict Mode setting");
     }
 }
+
+// -------------------------------------------------------------
+// Offline Wi-Fi Hotspot & Host Network Hub
+// -------------------------------------------------------------
+async function loadHostNetworkStatus() {
+    try {
+        const res = await fetch("/api/host/network");
+        if (res.ok) {
+            const data = await res.json();
+            updateHostNetworkUI(data);
+        }
+    } catch (e) {
+        console.error("[Host] Error loading network status:", e);
+    }
+}
+
+function updateHostNetworkUI(data) {
+    if (!data) return;
+
+    const modeBadge = document.getElementById("networkModeBadge");
+    const currentUrl = document.getElementById("networkCurrentUrl");
+    const ssidInput = document.getElementById("hotspotSsidInput");
+    const passInput = document.getElementById("hotspotPassInput");
+
+    if (modeBadge) {
+        if (data.is_hotspot) {
+            modeBadge.innerText = "📶 Offline Hotspot";
+            modeBadge.style.color = "#ffaa00";
+            modeBadge.style.background = "rgba(255, 170, 0, 0.15)";
+        } else if (data.is_internet_connected) {
+            modeBadge.innerText = "🌐 Online Wi-Fi";
+            modeBadge.style.color = "var(--neon-lime)";
+            modeBadge.style.background = "rgba(0, 255, 100, 0.15)";
+        } else {
+            modeBadge.innerText = "🏠 Local Subnet";
+            modeBadge.style.color = "var(--neon-cyan)";
+            modeBadge.style.background = "rgba(0, 240, 255, 0.15)";
+        }
+    }
+
+    if (currentUrl && data.join_url) {
+        currentUrl.innerText = data.join_url;
+    }
+
+    if (ssidInput && data.hotspot_ssid && !ssidInput.matches(":focus")) {
+        ssidInput.value = data.hotspot_ssid;
+    }
+    if (passInput && data.hotspot_password && !passInput.matches(":focus")) {
+        passInput.value = data.hotspot_password;
+    }
+
+    // Modal elements
+    const modalWifiQr = document.getElementById("modalWifiQrImg");
+    const modalAppQr = document.getElementById("modalAppQrImg");
+    const modalWifiSsidText = document.getElementById("modalWifiSsidText");
+    const modalAppUrlText = document.getElementById("modalAppUrlText");
+    const modalWifiSsidDetail = document.getElementById("modalWifiSsidDetail");
+    const modalWifiPassDetail = document.getElementById("modalWifiPassDetail");
+
+    const t = Date.now();
+    if (modalWifiQr) modalWifiQr.src = `/qr/wifi?t=${t}`;
+    if (modalAppQr) modalAppQr.src = `/qr/public?t=${t}`;
+    if (modalWifiSsidText) modalWifiSsidText.innerText = data.hotspot_ssid || "Tiki Karaoke";
+    if (modalAppUrlText) modalAppUrlText.innerText = data.join_url ? new URL(data.join_url).pathname : "/join";
+    if (modalWifiSsidDetail) modalWifiSsidDetail.innerText = data.hotspot_ssid || "Tiki Karaoke";
+    if (modalWifiPassDetail) modalWifiPassDetail.innerText = data.hotspot_password || "singalong";
+}
+
+async function saveHotspotConfig() {
+    const ssid = document.getElementById("hotspotSsidInput")?.value?.trim() || "Tiki Karaoke";
+    const password = document.getElementById("hotspotPassInput")?.value?.trim() || "singalong";
+
+    try {
+        const res = await fetch("/api/host/network/hotspot-config", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ssid, password })
+        });
+        if (res.ok) {
+            const data = await res.json();
+            updateHostNetworkUI(data);
+            showToast("💾 Hotspot Wi-Fi settings saved & QR refreshed! 🌺");
+        } else {
+            showToast("⚠️ Failed to save hotspot settings");
+        }
+    } catch (e) {
+        console.error("[Host] Error saving hotspot config:", e);
+        showToast("⚠️ Network error saving hotspot settings");
+    }
+}
+
+function openWifiQrModal() {
+    const modal = document.getElementById("wifiQrModal");
+    if (modal) {
+        modal.style.display = "flex";
+        loadHostNetworkStatus();
+    }
+}
+
+function closeWifiQrModal() {
+    const modal = document.getElementById("wifiQrModal");
+    if (modal) {
+        modal.style.display = "none";
+    }
+}
+
 
 
 

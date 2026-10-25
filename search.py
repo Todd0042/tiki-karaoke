@@ -3,6 +3,7 @@ from typing import List, Dict, Any, Tuple
 import yt_dlp
 from rapidfuzz import fuzz
 from database import search_local_tracks, save_track, get_setting
+from network_helper import is_internet_available
 
 # Regular expressions for cleaning metadata
 CHANNEL_BRANDS = [
@@ -382,6 +383,16 @@ def tiered_search(query: str, force_online: bool = False, sing_along: bool = Fal
 
     local_matches = search_local_tracks(query_str, limit=25, sing_along_only=sing_along) if page == 1 else []
     
+    # Check internet connectivity for offline hotspot parties
+    if not is_internet_available() and not force_online:
+        return {
+            "local_results": local_matches,
+            "youtube_results": [],
+            "page": page,
+            "has_more": False,
+            "is_offline": True
+        }
+
     # If we have local matches and user didn't ask to force online search, return local first!
     if local_matches and not force_online and page == 1:
         return {

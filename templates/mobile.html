@@ -382,18 +382,45 @@
                     </div>
                 </div>
 
-                <!-- Remote Access & SSL Security Card -->
-                <div id="hostNetworkCard" class="tiki-card" style="margin-bottom: 14px; padding: 12px 14px; border-left: 4px solid var(--neon-gold);">
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-                        <span style="font-weight: 700; font-size: 0.85rem; color: #fff;">🌐 Remote Access & SSL</span>
-                        <span id="networkSslBadge" style="font-size: 0.78rem; font-weight: 700; padding: 2px 8px; border-radius: 8px; background: rgba(0, 255, 100, 0.15); color: var(--neon-lime);">🔒 Active</span>
+                <!-- Offline Wi-Fi Hotspot & Local Network Hub Card -->
+                <div id="hostNetworkCard" class="tiki-card" style="margin-bottom: 14px; padding: 14px; border-left: 4px solid var(--neon-gold);">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                        <span style="font-weight: 700; font-size: 0.88rem; color: #fff;">📶 Offline Hotspot & In-Car Hub</span>
+                        <span id="networkModeBadge" style="font-size: 0.78rem; font-weight: 700; padding: 2px 8px; border-radius: 8px; background: rgba(0, 255, 100, 0.15); color: var(--neon-lime);">Checking...</span>
                     </div>
-                    <div style="font-size: 0.78rem; color: #ddd; margin-bottom: 6px; word-break: break-all;">
-                        <span style="color: var(--text-muted);">Public URL:</span> <strong id="networkCurrentUrl">Loading...</strong>
+
+                    <div style="font-size: 0.8rem; color: #ddd; margin-bottom: 8px; word-break: break-all;">
+                        <span style="color: var(--text-muted);">Songbook URL:</span> <strong id="networkCurrentUrl" style="color: var(--neon-gold);">http://127.0.0.1:8000/join</strong>
                     </div>
-                    <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.76rem; color: var(--text-muted); margin-top: 4px;">
-                        <span id="networkModeLabel">Mode: Cloudflare Quick Tunnel</span>
-                        <a href="/setup" class="btn-ghost" style="padding: 2px 8px; font-size: 0.72rem; border-color: rgba(255,183,3,0.4); color: var(--neon-gold); text-decoration: none;">⚙️ Change Mode</a>
+
+                    <!-- Hotspot Credentials Config -->
+                    <div id="hotspotConfigBox" style="background: rgba(0,0,0,0.3); padding: 10px; border-radius: 10px; margin-bottom: 10px; font-size: 0.78rem;">
+                        <div style="display: flex; gap: 8px; margin-bottom: 8px;">
+                            <div style="flex: 1;">
+                                <label style="display: block; font-size: 0.7rem; color: var(--text-muted); margin-bottom: 2px;">Hotspot Wi-Fi Name:</label>
+                                <input type="text" id="hotspotSsidInput" value="Tiki Karaoke" placeholder="Tiki Karaoke"
+                                       style="width: 100%; box-sizing: border-box; padding: 6px 8px; border-radius: 6px; background: rgba(16, 28, 45, 0.9); border: 1px solid var(--border-neon); color: #fff; font-size: 0.78rem;">
+                            </div>
+                            <div style="flex: 1;">
+                                <label style="display: block; font-size: 0.7rem; color: var(--text-muted); margin-bottom: 2px;">Wi-Fi Password:</label>
+                                <input type="text" id="hotspotPassInput" value="singalong" placeholder="singalong"
+                                       style="width: 100%; box-sizing: border-box; padding: 6px 8px; border-radius: 6px; background: rgba(16, 28, 45, 0.9); border: 1px solid var(--border-neon); color: #fff; font-size: 0.78rem;">
+                            </div>
+                        </div>
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <a href="/setup" style="color: var(--neon-cyan); text-decoration: none; font-size: 0.72rem;">⚙️ Tunnel Setup</a>
+                            <button type="button" onclick="saveHotspotConfig()" class="btn-ghost" style="padding: 3px 10px; font-size: 0.72rem; border-color: var(--neon-cyan); color: var(--neon-cyan);">💾 Save Wi-Fi Info</button>
+                        </div>
+                    </div>
+
+                    <div style="margin-bottom: 8px;">
+                        <button type="button" onclick="openWifiQrModal()" class="btn-ghost" style="width: 100%; padding: 8px; font-size: 0.78rem; border-color: var(--neon-cyan); color: var(--neon-cyan); font-weight: 700;">
+                            📱 Show Party Dual QR Modal
+                        </button>
+                    </div>
+
+                    <div style="font-size: 0.72rem; color: var(--text-muted); line-height: 1.4;">
+                        🛡️ <strong>Dual-Routing Active:</strong> Hotspot runs local-only. Connected guests retain 5G/LTE mobile data for emergency calls and text messages!
                     </div>
                 </div>
 
@@ -1146,6 +1173,40 @@
             </div>
         </div>
         <button type="button" onclick="event.stopPropagation(); dismissSingerOnDeckBanner();" class="btn-ghost" style="padding: 4px 8px; font-size: 0.85rem; color: var(--text-muted); flex-shrink: 0;">✕</button>
+    </div>
+
+    <!-- Offline Wi-Fi & Songbook QR Modal -->
+    <div id="wifiQrModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 1200; background: rgba(5, 8, 15, 0.94); backdrop-filter: blur(12px); align-items: center; justify-content: center; padding: 20px; box-sizing: border-box;">
+        <div class="tiki-card-pink" style="max-width: 440px; width: 100%; text-align: center; padding: 22px; position: relative;">
+            <button type="button" onclick="closeWifiQrModal()" class="btn-ghost" style="position: absolute; top: 12px; right: 12px; padding: 4px 10px; font-size: 0.85rem;">✕</button>
+            <h3 class="font-tiki neon-gold" style="font-size: 1.4rem; margin-top: 0; margin-bottom: 6px;">🌴 Offline Party Tent</h3>
+            <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 16px;">Guests scan with phone camera to connect & sing!</p>
+
+            <div style="display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; margin-bottom: 16px;">
+                <!-- Wi-Fi QR -->
+                <div style="background: rgba(16, 28, 45, 0.9); padding: 10px; border-radius: 14px; border: 1px solid var(--neon-cyan);">
+                    <div style="font-size: 0.75rem; font-weight: 700; color: var(--neon-cyan); margin-bottom: 4px;">1. JOIN WI-FI</div>
+                    <div style="background: #fff; padding: 6px; border-radius: 8px;">
+                        <img id="modalWifiQrImg" src="/qr/wifi" alt="Wi-Fi QR" style="width: 130px; height: 130px; display: block; border-radius: 4px;">
+                    </div>
+                    <div id="modalWifiSsidText" style="font-size: 0.75rem; color: #fff; margin-top: 4px; font-weight: 600;">Tiki Karaoke</div>
+                </div>
+
+                <!-- Songbook QR -->
+                <div style="background: rgba(16, 28, 45, 0.9); padding: 10px; border-radius: 14px; border: 1px solid var(--neon-gold);">
+                    <div style="font-size: 0.75rem; font-weight: 700; color: var(--neon-gold); margin-bottom: 4px;">2. OPEN SONGBOOK</div>
+                    <div style="background: #fff; padding: 6px; border-radius: 8px;">
+                        <img id="modalAppQrImg" src="/qr/public" alt="Songbook QR" style="width: 130px; height: 130px; display: block; border-radius: 4px;">
+                    </div>
+                    <div id="modalAppUrlText" style="font-size: 0.75rem; color: var(--neon-gold); margin-top: 4px; font-weight: 600;">/join</div>
+                </div>
+            </div>
+
+            <div style="font-size: 0.76rem; color: #ddd; margin-bottom: 12px;">
+                Network: <strong id="modalWifiSsidDetail" style="color: var(--neon-cyan);">Tiki Karaoke</strong> | Pass: <strong id="modalWifiPassDetail" style="color: var(--neon-pink);">singalong</strong>
+            </div>
+            <button type="button" onclick="closeWifiQrModal()" class="btn-ghost" style="padding: 6px 20px; font-size: 0.82rem; border-color: rgba(255,255,255,0.3); color: #fff;">Close</button>
+        </div>
     </div>
 
     <script>

@@ -69,15 +69,19 @@ from playlist_sync import (
 )
 
 def get_local_ip() -> str:
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
-        s.connect(('8.8.8.8', 80))
-        ip = s.getsockname()[0]
+        import network_helper
+        return network_helper.get_best_local_ip()
     except Exception:
-        ip = "127.0.0.1"
-    finally:
-        s.close()
-    return ip
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.connect(('8.8.8.8', 80))
+            ip = s.getsockname()[0]
+        except Exception:
+            ip = "127.0.0.1"
+        finally:
+            s.close()
+        return ip
 
 def get_public_host() -> str:
     return os.getenv("TIKI_PUBLIC_HOST", "").strip() or PUBLIC_HOST
@@ -1039,6 +1043,15 @@ async def public_qr():
     img.save(buf, format="PNG")
     buf.seek(0)
     return StreamingResponse(buf, media_type="image/png")
+
+@app.get("/qr/wifi")
+async def wifi_qr():
+    import network_helper
+    ssid = network_helper.get_hotspot_ssid()
+    password = network_helper.get_hotspot_password()
+    wifi_str = network_helper.format_wifi_qr_string(ssid, password)
+    png_bytes = network_helper.generate_qr_png_bytes(wifi_str)
+    return StreamingResponse(io.BytesIO(png_bytes), media_type="image/png")
 
 @app.get("/qr/host")
 async def host_qr(request: Request):
@@ -2488,6 +2501,74 @@ async def host_set_av_sync(payload: AVSyncPayload, request: Request):
         "offset_ms": offset_ms
     })
     return {"status": "ok", "offset_ms": offset_ms}
+
+class HotspotConfigPayload(BaseModel):
+    ssid: str
+    password: str
+
+@app.get("/api/host/network")
+async def host_get_network_status(request: Request):
+    if not (is_host_request(request) or is_local_request(request)):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
+    import network_helper
+    from config import PORT
+    effective_port = int(os.getenv("TIKI_PORT", str(PORT)))
+    ip = network_helper.get_best_local_ip()
+    is_hotspot = network_helper.is_hotspot_ip(ip)
+    is_net = network_helper.is_internet_available()
+    ssid = network_helper.get_hotspot_ssid()
+    password = network_helper.get_hotspot_password()
+    base_url = get_base_url()
+    join_url = f"{base_url}/join"
+    return {
+        "status": "ok",
+        "local_ip": ip,
+        "port": effective_port,
+        "base_url": base_url,
+        "join_url": join_url,
+        "is_internet_connected": is_net,
+        "is_hotspot": is_hotspot,
+        "hotspot_ssid": ssid,
+        "hotspot_password": password
+    }
+
+@app.post("/api/host/network/hotspot-config")
+async def host_update_hotspot_config(payload: HotspotConfigPayload, request: Request):
+    if not (is_host_request(request) or is_local_request(request)):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
+    import network_helper
+    from config import PORT
+    effective_port = int(os.getenv("TIKI_PORT", str(PORT)))
+    network_helper.save_hotspot_config(payload.ssid, payload.password)
+    ip = network_helper.get_best_local_ip()
+    is_hotspot = network_helper.is_hotspot_ip(ip)
+    is_net = network_helper.is_internet_available()
+    base_url = get_base_url()
+    join_url = f"{base_url}/join"
+    
+    await manager.broadcast({
+        "type": "network_updated",
+        "local_ip": ip,
+        "port": effective_port,
+        "base_url": base_url,
+        "join_url": join_url,
+        "is_internet_connected": is_net,
+        "is_hotspot": is_hotspot,
+        "hotspot_ssid": payload.ssid,
+        "hotspot_password": payload.password
+    })
+    
+    return {
+        "status": "ok",
+        "local_ip": ip,
+        "port": effective_port,
+        "base_url": base_url,
+        "join_url": join_url,
+        "is_internet_connected": is_net,
+        "is_hotspot": is_hotspot,
+        "hotspot_ssid": payload.ssid,
+        "hotspot_password": payload.password
+    }
 
 shutdown_trigger_callback: Optional[Callable] = None
 

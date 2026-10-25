@@ -52,6 +52,7 @@ document.addEventListener("DOMContentLoaded", () => {
     initYouTubeAPI();
     setupEventListeners();
     fetchCurrentState();
+    fetchHostNetworkStatus();
 });
 
 function initAudio() {
@@ -247,6 +248,9 @@ function handleSocketMessage(data) {
             break;
         case "emoji_reaction":
             spawnFloatingEmoji(data.emoji);
+            break;
+        case "network_updated":
+            updateStageNetworkUI(data);
             break;
         case "singer_joined":
             spawnSingerJoinedPill(data.name, data.avatar);
@@ -2050,5 +2054,58 @@ function stopHostMicVULoop() {
     if (barL) barL.style.width = "0%";
     if (barR) barR.style.width = "0%";
 }
+
+// -------------------------------------------------------------
+// Stage TV Network Status & Hotspot Engine
+// -------------------------------------------------------------
+async function fetchHostNetworkStatus() {
+    try {
+        const res = await fetch("/api/host/network");
+        if (res.ok) {
+            const data = await res.json();
+            updateStageNetworkUI(data);
+        }
+    } catch (e) {
+        console.error("[Stage] Error loading host network status:", e);
+    }
+}
+
+function updateStageNetworkUI(data) {
+    if (!data) return;
+
+    const wifiSsid = document.getElementById("stageWifiSsid");
+    const wifiPass = document.getElementById("stageWifiPass");
+    const joinUrlText = document.getElementById("stageJoinUrlText");
+    const wifiQrImg = document.getElementById("stageWifiQrImg");
+    const publicQrImg = document.getElementById("stagePublicQrImg");
+    const fillerQrImg = document.getElementById("stageFillerQrImg");
+    const fillerDisplayIp = document.getElementById("stageFillerDisplayIp");
+    const joinQrImg = document.getElementById("stageJoinQrImg");
+    const joinDisplayIp = document.getElementById("stageJoinDisplayIp");
+
+    if (wifiSsid && data.hotspot_ssid) {
+        wifiSsid.innerText = data.hotspot_ssid;
+    }
+    if (wifiPass && data.hotspot_password) {
+        wifiPass.innerText = data.hotspot_password;
+    }
+    if (joinUrlText && data.join_url) {
+        joinUrlText.innerText = data.join_url;
+    }
+
+    const t = Date.now();
+    if (wifiQrImg) wifiQrImg.src = `/qr/wifi?t=${t}`;
+    if (publicQrImg) publicQrImg.src = `/qr/public?t=${t}`;
+    if (fillerQrImg) fillerQrImg.src = `/qr/public?t=${t}`;
+    if (joinQrImg) joinQrImg.src = `/qr/public?t=${t}`;
+
+    if (fillerDisplayIp && data.join_url) {
+        fillerDisplayIp.innerText = data.join_url;
+    }
+    if (joinDisplayIp && data.join_url) {
+        joinDisplayIp.innerText = data.join_url;
+    }
+}
+
 
 
