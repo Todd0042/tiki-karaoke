@@ -2770,10 +2770,23 @@ async def host_download_party_pack(pack_id: str, request: Request):
     }
 
 shutdown_trigger_callback: Optional[Callable] = None
+focus_hub_trigger_callback: Optional[Callable] = None
 
 def register_shutdown_trigger(cb: Callable):
     global shutdown_trigger_callback
     shutdown_trigger_callback = cb
+
+def register_focus_hub_trigger(cb: Callable):
+    global focus_hub_trigger_callback
+    focus_hub_trigger_callback = cb
+
+@app.post("/api/host/focus_hub")
+async def host_focus_hub_action(request: Request):
+    if not (is_host_request(request) or is_local_request(request)):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
+    if focus_hub_trigger_callback:
+        focus_hub_trigger_callback()
+    return {"status": "ok"}
 
 @app.post("/api/host/shutdown")
 async def host_shutdown_action(request: Request):

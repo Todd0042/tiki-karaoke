@@ -43,7 +43,7 @@ from config import (
     load_config, is_configured, get_bundled_binary_path,
     find_system_browser
 )
-from app import LOCAL_IP, PUBLIC_IP, get_base_url, get_public_host, register_shutdown_trigger
+from app import LOCAL_IP, PUBLIC_IP, get_base_url, get_public_host, register_shutdown_trigger, register_focus_hub_trigger
 from tray import start_tray, stop_tray
 
 LOG_FILE = DATA_DIR / "tiki_karaoke.log"
@@ -138,15 +138,57 @@ active_tunnel_proc = None
 launched_browser_procs: List[subprocess.Popen] = []
 is_shutting_down = False
 global_server = None
+_single_instance_lock = None
 
-def get_process_group_kwargs() -> dict:
-    """Returns subprocess kwargs to isolate process groups across Unix and Windows."""
+def get_console_subprocess_kwargs() -> dict:
+    """Returns subprocess kwargs for console utilities (suppresses console windows on Windows)."""
     if sys.platform == "win32":
         creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
         if hasattr(subprocess, "CREATE_NO_WINDOW"):
             creationflags |= subprocess.CREATE_NO_WINDOW
         return {"creationflags": creationflags}
     return {"preexec_fn": os.setsid}
+
+def get_browser_subprocess_kwargs() -> dict:
+    """Returns subprocess kwargs for GUI browser windows (strictly without CREATE_NO_WINDOW)."""
+    if sys.platform == "win32":
+        return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+    return {"preexec_fn": os.setsid}
+
+# Alias for backward compatibility
+get_process_group_kwargs = get_console_subprocess_kwargs
+
+def check_single_instance() -> bool:
+    """Ensures only one instance of Tiki Karaoke runs at a time."""
+    global _single_instance_lock
+    if os.environ.get("TIKI_TESTING"):
+        return True
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            ERROR_ALREADY_EXISTS = 183
+            mutex_name = "Local\\TikiKaraokeSingleInstanceMutex"
+            mutex = ctypes.windll.kernel32.CreateMutexW(None, False, mutex_name)
+            last_err = ctypes.windll.kernel32.GetLastError()
+            if last_err == ERROR_ALREADY_EXISTS:
+                return False
+            _single_instance_lock = mutex
+            return True
+        except Exception:
+            return True
+    else:
+        try:
+            import fcntl
+            lock_path = DATA_DIR / ".tiki_karaoke.lock"
+            lock_path.parent.mkdir(parents=True, exist_ok=True)
+            f = open(lock_path, "w")
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            _single_instance_lock = f
+            return True
+        except (BlockingIOError, OSError):
+            return False
+        except Exception:
+            return True
 
 def kill_process_tree(proc: Optional[subprocess.Popen], timeout: float = 2.0):
     """Gracefully terminates proc and its child processes across Unix and Windows."""
@@ -207,26 +249,15 @@ def cleanup_all_services():
             print(f"[Shutdown] Notice closing browser proc {getattr(proc, 'pid', 'unknown')}: {e}")
     launched_browser_procs.clear()
 
-    # On Windows: un-fullscreen Tiki windows (restore native title bar with [X]) and terminate dedicated profile processes
+    # On Windows: Terminate any leftover dedicated browser profile processes (tiki_stage_*, tiki_host_*)
+    # Strictly DO NOT broadcast WM_CLOSE to window titles to avoid closing Control Hub or other apps
     if sys.platform == "win32":
         try:
             ps_cmd = (
-                '$code = @\'\n'
-                'using System;\n'
-                'using System.Runtime.InteropServices;\n'
-                'public class Win32 {\n'
-                '    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);\n'
-                '    [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);\n'
-                '}\n'
-                '\'@\n'
-                'Add-Type -TypeDefinition $code -ErrorAction SilentlyContinue\n'
-                'Get-Process | Where-Object { $_.MainWindowTitle -like "*Tiki*" -or $_.MainWindowTitle -like "*Stage*" } | ForEach-Object {\n'
-                '    [Win32]::ShowWindow($_.MainWindowHandle, 9)\n'
-                '    [Win32]::PostMessage($_.MainWindowHandle, 16, [IntPtr]::Zero, [IntPtr]::Zero)\n'
-                '}\n'
-                'Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like "*tiki_stage_*" -or $_.CommandLine -like "*tiki_host_*" } | ForEach-Object {\n'
-                '    Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue\n'
-                '}'
+                'Get-CimInstance Win32_Process | Where-Object { '
+                '    ($_.CommandLine -like "*tiki_stage_*" -or $_.CommandLine -like "*tiki_host_*") '
+                '    -and $_.ProcessId -ne $PID '
+                '} | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }'
             )
             subprocess.run(
                 ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps_cmd],
@@ -340,7 +371,7 @@ def open_browser_delayed(stage_url: str, host_url: str = "", delay: float = 1.5)
             else:
                 cmd.append("--new-window")
             cmd.append(stage_url)
-            proc = subprocess.Popen(cmd, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **get_process_group_kwargs())
+            proc = subprocess.Popen(cmd, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **get_browser_subprocess_kwargs())
             launched_browser_procs.append(proc)
             print(f"[Launcher] ✅ Dedicated Stage Window launched via Firefox on monitor {stage_disp_idx} ({stage_disp_name})!")
             stage_launched = True
@@ -365,7 +396,7 @@ def open_browser_delayed(stage_url: str, host_url: str = "", delay: float = 1.5)
                     ]
                     if stage_kiosk:
                         cmd.append("--start-fullscreen")
-                    proc = subprocess.Popen(cmd, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **get_process_group_kwargs())
+                    proc = subprocess.Popen(cmd, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **get_browser_subprocess_kwargs())
                     launched_browser_procs.append(proc)
                     print(f"[Launcher] ✅ Dedicated Stage Window launched via {b_name} on monitor {stage_disp_idx} ({stage_disp_x},{stage_disp_y})!")
                     stage_launched = True
@@ -409,7 +440,7 @@ def open_browser_delayed(stage_url: str, host_url: str = "", delay: float = 1.5)
                 else:
                     cmd.extend([f"--kiosk-monitor={host_disp_idx}", "--new-window"])
                 cmd.append(host_url)
-                proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **get_process_group_kwargs())
+                proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **get_browser_subprocess_kwargs())
                 launched_browser_procs.append(proc)
                 print(f"[Launcher] ✅ Dedicated Host DJ Window launched via Firefox on monitor {host_disp_idx} ({host_disp_name})!")
                 host_launched = True
@@ -432,7 +463,7 @@ def open_browser_delayed(stage_url: str, host_url: str = "", delay: float = 1.5)
                         ]
                         if host_kiosk:
                             cmd.append("--start-fullscreen")
-                        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **get_process_group_kwargs())
+                        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **get_browser_subprocess_kwargs())
                         launched_browser_procs.append(proc)
                         print(f"[Launcher] ✅ Dedicated Host DJ Window launched via {b_name} on monitor {host_disp_idx} ({host_disp_x},{host_disp_y})!")
                         host_launched = True
@@ -698,6 +729,38 @@ def main():
         debug_tray_status()
         sys.exit(0)
 
+    # Enforce single instance across the system
+    if not check_single_instance():
+        print("⚠️  [Tiki Karaoke] Another instance of Tiki Karaoke is already running.")
+        if sys.platform == "win32":
+            try:
+                ps_focus = (
+                    '$code = @\'\n'
+                    'using System;\n'
+                    'using System.Runtime.InteropServices;\n'
+                    'public class Win32 {\n'
+                    '    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);\n'
+                    '    [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);\n'
+                    '}\n'
+                    '\'@\n'
+                    'Add-Type -TypeDefinition $code -ErrorAction SilentlyContinue\n'
+                    'Get-Process | Where-Object { $_.MainWindowTitle -like "*Control Hub*" } | ForEach-Object {\n'
+                    '    [Win32]::ShowWindow($_.MainWindowHandle, 9)\n'
+                    '    [Win32]::SetForegroundWindow($_.MainWindowHandle)\n'
+                    '}'
+                )
+                subprocess.run(
+                    ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps_focus],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=2.0,
+                    check=False,
+                    **get_console_subprocess_kwargs()
+                )
+            except Exception:
+                pass
+        sys.exit(0)
+
     # Write PID file for process tracking
     try:
         PID_FILE.write_text(str(os.getpid()))
@@ -814,10 +877,13 @@ def main():
     cf_domain = cfg.get("custom_domain") or os.getenv("TIKI_CUSTOM_DOMAIN", "")
     start_tunnel_watchdog(remote_mode, target_port, args.remote_port, cf_token, cf_domain)
 
+    local_base = f"http://127.0.0.1:{target_port}"
+    local_stage_url = f"{local_base}/stage?token={HOST_TOKEN}" if HOST_TOKEN else f"{local_base}/stage"
+    local_host_url = f"{local_base}/host?token={HOST_TOKEN}" if HOST_TOKEN else f"{local_base}/"
+    local_setup_url = f"{local_base}/setup"
+    local_shutdown_url = f"{local_base}/api/host/shutdown?token={HOST_TOKEN}" if HOST_TOKEN else f"{local_base}/api/host/shutdown"
+
     if not args.no_browser:
-        local_base = f"http://127.0.0.1:{target_port}"
-        local_stage_url = f"{local_base}/stage?token={HOST_TOKEN}" if HOST_TOKEN else f"{local_base}/stage"
-        local_host_url = f"{local_base}/host?token={HOST_TOKEN}" if HOST_TOKEN else f"{local_base}/"
         threading.Thread(target=open_browser_delayed, args=(local_stage_url, local_host_url), daemon=True).start()
 
     global global_server
@@ -837,17 +903,31 @@ def main():
 
     register_shutdown_trigger(trigger_server_shutdown)
 
+    active_hub = None
+
+    def show_active_hub():
+        if active_hub:
+            active_hub.show_window()
+
+    register_focus_hub_trigger(show_active_hub)
+
     if not args.no_tray:
         tray_urls = {
-            "stage": stage_url,
-            "host": host_url,
+            "stage": local_stage_url,
+            "host": local_host_url,
             "join": join_url,
-            "setup": f"http://127.0.0.1:{target_port}/setup",
+            "setup": local_setup_url,
             "public": public_url or join_url,
-            "shutdown": f"http://127.0.0.1:{target_port}/api/host/shutdown?token={HOST_TOKEN}" if HOST_TOKEN else f"http://127.0.0.1:{target_port}/api/host/shutdown"
+            "shutdown": local_shutdown_url,
+            "focus_hub": f"{local_base}/api/host/focus_hub?token={HOST_TOKEN}" if HOST_TOKEN else f"{local_base}/api/host/focus_hub"
         }
         bar_name = cfg.get("bar_name", "The Tiki Hut Karaoke Lounge")
-        start_tray(tray_urls, on_quit_callback=trigger_server_shutdown, bar_name=bar_name)
+        start_tray(
+            tray_urls,
+            on_quit_callback=trigger_server_shutdown,
+            on_show_hub_callback=show_active_hub,
+            bar_name=bar_name
+        )
 
     try:
         import uvicorn
@@ -874,10 +954,10 @@ def main():
             threading.Thread(target=_run_server_thread, daemon=True).start()
 
             hub_urls = {
-                "stage": stage_url,
-                "host": host_url,
+                "stage": local_stage_url,
+                "host": local_host_url,
                 "join": join_url,
-                "setup": f"http://127.0.0.1:{target_port}/setup",
+                "setup": local_setup_url,
                 "public": public_url or join_url,
                 "port": str(target_port)
             }
@@ -889,6 +969,7 @@ def main():
                 log_file=LOG_FILE,
                 is_tray_active=(not args.no_tray)
             )
+            active_hub = hub
             hub.start()
         else:
             server.run()

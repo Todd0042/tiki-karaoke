@@ -248,6 +248,28 @@ def run_qt_tray_daemon(args):
                 pass
         app.quit()
 
+    def _focus_hub():
+        if getattr(args, "focus_hub", None):
+            try:
+                import urllib.request
+                req = urllib.request.Request(
+                    args.focus_hub,
+                    data=b"{}",
+                    headers={"Content-Type": "application/json", "User-Agent": "TikiTray/1.0"},
+                    method="POST"
+                )
+                with urllib.request.urlopen(req, timeout=1.5):
+                    return
+            except Exception:
+                pass
+        _open(args.host)()
+
+    if getattr(args, "focus_hub", None):
+        act_hub = QAction("🌴 Open Control Hub", menu)
+        act_hub.triggered.connect(_focus_hub)
+        menu.addAction(act_hub)
+        menu.addSeparator()
+
     act_stage = QAction("📺 Open Stage Display", menu)
     act_stage.triggered.connect(_open(args.stage))
     menu.addAction(act_stage)
@@ -277,10 +299,13 @@ def run_qt_tray_daemon(args):
 
     tray.setContextMenu(menu)
 
-    # Left click opens Host DJ remote
+    # Left click opens Control Hub if configured, else Host DJ remote
     def _activated(reason):
         if reason in (QSystemTrayIcon.ActivationReason.Trigger, QSystemTrayIcon.ActivationReason.DoubleClick):
-            _open(args.host)()
+            if getattr(args, "focus_hub", None):
+                _focus_hub()
+            else:
+                _open(args.host)()
 
     tray.activated.connect(_activated)
     tray.show()
@@ -290,6 +315,7 @@ def run_qt_tray_daemon(args):
 def start_tray(
     urls: dict,
     on_quit_callback: Optional[Callable] = None,
+    on_show_hub_callback: Optional[Callable] = None,
     bar_name: str = "Tiki Karaoke Lounge"
 ):
     """
@@ -304,6 +330,7 @@ def start_tray(
     setup_url = urls.get("setup", "http://localhost:5000/setup")
     public_url = urls.get("public", "")
     shutdown_url = urls.get("shutdown", "")
+    focus_hub_url = urls.get("focus_hub", "")
 
     # On Linux: Prefer Qt StatusNotifierItem for native Wayland / KDE Plasma / GNOME support
     if sys.platform != "win32":
@@ -324,6 +351,8 @@ def start_tray(
                     "--public", public_url,
                     "--bar-name", bar_name,
                 ]
+                if focus_hub_url:
+                    cmd.extend(["--focus-hub", focus_hub_url])
                 if icon_path and icon_path.exists():
                     cmd.extend(["--icon", str(icon_path)])
 
@@ -395,15 +424,30 @@ def start_tray(
         if on_quit_callback:
             on_quit_callback()
 
+    def _show_hub(icon=None, item=None):
+        if on_show_hub_callback:
+            try:
+                on_show_hub_callback()
+            except Exception as e:
+                print(f"[System Tray] Error showing Control Hub: {e}")
+
     menu_items = [
         item(f"🌴 {bar_name}", None, enabled=False),
         Menu.SEPARATOR,
+    ]
+
+    if on_show_hub_callback:
+        menu_items.append(item("🌴 Open Control Hub", _show_hub, default=True))
+        menu_items.append(item("👑 Open Host DJ Remote", _open(host_url)))
+    else:
+        menu_items.append(item("👑 Open Host DJ Remote", _open(host_url), default=True))
+
+    menu_items.extend([
         item("📺 Open Stage Display", _open(stage_url)),
-        item("👑 Open Host DJ Remote", _open(host_url), default=True),
         item("📱 Open Singer Join Page", _open(join_url)),
         item("⚙️ Open Setup & Screens", _open(setup_url)),
         Menu.SEPARATOR,
-    ]
+    ])
 
     if public_url:
         menu_items.append(item("📋 Copy Public Join Link", _copy_url))
@@ -453,6 +497,7 @@ if __name__ == "__main__":
     parser.add_argument("--setup", default="", help="Setup wizard URL")
     parser.add_argument("--shutdown", default="", help="Shutdown API URL")
     parser.add_argument("--public", default="", help="Public join URL")
+    parser.add_argument("--focus-hub", default="", help="Focus Control Hub API URL")
     parser.add_argument("--icon", default="", help="Path to tray icon file")
     parser.add_argument("--bar-name", default="The Tiki Hut Karaoke Lounge", help="Bar name")
     args = parser.parse_args()

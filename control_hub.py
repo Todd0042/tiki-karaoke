@@ -81,6 +81,24 @@ class TikiControlHub:
         # Run event loop
         self.root.mainloop()
 
+    def show_window(self):
+        """Thread-safe method to un-hide and bring the Control Hub window to the front."""
+        if not self.root:
+            return
+        def _bring():
+            try:
+                self.root.deiconify()
+                self.root.lift()
+                self.root.focus_force()
+                self.root.attributes("-topmost", True)
+                self.root.after(150, lambda: self.root.attributes("-topmost", False) if self.root else None)
+            except Exception:
+                pass
+        try:
+            self.root.after_idle(_bring)
+        except Exception:
+            pass
+
     def _set_app_icon(self):
         try:
             from tray import get_tray_icon_path
