@@ -68,6 +68,7 @@ pyinstaller --clean -y --onedir \
     --hidden-import wave \
     --hidden-import tray \
     --hidden-import audio_router \
+    --hidden-import network_helper \
     --hidden-import pystray \
     --collect-all pystray \
     --hidden-import Xlib \
