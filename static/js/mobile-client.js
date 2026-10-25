@@ -147,6 +147,7 @@ function checkRole() {
                 loadVenueAvSync();
                 checkHostHealth();
                 loadHostNetworkStatus();
+                loadPartyPacks();
 
                 const urlParams = new URLSearchParams(window.location.search);
                 const reqTab = urlParams.get("tab");
@@ -522,6 +523,7 @@ function initWebSocket() {
                 loadLibraryTracks();
                 if (isHost) {
                     loadHostStorageStatus();
+                    loadPartyPacks();
                 }
             } else if (data.type === "filler_tracks_updated" || data.type === "filler_track_updated") {
                 if (isHost) {
@@ -649,6 +651,7 @@ function setupNavigation() {
                 loadHostDefaultPaths();
                 loadHostStrictMode();
                 loadHostNetworkStatus();
+                loadPartyPacks();
             }
             if (target === "fillerCrateTab") {
                 loadFillerTracks();
@@ -3869,6 +3872,100 @@ function closeWifiQrModal() {
         modal.style.display = "none";
     }
 }
+
+// -------------------------------------------------------------
+// Pre-Party Starter Packs (Offline Party Preparation)
+// -------------------------------------------------------------
+async function loadPartyPacks() {
+    const container = document.getElementById("partyPacksContainer");
+    if (!container) return;
+
+    try {
+        const res = await fetch("/api/host/party-packs");
+        if (!res.ok) return;
+        const data = await res.json();
+        const packs = data.packs || [];
+        renderPartyPacks(packs);
+    } catch (e) {
+        console.error("[Host] Error loading party packs:", e);
+    }
+}
+
+function renderPartyPacks(packs) {
+    const container = document.getElementById("partyPacksContainer");
+    if (!container) return;
+
+    if (!packs || packs.length === 0) {
+        container.innerHTML = `<div style="font-size:0.75rem; color:var(--text-muted); text-align:center; padding:10px;">No starter packs available.</div>`;
+        return;
+    }
+
+    container.innerHTML = packs.map(p => {
+        const remaining = p.track_count - p.downloaded_count;
+        const isComplete = remaining <= 0;
+        const badgeColor = isComplete ? "var(--neon-lime)" : "var(--neon-cyan)";
+        const badgeBg = isComplete ? "rgba(0, 255, 100, 0.15)" : "rgba(0, 240, 255, 0.15)";
+        const badgeText = isComplete ? `✅ ${p.track_count}/${p.track_count} Ready` : `📥 ${p.downloaded_count}/${p.track_count} Ready`;
+
+        return `
+            <div style="background: rgba(16, 28, 45, 0.85); border: 1px solid rgba(0, 240, 255, 0.25); border-radius: 10px; padding: 10px 12px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                    <div style="font-weight: 700; font-size: 0.82rem; color: #fff;">${escapeHtml(p.name)}</div>
+                    <span style="font-size: 0.7rem; font-weight: 700; padding: 2px 6px; border-radius: 6px; color: ${badgeColor}; background: ${badgeBg};">
+                        ${badgeText}
+                    </span>
+                </div>
+                <div style="font-size: 0.72rem; color: var(--text-muted); margin-bottom: 8px; line-height: 1.3;">
+                    ${escapeHtml(p.description)}
+                </div>
+                <div style="display: flex; justify-content: flex-end;">
+                    ${isComplete ? `
+                        <button type="button" class="btn-ghost" disabled style="padding: 4px 10px; font-size: 0.72rem; opacity: 0.6; cursor: default; border-color: var(--neon-lime); color: var(--neon-lime);">
+                            ✅ Pack Installed
+                        </button>
+                    ` : `
+                        <button type="button" onclick="downloadPartyPack('${p.id}')" id="btnPack_${p.id}" class="btn-ghost" style="padding: 4px 12px; font-size: 0.72rem; border-color: var(--neon-cyan); color: var(--neon-cyan); font-weight: 700;">
+                            ⚡ Download Pack (${remaining} songs)
+                        </button>
+                    `}
+                </div>
+            </div>
+        `;
+    }).join("");
+}
+
+async function downloadPartyPack(packId) {
+    const btn = document.getElementById(`btnPack_${packId}`);
+    if (btn) {
+        btn.disabled = true;
+        btn.innerText = "⏳ Enqueuing...";
+    }
+
+    try {
+        const res = await fetch(`/api/host/party-packs/${encodeURIComponent(packId)}/download`, {
+            method: "POST"
+        });
+        if (res.ok) {
+            const data = await res.json();
+            showToast(`🚀 ${data.enqueued} songs enqueued for offline party! 🌺`);
+            loadPartyPacks();
+        } else {
+            showToast("⚠️ Failed to enqueue party pack");
+            if (btn) {
+                btn.disabled = false;
+                btn.innerText = "⚡ Try Again";
+            }
+        }
+    } catch (e) {
+        console.error("[Host] Error downloading pack:", e);
+        showToast("⚠️ Network error starting pack download");
+        if (btn) {
+            btn.disabled = false;
+            btn.innerText = "⚡ Try Again";
+        }
+    }
+}
+
 
 
 

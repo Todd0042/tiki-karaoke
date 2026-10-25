@@ -2570,6 +2570,69 @@ async def host_update_hotspot_config(payload: HotspotConfigPayload, request: Req
         "hotspot_password": payload.password
     }
 
+# -------------------------------------------------------------
+# Pre-Party Starter Packs (Offline Party Preparation)
+# -------------------------------------------------------------
+@app.get("/api/host/party-packs")
+async def host_get_party_packs(request: Request):
+    if not (is_host_request(request) or is_local_request(request)):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
+    from party_packs import PARTY_PACKS
+    from database import get_track_by_video_id
+
+    result = []
+    for pack in PARTY_PACKS:
+        downloaded_count = 0
+        for t in pack["tracks"]:
+            existing = get_track_by_video_id(t["video_id"])
+            if existing and existing.get("is_downloaded") and existing.get("local_path") and Path(existing["local_path"]).exists():
+                downloaded_count += 1
+        pack_copy = dict(pack)
+        pack_copy["downloaded_count"] = downloaded_count
+        pack_copy["is_fully_downloaded"] = downloaded_count >= pack["track_count"]
+        result.append(pack_copy)
+
+    return {"status": "ok", "packs": result}
+
+@app.post("/api/host/party-packs/{pack_id}/download")
+async def host_download_party_pack(pack_id: str, request: Request):
+    if not (is_host_request(request) or is_local_request(request)):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
+    from party_packs import get_party_pack_by_id
+    from database import get_track_by_video_id, save_track, update_track_download_status
+    from downloader import enqueue_download
+
+    pack = get_party_pack_by_id(pack_id)
+    if not pack:
+        raise HTTPException(status_code=404, detail="Party pack not found")
+
+    enqueued = 0
+    for t in pack["tracks"]:
+        existing = get_track_by_video_id(t["video_id"])
+        if existing and existing.get("is_downloaded") and existing.get("local_path") and Path(existing["local_path"]).exists():
+            continue
+
+        track_id = save_track(
+            video_id=t["video_id"],
+            title=t["title"],
+            artist=t["artist"],
+            original_title=f"{t['artist']} - {t['title']}",
+            channel="Tiki Party Starter Pack",
+            duration=210,
+            is_sing_along=False
+        )
+        update_track_download_status(track_id, "pending")
+        enqueue_download(track_id, singer_name="Pre-Party Pack", title=t["title"], artist=t["artist"])
+        enqueued += 1
+
+    return {
+        "status": "ok",
+        "pack_id": pack_id,
+        "pack_name": pack["name"],
+        "total_tracks": pack["track_count"],
+        "enqueued": enqueued
+    }
+
 shutdown_trigger_callback: Optional[Callable] = None
 
 def register_shutdown_trigger(cb: Callable):

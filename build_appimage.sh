@@ -69,6 +69,7 @@ pyinstaller --clean -y --onedir \
     --hidden-import tray \
     --hidden-import audio_router \
     --hidden-import network_helper \
+    --hidden-import party_packs \
     --hidden-import pystray \
     --collect-all pystray \
     --hidden-import Xlib \
