@@ -53,6 +53,9 @@ class SafeLogger:
         self.filepath = filepath
         self.original_stream = original_stream
         self.file = None
+        self.encoding = getattr(original_stream, "encoding", "utf-8") or "utf-8"
+        self.errors = getattr(original_stream, "errors", "replace") or "replace"
+        self.closed = False
         if self.filepath:
             try:
                 self.filepath.parent.mkdir(parents=True, exist_ok=True)
@@ -86,6 +89,36 @@ class SafeLogger:
             except Exception:
                 pass
 
+    def isatty(self) -> bool:
+        if self.original_stream and hasattr(self.original_stream, "isatty"):
+            try:
+                return bool(self.original_stream.isatty())
+            except Exception:
+                pass
+        return False
+
+    def fileno(self):
+        if self.original_stream and hasattr(self.original_stream, "fileno"):
+            try:
+                return self.original_stream.fileno()
+            except Exception:
+                pass
+        if self.file:
+            try:
+                return self.file.fileno()
+            except Exception:
+                pass
+        raise OSError("SafeLogger stream has no fileno")
+
+    def readable(self) -> bool:
+        return False
+
+    def writable(self) -> bool:
+        return True
+
+    def seekable(self) -> bool:
+        return False
+
 # Tee output to log file and protect windowed Python execution
 sys.stdout = SafeLogger(LOG_FILE, sys.stdout)
 sys.stderr = SafeLogger(LOG_FILE, sys.stderr)
@@ -109,7 +142,10 @@ global_server = None
 def get_process_group_kwargs() -> dict:
     """Returns subprocess kwargs to isolate process groups across Unix and Windows."""
     if sys.platform == "win32":
-        return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+        creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
+        if hasattr(subprocess, "CREATE_NO_WINDOW"):
+            creationflags |= subprocess.CREATE_NO_WINDOW
+        return {"creationflags": creationflags}
     return {"preexec_fn": os.setsid}
 
 def kill_process_tree(proc: Optional[subprocess.Popen], timeout: float = 2.0):
@@ -123,7 +159,8 @@ def kill_process_tree(proc: Optional[subprocess.Popen], timeout: float = 2.0):
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 timeout=timeout,
-                check=False
+                check=False,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)
             )
         except Exception:
             try:
@@ -196,7 +233,8 @@ def cleanup_all_services():
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 timeout=4.0,
-                check=False
+                check=False,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)
             )
         except Exception:
             pass
@@ -518,7 +556,7 @@ def start_permanent_tunnel(port: int, remote_port: int = 38480):
     # Kill any stale local bore processes to free up remote static port
     try:
         if sys.platform == "win32":
-            subprocess.run(["taskkill", "/F", "/IM", "bore.exe"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(["taskkill", "/F", "/IM", "bore.exe"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         else:
             subprocess.run(["pkill", "-9", "-f", "bore local"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         time.sleep(0.4)
@@ -550,7 +588,7 @@ def start_permanent_tunnel(port: int, remote_port: int = 38480):
         print("[Remote Warning] bore process exited early. Retrying once...")
         try:
             if sys.platform == "win32":
-                subprocess.run(["taskkill", "/F", "/IM", "bore.exe"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                subprocess.run(["taskkill", "/F", "/IM", "bore.exe"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             else:
                 subprocess.run(["pkill", "-9", "-f", "bore local"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             time.sleep(1.0)
@@ -854,6 +892,10 @@ def main():
             hub.start()
         else:
             server.run()
+    except Exception as e:
+        import traceback
+        print(f"[FATAL EXCEPTION IN MAIN]: {e}")
+        traceback.print_exc()
     except (KeyboardInterrupt, SystemExit):
         pass
     finally:
