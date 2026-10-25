@@ -46,6 +46,50 @@ from config import (
 from app import LOCAL_IP, PUBLIC_IP, get_base_url, get_public_host, register_shutdown_trigger
 from tray import start_tray, stop_tray
 
+LOG_FILE = DATA_DIR / "tiki_karaoke.log"
+
+class SafeLogger:
+    def __init__(self, filepath: Optional[Path], original_stream=None):
+        self.filepath = filepath
+        self.original_stream = original_stream
+        self.file = None
+        if self.filepath:
+            try:
+                self.filepath.parent.mkdir(parents=True, exist_ok=True)
+                self.file = open(self.filepath, "a", encoding="utf-8", buffering=1)
+            except Exception:
+                self.file = None
+
+    def write(self, data):
+        if self.original_stream:
+            try:
+                self.original_stream.write(data)
+                self.original_stream.flush()
+            except Exception:
+                pass
+        if self.file:
+            try:
+                self.file.write(data)
+                self.file.flush()
+            except Exception:
+                pass
+
+    def flush(self):
+        if self.original_stream:
+            try:
+                self.original_stream.flush()
+            except Exception:
+                pass
+        if self.file:
+            try:
+                self.file.flush()
+            except Exception:
+                pass
+
+# Tee output to log file and protect windowed Python execution
+sys.stdout = SafeLogger(LOG_FILE, sys.stdout)
+sys.stderr = SafeLogger(LOG_FILE, sys.stderr)
+
 TIKI_BANNER = r"""
   _______ _ _    _    _  __                     _        
  |__   __(_) |  (_)  | |/ /                    | |       
@@ -208,6 +252,16 @@ def configure_firefox_profile(profile_path: Path):
 
 def open_browser_delayed(stage_url: str, host_url: str = "", delay: float = 1.5):
     time.sleep(delay)
+    if not is_configured():
+        base_origin = stage_url.split("/stage")[0] if "/stage" in stage_url else "http://127.0.0.1:8000"
+        setup_url = f"{base_origin}/setup"
+        print(f"[Launcher] Fresh installation detected. Opening single Setup Wizard window: {setup_url}")
+        try:
+            webbrowser.open(setup_url)
+        except Exception as e:
+            print(f"[Launcher] Error opening setup browser: {e}")
+        return
+
     cfg = load_config()
 
     # 1. Main Stage Display Window
@@ -215,7 +269,7 @@ def open_browser_delayed(stage_url: str, host_url: str = "", delay: float = 1.5)
     stage_disp_name = cfg.get("stage_display_name", "Primary Display")
     stage_disp_x = int(cfg.get("stage_display_x", 0))
     stage_disp_y = int(cfg.get("stage_display_y", 0))
-    stage_kiosk = bool(cfg.get("kiosk_mode", True))
+    stage_kiosk = bool(cfg.get("kiosk_mode", False))
 
     mode_label = "Fullscreen Kiosk" if stage_kiosk else "Windowed"
     print(f"[Launcher] Opening Stage Display on Monitor {stage_disp_idx} ({stage_disp_name}, {mode_label}): {stage_url}")
@@ -267,6 +321,8 @@ def open_browser_delayed(stage_url: str, host_url: str = "", delay: float = 1.5)
                         f"--user-data-dir={stage_chrome_data}",
                         "--no-first-run",
                         "--no-default-browser-check",
+                        "--autoplay-policy=no-user-gesture-required",
+                        "--disable-features=PreloadMediaEngagementData",
                         f"--window-position={stage_disp_x},{stage_disp_y}"
                     ]
                     if stage_kiosk:
@@ -590,6 +646,8 @@ def main():
     parser.add_argument("--port", type=int, default=int(cfg.get("port", PORT)), help=f"Port to run on (default: {cfg.get('port', PORT)})")
     parser.add_argument("--remote-port", type=int, default=int(cfg.get("remote_port", 38480)), help="Permanent public port on bore.pub (default: 38480)")
     parser.add_argument("--no-browser", action="store_true", help="Do not automatically launch browser on start")
+    parser.add_argument("--no-gui", action="store_true", help="Disable native desktop Control Hub window")
+    parser.add_argument("--headless", action="store_true", help="Run strictly headless server (no GUI, no browser)")
     parser.add_argument("--no-tray", action="store_true", help="Disable system tray icon")
     parser.add_argument("--local-only", action="store_true", help="Run on local network only (disable remote tunnels)")
     parser.add_argument("--tunnel", action="store_true", help="Force ephemeral Cloudflare HTTPS tunnel (Trusted SSL)")
@@ -764,7 +822,38 @@ def main():
         )
         server = uvicorn.Server(uvicorn_config)
         global_server = server
-        server.run()
+
+        enable_gui = not (args.no_gui or args.headless or os.environ.get("TIKI_HEADLESS") or os.environ.get("TIKI_TESTING") or os.environ.get("TIKI_DATA_DIR"))
+        from control_hub import TikiControlHub, HAS_GUI
+
+        if enable_gui and HAS_GUI:
+            def _run_server_thread():
+                try:
+                    server.run()
+                except Exception as e:
+                    print(f"[Server Thread Exception]: {e}")
+
+            threading.Thread(target=_run_server_thread, daemon=True).start()
+
+            hub_urls = {
+                "stage": stage_url,
+                "host": host_url,
+                "join": join_url,
+                "setup": f"http://127.0.0.1:{target_port}/setup",
+                "public": public_url or join_url,
+                "port": str(target_port)
+            }
+            hub = TikiControlHub(
+                urls=hub_urls,
+                on_shutdown=trigger_server_shutdown,
+                bar_name=cfg.get("bar_name", "The Tiki Hut Karaoke Lounge"),
+                host_pin=pin,
+                log_file=LOG_FILE,
+                is_tray_active=(not args.no_tray)
+            )
+            hub.start()
+        else:
+            server.run()
     except (KeyboardInterrupt, SystemExit):
         pass
     finally:

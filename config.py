@@ -194,7 +194,7 @@ DEFAULT_CONFIG = {
     "stage_display_y": 0,
     "stage_display_width": 1920,
     "stage_display_height": 1080,
-    "kiosk_mode": True,
+    "kiosk_mode": False,
     "audio_output_device": "default",
     "audio_output_name": "System Default Audio Output",
     "audio_input_device": "default",

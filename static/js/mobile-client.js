@@ -2557,14 +2557,21 @@ function loadLibraryTracks() {
             container.innerHTML = "";
 
             if (tracks.length === 0) {
-                const emptyMsg = isSingAlongMode
-                    ? "No downloaded sing-along songs found. Search YouTube above with Sing-Along Mode ON to download and add sing-along tracks!"
-                    : "Search YouTube above to download and add new tracks to this library!";
+                const isFiltered = !!(currentLibSearch || currentLibArtist);
                 container.innerHTML = `
-                    <div style="text-align: center; padding: 40px 20px; color: var(--text-muted);">
-                        <div style="font-size: 2.2rem; margin-bottom: 8px;">🌴</div>
-                        <p style="font-size: 0.95rem; font-weight: 600; color: #fff;">${isSingAlongMode ? "No Sing-Along Songs Found" : "No Downloaded Songs Found"}</p>
-                        <p style="font-size: 0.82rem;">${emptyMsg}</p>
+                    <div class="tiki-card-cyan" style="text-align: center; padding: 32px 20px; margin-top: 10px; border-radius: 16px;">
+                        <div style="font-size: 2.8rem; margin-bottom: 10px;">🌴🌺🍹</div>
+                        <h3 class="font-tiki neon-cyan" style="font-size: 1.25rem; margin-bottom: 6px;">
+                            ${isFiltered ? "No Matching Songs Found" : "Your Songbook is Ready!"}
+                        </h3>
+                        <p style="font-size: 0.85rem; color: #cbd5e1; max-width: 440px; margin: 0 auto 16px; line-height: 1.45;">
+                            ${isFiltered 
+                                ? "Try clearing your artist filter or searching with a different keyword." 
+                                : "Tap below to search millions of karaoke tracks online, or request songs directly to get the party started!"}
+                        </p>
+                        <button type="button" onclick="switchTab('searchTab'); setTimeout(() => { const inp = document.getElementById('searchInput'); if(inp) inp.focus(); }, 150);" class="btn-neon-cyan" style="padding: 12px 28px; font-weight: 700; border-radius: 24px; font-size: 0.92rem; cursor: pointer;">
+                            🔍 Search Songs Online
+                        </button>
                     </div>
                 `;
                 const pag = document.getElementById("libraryPaginationBar");

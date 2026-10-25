@@ -295,7 +295,7 @@
             <div class="form-section">
                 <div class="section-header">💾 3. Storage & Media Library</div>
                 <div class="field-desc" style="margin-bottom: 14px;">
-                    Choose where downloaded video files, playlists, and database are saved. Perfect for using a dedicated secondary NVMe SSD or storage drive (e.g. <code style="color: var(--neon-gold);">/media/storage/karaoke</code> or <code style="color: var(--neon-gold);">~/karaoke</code>).
+                    Choose where downloaded video files, playlists, and database are saved. Perfect for using a dedicated secondary NVMe SSD or storage drive (e.g. <code style="color: var(--neon-gold);">C:\Karaoke</code>, <code style="color: var(--neon-gold);">D:\Karaoke</code>, or <code style="color: var(--neon-gold);">~/karaoke</code>).
                 </div>
 
                 <div class="field-group">
@@ -379,9 +379,12 @@
 
                 <div style="margin-top: 10px;">
                     <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 0.95rem;">
-                        <input type="checkbox" id="kioskMode" name="kiosk_mode" value="true" {% if config.kiosk_mode is not defined or config.kiosk_mode %}checked{% endif %}>
+                        <input type="checkbox" id="kioskMode" name="kiosk_mode" value="true" {% if config.kiosk_mode %}checked{% endif %}>
                         <span>🖥️ Fullscreen Dedicated Kiosk Mode (borderless TV display window)</span>
                     </label>
+                    <div class="field-desc" style="margin-left: 26px; margin-top: 4px;">
+                        Leave unchecked to open in a standard movable window with minimize/maximize controls (Recommended for easy setup and single-monitor testing).
+                    </div>
                 </div>
 
                 <hr style="border: 0; border-top: 1px solid rgba(255, 255, 255, 0.1); margin: 20px 0;">

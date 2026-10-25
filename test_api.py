@@ -1062,6 +1062,41 @@ class TestAPIEndpoints(unittest.TestCase):
         self.client.post("/api/host/strict-mode", json={"enabled": False}, headers={"X-Host-Token": HOST_TOKEN})
         self.assertEqual(get_setting("strict_byom_only"), "false")
 
+    def test_setup_redirects_to_host_and_default_windowed(self):
+        """Verifies setup save redirects to Host Desk and default kiosk_mode is False."""
+        from config import DEFAULT_CONFIG
+        self.assertFalse(DEFAULT_CONFIG.get("kiosk_mode", True))
+
+        from config import HOST_TOKEN
+        res = self.client.post("/api/setup", json={
+            "bar_name": "Test Lounge",
+            "host_pin": "1234",
+            "kiosk_mode": False
+        }, headers={"X-Host-Token": HOST_TOKEN})
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["status"], "ok")
+        self.assertIn("/host", data["redirect"])
+
+    def test_control_hub_module_and_safe_logger(self):
+        """Verifies control_hub class structure and main SafeLogger."""
+        import control_hub
+        self.assertTrue(hasattr(control_hub, "TikiControlHub"))
+        
+        hub = control_hub.TikiControlHub(
+            urls={"stage": "http://127.0.0.1:8000/stage", "host": "http://127.0.0.1:8000/host"},
+            bar_name="Unit Test Lounge"
+        )
+        self.assertEqual(hub.bar_name, "Unit Test Lounge")
+
+        from main import SafeLogger
+        import io
+        buf = io.StringIO()
+        logger = SafeLogger(filepath=None, original_stream=buf)
+        logger.write("Test log output\n")
+        logger.flush()
+        self.assertEqual(buf.getvalue(), "Test log output\n")
+
 if __name__ == "__main__":
     unittest.main()
 

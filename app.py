@@ -1068,7 +1068,7 @@ async def api_save_setup(payload: Dict[str, Any], request: Request, response: Re
             httponly=False,
             samesite="lax"
         )
-        return {"status": "ok", "redirect": "/stage", "config": cfg}
+        return {"status": "ok", "redirect": f"/host?token={HOST_TOKEN}", "config": cfg}
     except Exception as e:
         import traceback
         traceback.print_exc()
