@@ -541,6 +541,9 @@ def get_filler_dir() -> Path:
 def get_sing_along_dir() -> Path:
     return get_library_dir() / "sing_along"
 
+def get_recordings_dir() -> Path:
+    return get_library_dir() / "recordings"
+
 def get_data_dir() -> Path:
     cfg = load_config()
     p = os.getenv("TIKI_DATA_DIR", "").strip() or cfg.get("data_dir", "").strip()
@@ -562,6 +565,7 @@ def ensure_storage_dirs():
         get_playlists_dir().mkdir(parents=True, exist_ok=True)
         get_filler_dir().mkdir(parents=True, exist_ok=True)
         get_sing_along_dir().mkdir(parents=True, exist_ok=True)
+        get_recordings_dir().mkdir(parents=True, exist_ok=True)
 
         # Legacy data migration safeguard:
         legacy_data = (get_user_data_root() / "data").resolve()

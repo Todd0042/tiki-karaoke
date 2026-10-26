@@ -268,6 +268,22 @@ class TikiControlHub:
         )
         importer_btn.pack(fill="x", pady=3)
 
+        # 4. Open CD+G Optical Disc Ripper
+        ripper_btn = tk.Button(
+            btn_frame,
+            text="📀 CD+G Disc Ripper (Extract Physical Discs)",
+            font=("Helvetica", 9, "bold"),
+            bg="#1a1424",
+            fg="#00f0ff",
+            activebackground="#2a1f3d",
+            activeforeground="#00f0ff",
+            relief="flat",
+            cursor="hand2",
+            pady=7,
+            command=self._launch_cdg_ripper
+        )
+        ripper_btn.pack(fill="x", pady=3)
+
         # Secondary row: Setup & Copy Link
         row2 = tk.Frame(btn_frame, bg="#0d0814")
         row2.pack(fill="x", pady=3)
@@ -358,6 +374,44 @@ class TikiControlHub:
                     pass
                 if HAS_GUI:
                     self.root.after(0, lambda: messagebox.showerror("Smart Importer", f"Could not launch Smart Importer:\n{e}"))
+
+        threading.Thread(target=_call, daemon=True).start()
+
+    def _launch_cdg_ripper(self):
+        def _call():
+            try:
+                import urllib.request
+                import json
+                port = self.urls.get("port", "8000")
+                url = f"http://127.0.0.1:{port}/api/host/launch-cdg-ripper"
+                req = urllib.request.Request(
+                    url,
+                    data=b"{}",
+                    headers={"Content-Type": "application/json", "User-Agent": "TikiHub/1.0"},
+                    method="POST"
+                )
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    if resp.status == 200:
+                        self._flash_toast("📀 CD+G Disc Ripper launched!")
+                        return
+            except Exception as e:
+                try:
+                    from app import find_importer_executable, get_tracks_dir
+                    found = find_importer_executable()
+                    if found:
+                        cmd_base, work_dir = found
+                        cmd = list(cmd_base) + ["--cdg-ripper", "--folder", str(get_tracks_dir())]
+                        if sys.platform == "win32":
+                            flags = 0x00000008 | subprocess.CREATE_NEW_PROCESS_GROUP
+                            subprocess.Popen(cmd, cwd=str(work_dir) if work_dir else None, creationflags=flags)
+                        else:
+                            subprocess.Popen(cmd, cwd=str(work_dir) if work_dir else None, start_new_session=True)
+                        self._flash_toast("📀 CD+G Disc Ripper launched!")
+                        return
+                except Exception:
+                    pass
+                if HAS_GUI:
+                    self.root.after(0, lambda: messagebox.showerror("CD+G Ripper", f"Could not launch CD+G Ripper:\n{e}"))
 
         threading.Thread(target=_call, daemon=True).start()
 

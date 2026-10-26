@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional, Callable, Tuple
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request, Response, WebSocket, WebSocketDisconnect, HTTPException, Depends
+from fastapi import FastAPI, Request, Response, WebSocket, WebSocketDisconnect, HTTPException, Depends, UploadFile, File, Form
 from fastapi.responses import HTMLResponse, StreamingResponse, FileResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -31,7 +31,7 @@ from config import (
     STATIC_DIR, TEMPLATES_DIR, TRACKS_DIR, HOST_TOKEN, HOST_PIN,
     PORT, DEFAULT_INTERMISSION_SECONDS, PUBLIC_HOST, REMOTE_MODE, BAR_NAME,
     load_config, save_config, is_configured, get_user_data_root,
-    get_library_dir, get_tracks_dir, get_playlists_dir, get_data_dir,
+    get_library_dir, get_tracks_dir, get_playlists_dir, get_recordings_dir, get_data_dir,
     get_db_path, get_path_info, ensure_storage_dirs, get_storage_status,
     get_available_displays, get_available_audio_sinks, get_available_audio_sources, get_bundled_binary_path,
     get_default_library_dir, get_default_data_dir, find_system_browser, get_system_drives
@@ -54,7 +54,9 @@ from database import (
     get_filler_track_by_video_id, update_filler_track_status,
     update_filler_track_metadata, delete_filler_track,
     record_filler_play, get_next_vibe_filler_track, checkout_singer,
-    set_track_sing_along, import_local_track, import_local_filler_track
+    set_track_sing_along, import_local_track, import_local_filler_track,
+    set_singer_status, set_singer_status_by_token,
+    save_recording, get_recordings_for_singer, get_all_recordings, delete_recording
 )
 from search import tiered_search, query_youtube_music_videos
 from downloader import (
@@ -182,6 +184,11 @@ filler_current_track: Optional[Dict[str, Any]] = None
 filler_buffer_end: Optional[float] = None
 filler_transition_state: str = "idle"  # 'idle', 'buffer_15s', 'playing', 'fading_out', 'finishing'
 filler_buffer_task: Optional[asyncio.Task] = None
+
+# Stage Dynamic Marquee State
+active_marquee_message: Optional[str] = None
+marquee_expires_at: Optional[float] = None
+marquee_mode: str = "auto"  # "auto", "intermission_only", "off"
 last_karaoke_track: Optional[Dict[str, Any]] = None
 
 # Background download completion notifications
@@ -217,9 +224,9 @@ async def trigger_filler_sequence(last_artist: str = "", last_genre: str = "", l
     if not next_track:
         return
 
-    # If queue is empty, start downloaded music video immediately without text countdown
+    # If queue is empty or all pending singers are on break, start downloaded music video immediately without text countdown
     queue = get_queue()
-    pending = [q for q in queue if q["status"] == "pending"]
+    pending = [q for q in queue if q["status"] == "pending" and q.get("singer_status", "active") == "active"]
     if not pending or is_paused:
         filler_active = True
         filler_transition_state = "playing"
@@ -275,7 +282,7 @@ async def trigger_filler_sequence(last_artist: str = "", last_genre: str = "", l
 async def on_filler_track_ended():
     global filler_active, filler_transition_state, filler_current_track, current_intermission_end
     queue = get_queue()
-    pending = [q for q in queue if q["status"] == "pending"]
+    pending = [q for q in queue if q["status"] == "pending" and q.get("singer_status", "active") == "active"]
 
     if pending:
         filler_active = False
@@ -465,6 +472,15 @@ class QueueSongRequest(BaseModel):
     pitch_shift: int = 0
     force: bool = False
     is_sing_along: bool = False
+    dedication: str = ""
+
+class SingerStatusRequest(BaseModel):
+    status: str  # "active", "on_break", "checked_out"
+
+class MarqueeMessageRequest(BaseModel):
+    message: str
+    duration_minutes: Optional[int] = 0
+    mode: Optional[str] = "auto"
 
 class JoinDuetRequest(BaseModel):
     singer_token: str
@@ -1371,8 +1387,22 @@ async def api_singer_profile(token: str):
     return {
         "token": singer["token"],
         "name": singer["name"],
-        "avatar": singer["avatar"]
+        "avatar": singer["avatar"],
+        "status": singer.get("status", "active")
     }
+
+@app.post("/api/singer/{token}/status")
+async def api_singer_set_status(token: str, req: SingerStatusRequest):
+    updated = set_singer_status_by_token(token, req.status)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Singer profile not found")
+    await manager.broadcast({
+        "type": "singer_status_updated",
+        "singer_id": updated["id"],
+        "status": updated.get("status", "active"),
+        "queue": get_queue()
+    })
+    return {"status": "ok", "singer": updated}
 
 # Queue API
 @app.get("/api/queue")
@@ -1522,7 +1552,8 @@ async def api_enqueue_song(req: QueueSongRequest, request: Request):
         track_id=track_id,
         singer_id=singer["id"],
         duet_partner=req.duet_partner,
-        pitch_shift=req.pitch_shift
+        pitch_shift=req.pitch_shift,
+        dedication=getattr(req, "dedication", "")
     )
 
     if not is_host:
@@ -1664,7 +1695,8 @@ async def api_complete_queue_item(queue_id: int, request: Request):
         ))
 
     remaining = get_queue()
-    next_up = remaining[0] if remaining else None
+    active_pending = [q for q in remaining if q["status"] == "pending" and q.get("singer_status", "active") == "active"]
+    next_up = active_pending[0] if active_pending else None
 
     await manager.broadcast({
         "type": "queue_updated",
@@ -1706,7 +1738,8 @@ async def api_get_state():
     current = get_current_playing()
     queue = get_queue()
     pending = [q for q in queue if q["status"] == "pending"]
-    next_up = pending[0] if pending else None
+    active_pending = [q for q in pending if q.get("singer_status", "active") == "active"]
+    next_up = active_pending[0] if active_pending else None
     stage_displays = manager.get_stage_displays()
     
     intermission_remaining = 0
@@ -1715,7 +1748,7 @@ async def api_get_state():
     elif not current and next_up:
         intermission_remaining = int(get_setting("intermission_seconds", str(DEFAULT_INTERMISSION_SECONDS)))
 
-    # Prefer downloaded BGM videos when stage is idle and queue is empty
+    # Prefer downloaded BGM videos when stage is idle and active queue is empty
     global filler_active, filler_transition_state, filler_current_track, filler_buffer_end
     if not current and not next_up:
         if get_setting("bgm_video_enabled", "true") == "true" and not filler_active:
@@ -1727,10 +1760,36 @@ async def api_get_state():
                 filler_buffer_end = None
                 record_filler_play(pick["id"])
 
+    # Check marquee message expiry
+    global active_marquee_message, marquee_expires_at, marquee_mode
+    if marquee_expires_at and time.time() > marquee_expires_at:
+        active_marquee_message = None
+        marquee_expires_at = None
+
+    queue_summary = []
+    if current:
+        queue_summary.append(f"NOW: {current.get('singer_name', 'Singer')} - {current.get('title', 'Song')}")
+    if next_up:
+        queue_summary.append(f"UP NEXT: {next_up.get('singer_name', 'Singer')} - {next_up.get('title', 'Song')}")
+    if len(active_pending) > 1:
+        on_deck = active_pending[1]
+        queue_summary.append(f"ON DECK: {on_deck.get('singer_name', 'Singer')}")
+    if active_pending:
+        queue_summary.append(f"({len(active_pending)} in queue)")
+
+    queue_ticker_str = "  •  ".join(queue_summary) if queue_summary else "OPEN MIC: Scan QR to Sing!"
+
     return {
         "playing": current,
         "next": next_up,
         "queue": queue,
+        "marquee": {
+            "message": active_marquee_message,
+            "expires_at": marquee_expires_at,
+            "mode": marquee_mode,
+            "queue_ticker": queue_ticker_str,
+            "current_dedication": current.get("dedication", "") if current else ""
+        },
         "intermission_seconds": intermission_remaining,
         "has_stage_display": len(stage_displays) > 0,
         "waiting_for_display": False,
@@ -2404,6 +2463,38 @@ async def api_launch_importer(request: Request):
         "cmd": cmd[0]
     }
 
+@app.post("/api/host/launch-cdg-ripper")
+async def api_launch_cdg_ripper(request: Request):
+    if not (is_host_request(request) or is_local_request(request)):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
+
+    found = find_importer_executable()
+    if not found:
+        raise HTTPException(
+            status_code=404,
+            detail="Tiki Karaoke Ripper/Importer executable not found."
+        )
+
+    cmd_base, work_dir = found
+    tracks_dir = str(get_tracks_dir().resolve()) if hasattr(get_tracks_dir(), "resolve") else str(get_tracks_dir())
+
+    cmd = list(cmd_base) + ["--cdg-ripper", "--folder", tracks_dir]
+
+    try:
+        if sys.platform == "win32":
+            flags = 0x00000008 | subprocess.CREATE_NEW_PROCESS_GROUP
+            subprocess.Popen(cmd, cwd=str(work_dir) if work_dir else None, creationflags=flags)
+        else:
+            subprocess.Popen(cmd, cwd=str(work_dir) if work_dir else None, start_new_session=True)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to launch CD+G Ripper: {e}")
+
+    return {
+        "status": "ok",
+        "message": "CD+G Optical Disc Ripper launched successfully on desktop",
+        "cmd": cmd[0]
+    }
+
 @app.post("/api/host/filler/import-from-song/{track_id}")
 async def api_import_filler_from_song(track_id: int, request: Request):
     if not is_host_request(request):
@@ -2600,6 +2691,206 @@ async def host_remove_all_singer_songs(singer_id: int, request: Request):
         "queue": queue
     })
     return {"status": "ok", "deleted_count": deleted_count, "checked_out": checkout}
+
+@app.post("/api/host/singer/{singer_id}/status")
+async def host_set_singer_status(singer_id: int, req: SingerStatusRequest, request: Request):
+    if not (is_host_request(request) or is_local_request(request)):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
+    set_singer_status(singer_id, req.status)
+    queue = get_queue()
+    await manager.broadcast({
+        "type": "singer_status_updated",
+        "singer_id": singer_id,
+        "status": req.status,
+        "queue": queue
+    })
+    await manager.broadcast({
+        "type": "singers_updated",
+        "singers": get_singers_with_queue()
+    })
+    return {"status": "ok", "singer_id": singer_id, "status": req.status}
+
+# ------------------------------------------------------------------------------
+# Stage Dynamic Marquee Endpoints
+# ------------------------------------------------------------------------------
+
+@app.post("/api/host/marquee")
+async def api_set_marquee(req: MarqueeMessageRequest, request: Request):
+    if not (is_host_request(request) or is_local_request(request)):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
+    global active_marquee_message, marquee_expires_at, marquee_mode
+    active_marquee_message = req.message.strip() if req.message else None
+    if req.duration_minutes and req.duration_minutes > 0:
+        marquee_expires_at = time.time() + (req.duration_minutes * 60)
+    else:
+        marquee_expires_at = None
+    if req.mode:
+        marquee_mode = req.mode
+
+    await manager.broadcast({
+        "type": "marquee_updated",
+        "message": active_marquee_message,
+        "mode": marquee_mode,
+        "expires_at": marquee_expires_at
+    })
+    return {
+        "status": "ok",
+        "message": active_marquee_message,
+        "mode": marquee_mode,
+        "expires_at": marquee_expires_at
+    }
+
+@app.delete("/api/host/marquee")
+async def api_clear_marquee(request: Request):
+    if not (is_host_request(request) or is_local_request(request)):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
+    global active_marquee_message, marquee_expires_at
+    active_marquee_message = None
+    marquee_expires_at = None
+    await manager.broadcast({
+        "type": "marquee_updated",
+        "message": None,
+        "mode": marquee_mode,
+        "expires_at": None
+    })
+    return {"status": "ok", "cleared": True}
+
+# ------------------------------------------------------------------------------
+# Live Singer Performance Recording Endpoints
+# ------------------------------------------------------------------------------
+
+@app.post("/api/recordings/upload")
+async def api_upload_recording(
+    file: UploadFile = File(...),
+    queue_id: Optional[int] = Form(None),
+    singer_id: int = Form(...),
+    track_id: int = Form(...),
+    duration: float = Form(0.0),
+    request: Request = None
+):
+    recordings_dir = get_recordings_dir()
+    date_str = datetime.datetime.now().strftime("%Y-%m-%d")
+    out_dir = recordings_dir / date_str
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    track = get_track_by_id(track_id)
+    conn = get_db()
+    s_row = conn.execute("SELECT name, token FROM singers WHERE id = ?", (singer_id,)).fetchone()
+    conn.close()
+    singer_name = s_row["name"] if s_row else "Singer"
+    singer_token = s_row["token"] if s_row else ""
+    track_title = track["title"] if track else "Song"
+    track_artist = track["artist"] if track else "Artist"
+
+    clean_s = re.sub(r'[^\w\-_\. ]', '_', singer_name).strip()
+    clean_t = re.sub(r'[^\w\-_\. ]', '_', track_title).strip()
+    timestamp = int(time.time())
+    base_name = f"{clean_s} - {clean_t}_{timestamp}"
+
+    raw_path = out_dir / f"{base_name}_raw.webm"
+    mp3_path = out_dir / f"{base_name}.mp3"
+
+    with open(raw_path, "wb") as f:
+        shutil.copyfileobj(file.file, f)
+
+    final_path = mp3_path
+    ffmpeg_bin = shutil.which("ffmpeg") or str(get_bundled_binary_path("ffmpeg"))
+    if ffmpeg_bin and Path(ffmpeg_bin).exists():
+        cmd = [
+            ffmpeg_bin, "-y", "-i", str(raw_path),
+            "-vn", "-c:a", "libmp3lame", "-b:a", "192k",
+            "-id3v2_version", "3",
+            "-metadata", f"title={track_title}",
+            "-metadata", f"artist={singer_name}",
+            "-metadata", f"album={BAR_NAME}",
+            str(mp3_path)
+        ]
+        try:
+            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+            if raw_path.exists():
+                raw_path.unlink()
+        except Exception:
+            final_path = raw_path
+    else:
+        final_path = raw_path
+
+    file_size = final_path.stat().st_size if final_path.exists() else 0
+    filename = final_path.name
+
+    rec_id = save_recording(
+        queue_id=queue_id,
+        singer_id=singer_id,
+        track_id=track_id,
+        filename=filename,
+        file_path=str(final_path),
+        file_size=file_size,
+        duration_seconds=duration
+    )
+
+    # Broadcast notification to singer's smartphone
+    await manager.broadcast({
+        "type": "recording_ready",
+        "recording_id": rec_id,
+        "singer_token": singer_token,
+        "singer_id": singer_id,
+        "song_title": track_title,
+        "song_artist": track_artist,
+        "download_url": f"/api/recordings/{rec_id}/download",
+        "stream_url": f"/api/recordings/{rec_id}/stream"
+    })
+
+    return {
+        "status": "ok",
+        "recording_id": rec_id,
+        "filename": filename,
+        "download_url": f"/api/recordings/{rec_id}/download"
+    }
+
+@app.get("/api/recordings/{recording_id}/stream")
+async def api_stream_recording(recording_id: int):
+    conn = get_db()
+    row = conn.execute("SELECT file_path, filename FROM recordings WHERE id = ?", (recording_id,)).fetchone()
+    conn.close()
+    if not row or not Path(row["file_path"]).exists():
+        raise HTTPException(status_code=404, detail="Recording file not found")
+    media_type = "audio/mpeg" if row["filename"].endswith(".mp3") else "audio/webm"
+    return FileResponse(row["file_path"], media_type=media_type)
+
+@app.get("/api/recordings/{recording_id}/download")
+async def api_download_recording(recording_id: int):
+    conn = get_db()
+    row = conn.execute("SELECT file_path, filename FROM recordings WHERE id = ?", (recording_id,)).fetchone()
+    conn.close()
+    if not row or not Path(row["file_path"]).exists():
+        raise HTTPException(status_code=404, detail="Recording file not found")
+    return FileResponse(row["file_path"], filename=row["filename"], media_type="application/octet-stream")
+
+@app.get("/api/singer/{token}/recordings")
+async def api_get_singer_recordings(token: str):
+    singer = get_singer_by_token(token)
+    if not singer:
+        return []
+    return get_recordings_for_singer(singer["id"])
+
+@app.get("/api/host/recordings")
+async def api_get_host_recordings(request: Request):
+    if not (is_host_request(request) or is_local_request(request)):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
+    return get_all_recordings()
+
+@app.delete("/api/host/recordings/{recording_id}")
+async def api_delete_recording(recording_id: int, request: Request):
+    if not (is_host_request(request) or is_local_request(request)):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
+    file_path = delete_recording(recording_id)
+    if file_path:
+        p = Path(file_path)
+        if p.exists():
+            try:
+                p.unlink()
+            except Exception:
+                pass
+    return {"status": "ok", "deleted": recording_id}
 
 @app.post("/api/singer/leave")
 async def api_singer_leave(request: Request):

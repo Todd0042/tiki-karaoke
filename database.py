@@ -181,6 +181,34 @@ def init_db():
         if "media_source" not in cols_filler:
             conn.execute("ALTER TABLE filler_tracks ADD COLUMN media_source TEXT DEFAULT 'youtube'")
 
+        # Ensure status and status_updated_at exist on singers
+        cols_singers = [r["name"] for r in conn.execute("PRAGMA table_info(singers)").fetchall()]
+        if "status" not in cols_singers:
+            conn.execute("ALTER TABLE singers ADD COLUMN status TEXT DEFAULT 'active'")
+        if "status_updated_at" not in cols_singers:
+            conn.execute("ALTER TABLE singers ADD COLUMN status_updated_at TIMESTAMP")
+
+        # Ensure dedication exists on queue
+        cols_queue = [r["name"] for r in conn.execute("PRAGMA table_info(queue)").fetchall()]
+        if "dedication" not in cols_queue:
+            conn.execute("ALTER TABLE queue ADD COLUMN dedication TEXT DEFAULT ''")
+
+        # Ensure recordings table exists for live singer audio captures
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS recordings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                queue_id INTEGER,
+                singer_id INTEGER NOT NULL REFERENCES singers(id),
+                track_id INTEGER NOT NULL REFERENCES tracks(id),
+                filename TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                file_size INTEGER DEFAULT 0,
+                duration_seconds REAL DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_recordings_singer ON recordings(singer_id, created_at)")
+
         # Auto-migration for media_source tagging:
         # Imported BYOM files have video_id LIKE 'local_%'; all others are assumed YouTube
         conn.execute("""
@@ -419,6 +447,35 @@ def get_singer_by_token(token: str) -> Optional[Dict[str, Any]]:
     conn.close()
     return dict(row) if row else None
 
+def set_singer_status(singer_id: int, status: str) -> bool:
+    """Sets a singer's status ('active', 'on_break', 'checked_out') and rebalances queue."""
+    clean_status = status.strip().lower()
+    if clean_status not in ("active", "on_break", "checked_out"):
+        clean_status = "active"
+    conn = get_db()
+    with conn:
+        conn.execute("""
+            UPDATE singers 
+            SET status = ?, status_updated_at = CURRENT_TIMESTAMP 
+            WHERE id = ?
+        """, (clean_status, singer_id))
+        rebalance_queue_round_robin(conn)
+    conn.close()
+    return True
+
+def set_singer_status_by_token(token: str, status: str) -> Optional[Dict[str, Any]]:
+    """Sets a singer's status using their secret token (for singer self-pause)."""
+    conn = get_db()
+    cursor = conn.execute("SELECT id FROM singers WHERE token = ?", (token,))
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        return None
+    singer_id = row["id"]
+    conn.close()
+    set_singer_status(singer_id, status)
+    return get_singer_by_token(token)
+
 def get_singers_with_queue() -> List[Dict[str, Any]]:
     """Returns all singers with their queued songs for host roster management."""
     conn = get_db()
@@ -427,6 +484,7 @@ def get_singers_with_queue() -> List[Dict[str, Any]]:
             s.id as singer_id,
             s.name as singer_name,
             s.avatar as singer_avatar,
+            coalesce(s.status, 'active') as singer_status,
             s.last_seen,
             COUNT(CASE WHEN q.status = 'pending' THEN 1 END) as pending_count,
             COUNT(CASE WHEN q.status = 'playing' THEN 1 END) as playing_count
@@ -446,6 +504,7 @@ def get_singers_with_queue() -> List[Dict[str, Any]]:
                 q.status,
                 q.pitch_shift,
                 q.duet_partner,
+                coalesce(q.dedication, '') as dedication,
                 q.sort_order,
                 t.id as track_id,
                 t.title,
@@ -688,6 +747,10 @@ def rebalance_queue_round_robin(conn=None):
             } for r in stats_rows
         }
 
+        # 2b. Get singer statuses (active vs on_break)
+        cursor = conn.execute("SELECT id, coalesce(status, 'active') as status FROM singers")
+        singer_statuses = {r["id"]: r["status"] for r in cursor.fetchall()}
+
         # 3. Get all pending tracks ordered by created_at ASC, id ASC
         cursor = conn.execute("""
             SELECT id, singer_id, created_at
@@ -707,6 +770,9 @@ def rebalance_queue_round_robin(conn=None):
             count = singer_pending_counts.get(s_id, 0) + 1
             singer_pending_counts[s_id] = count
 
+            s_status = singer_statuses.get(s_id, "active")
+            is_on_break = 1 if s_status == "on_break" else 0
+
             # If this singer is currently playing on stage, their turn in Round 1 is live,
             # so their 1st pending song belongs in Round 2.
             # Otherwise, their 1st pending song belongs in Round 1.
@@ -720,6 +786,7 @@ def rebalance_queue_round_robin(conn=None):
             annotated.append({
                 "id": r["id"],
                 "singer_id": s_id,
+                "is_on_break": is_on_break,
                 "effective_round": effective_round,
                 "completed_count": completed_count,
                 "last_played": last_played,
@@ -727,12 +794,14 @@ def rebalance_queue_round_robin(conn=None):
             })
 
         # Sort key:
-        # (1) effective_round ASC (Round 1 songs before Round 2)
-        # (2) completed_count ASC (Singers with fewer completed songs go first in their round)
-        # (3) last_played ASC ("" sorts first for singers who haven't sung yet tonight)
-        # (4) created_at ASC (Earlier queue time)
-        # (5) id ASC
+        # (1) is_on_break ASC (Active singers play before singers on break)
+        # (2) effective_round ASC (Round 1 songs before Round 2)
+        # (3) completed_count ASC (Singers with fewer completed songs go first in their round)
+        # (4) last_played ASC ("" sorts first for singers who haven't sung yet tonight)
+        # (5) created_at ASC (Earlier queue time)
+        # (6) id ASC
         annotated.sort(key=lambda x: (
+            x["is_on_break"],
             x["effective_round"],
             x["completed_count"],
             x["last_played"],
@@ -750,13 +819,13 @@ def rebalance_queue_round_robin(conn=None):
         if close_conn:
             conn.close()
 
-def enqueue_song(track_id: int, singer_id: int, duet_partner: str = "", pitch_shift: int = 0) -> int:
+def enqueue_song(track_id: int, singer_id: int, duet_partner: str = "", pitch_shift: int = 0, dedication: str = "") -> int:
     conn = get_db()
     with conn:
         cursor = conn.execute("""
-            INSERT INTO queue (track_id, singer_id, duet_partner, pitch_shift, sort_order)
-            VALUES (?, ?, ?, ?, 999999.0)
-        """, (track_id, singer_id, duet_partner, pitch_shift))
+            INSERT INTO queue (track_id, singer_id, duet_partner, pitch_shift, dedication, sort_order)
+            VALUES (?, ?, ?, ?, ?, 999999.0)
+        """, (track_id, singer_id, duet_partner, pitch_shift, (dedication or "").strip()[:60]))
         queue_id = cursor.lastrowid
 
         # Record in singer songbook log for personal queue tracking across sessions
@@ -799,6 +868,7 @@ def get_queue() -> List[Dict[str, Any]]:
             q.status,
             q.pitch_shift,
             q.duet_partner,
+            coalesce(q.dedication, '') as dedication,
             q.sort_order,
             q.created_at,
             t.id as track_id,
@@ -815,7 +885,8 @@ def get_queue() -> List[Dict[str, Any]]:
             coalesce(t.cdg_path, '') as cdg_path,
             s.id as singer_id,
             s.name as singer_name,
-            s.avatar as singer_avatar
+            s.avatar as singer_avatar,
+            coalesce(s.status, 'active') as singer_status
         FROM queue q
         JOIN tracks t ON q.track_id = t.id
         JOIN singers s ON q.singer_id = s.id
@@ -843,6 +914,7 @@ def get_current_playing() -> Optional[Dict[str, Any]]:
             q.id as queue_id,
             q.pitch_shift,
             q.duet_partner,
+            coalesce(q.dedication, '') as dedication,
             q.played_at,
             t.id as track_id,
             t.video_id,
@@ -854,8 +926,10 @@ def get_current_playing() -> Optional[Dict[str, Any]]:
             coalesce(t.is_sing_along, 0) as is_sing_along,
             coalesce(t.media_type, 'video') as media_type,
             coalesce(t.cdg_path, '') as cdg_path,
+            s.id as singer_id,
             s.name as singer_name,
-            s.avatar as singer_avatar
+            s.avatar as singer_avatar,
+            coalesce(s.status, 'active') as singer_status
         FROM queue q
         JOIN tracks t ON q.track_id = t.id
         JOIN singers s ON q.singer_id = s.id
@@ -1788,6 +1862,101 @@ def get_next_vibe_filler_track(
     chosen = dict(sorted_candidates[0])
     chosen["stream_url"] = f"/stream/{chosen['id']}" if chosen["is_sing_along"] else f"/stream/filler/{chosen['id']}"
     return chosen
+
+
+# ==============================================================================
+# Live Singer Performance Recording Operations
+# ==============================================================================
+
+def save_recording(
+    queue_id: Optional[int],
+    singer_id: int,
+    track_id: int,
+    filename: str,
+    file_path: str,
+    file_size: int = 0,
+    duration_seconds: float = 0.0
+) -> int:
+    """Records a live singer audio performance into the database."""
+    conn = get_db()
+    with conn:
+        cursor = conn.execute("""
+            INSERT INTO recordings (queue_id, singer_id, track_id, filename, file_path, file_size, duration_seconds)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (queue_id, singer_id, track_id, filename, file_path, file_size, duration_seconds))
+        rec_id = cursor.lastrowid
+    conn.close()
+    return rec_id
+
+def get_recordings_for_singer(singer_id: int) -> List[Dict[str, Any]]:
+    """Returns all performance recordings for a specific singer."""
+    conn = get_db()
+    cursor = conn.execute("""
+        SELECT 
+            r.id,
+            r.queue_id,
+            r.singer_id,
+            r.track_id,
+            r.filename,
+            r.file_path,
+            r.file_size,
+            r.duration_seconds,
+            r.created_at,
+            t.title,
+            t.artist,
+            t.title as song_title,
+            t.artist as song_artist
+        FROM recordings r
+        JOIN tracks t ON r.track_id = t.id
+        WHERE r.singer_id = ?
+        ORDER BY r.created_at DESC
+    """, (singer_id,))
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+def get_all_recordings(limit: int = 100) -> List[Dict[str, Any]]:
+    """Returns all live show performance recordings."""
+    conn = get_db()
+    cursor = conn.execute("""
+        SELECT 
+            r.id,
+            r.queue_id,
+            r.singer_id,
+            r.track_id,
+            r.filename,
+            r.file_path,
+            r.file_size,
+            r.duration_seconds,
+            r.created_at,
+            s.name as singer_name,
+            s.avatar as singer_avatar,
+            t.title,
+            t.artist,
+            t.title as song_title,
+            t.artist as song_artist
+        FROM recordings r
+        JOIN singers s ON r.singer_id = s.id
+        JOIN tracks t ON r.track_id = t.id
+        ORDER BY r.created_at DESC
+        LIMIT ?
+    """, (limit,))
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+def delete_recording(recording_id: int) -> Optional[str]:
+    """Deletes a recording record and returns its physical file path for unlinking."""
+    conn = get_db()
+    cursor = conn.execute("SELECT file_path FROM recordings WHERE id = ?", (recording_id,))
+    row = cursor.fetchone()
+    path = row["file_path"] if row else None
+    if row:
+        with conn:
+            conn.execute("DELETE FROM recordings WHERE id = ?", (recording_id,))
+    conn.close()
+    return path
+
 
 
 

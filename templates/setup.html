@@ -328,9 +328,14 @@
                             Launch the Smart Importer to sanitize messy YouTube filenames, autocorrect release years, or migrate your CompuHost <code>SongList.tps</code> library directly.
                         </div>
                     </div>
-                    <button type="button" id="btnSetupLaunchImporter" class="btn-ghost" style="padding: 10px 18px; font-weight: 700; font-size: 0.88rem; border-color: var(--neon-gold); color: var(--neon-gold); background: rgba(255, 183, 3, 0.08); border-radius: 10px; white-space: nowrap; cursor: pointer;" onclick="launchSetupSmartImporter()">
-                        🚀 Launch Smart Importer...
-                    </button>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                        <button type="button" id="btnSetupLaunchImporter" class="btn-ghost" style="padding: 10px 18px; font-weight: 700; font-size: 0.88rem; border-color: var(--neon-gold); color: var(--neon-gold); background: rgba(255, 183, 3, 0.08); border-radius: 10px; white-space: nowrap; cursor: pointer;" onclick="launchSetupSmartImporter()">
+                            🚀 Launch Smart Importer...
+                        </button>
+                        <button type="button" id="btnSetupLaunchCdg" class="btn-ghost" style="padding: 10px 18px; font-weight: 700; font-size: 0.88rem; border-color: var(--neon-cyan); color: var(--neon-cyan); background: rgba(0, 240, 255, 0.08); border-radius: 10px; white-space: nowrap; cursor: pointer;" onclick="launchSetupCdgRipper()">
+                            📀 Rip CD+G Discs...
+                        </button>
+                    </div>
                 </div>
 
                 <div class="field-group" style="margin-top: 16px;">
@@ -1273,6 +1278,30 @@
                 if (btn) {
                     btn.disabled = false;
                     btn.innerText = "🚀 Launch Smart Importer...";
+                }
+            }
+        }
+
+        async function launchSetupCdgRipper() {
+            const btn = document.getElementById("btnSetupLaunchCdg");
+            if (btn) {
+                btn.disabled = true;
+                btn.innerText = "⏳ Launching...";
+            }
+            try {
+                const res = await fetch("/api/host/launch-cdg-ripper", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" }
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.detail || data.message || "Failed to launch CD+G Ripper");
+                alert("✅ CD+G Optical Disc Ripper window has opened on your desktop!");
+            } catch (err) {
+                alert("⚠️ " + err.message);
+            } finally {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.innerText = "📀 Rip CD+G Discs...";
                 }
             }
         }

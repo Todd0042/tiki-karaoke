@@ -261,6 +261,9 @@
                 <button onclick="loadLiveQueue()" class="btn-ghost" style="padding: 4px 10px; font-size: 0.8rem;">↻ Refresh</button>
             </div>
 
+            <!-- Singer Self Status Banner (Active vs Break) -->
+            <div id="singerSelfStatusBanner"></div>
+
             <!-- Crowd Reaction Bar -->
             <div class="tiki-card" style="padding: 12px; margin-bottom: 16px; text-align: center;">
                 <div style="font-size: 0.75rem; color: var(--neon-gold); font-weight: 700; margin-bottom: 8px;">CROWD HYPE (TAP TO CHEER ON MAIN TV STAGE!)</div>
@@ -307,6 +310,18 @@
             <!-- Ranked Song List -->
             <div id="songbookList"></div>
             <div id="historyList" style="display: none;"></div>
+
+            <!-- Personal Live Performance Recordings Souvenirs -->
+            <div style="margin-top: 24px; padding-top: 18px; border-top: 1px solid rgba(0, 240, 255, 0.2);">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                    <div>
+                        <h2 class="font-tiki neon-gold" style="font-size: 1.2rem; margin: 0 0 4px 0;">🎙️ My Live Recordings</h2>
+                        <div style="font-size: 0.78rem; color: var(--text-muted);">Souvenir audio of your performances with mics & music summed!</div>
+                    </div>
+                    <button onclick="loadSingerRecordings()" class="btn-ghost" style="padding: 4px 10px; font-size: 0.78rem;">↻ Refresh</button>
+                </div>
+                <div id="singerRecordingsList"></div>
+            </div>
         </section>
 
         <!-- TAB 4: Host DJ Controls (Protected) -->
@@ -573,8 +588,35 @@
                             <button type="button" id="btnLaunchImporter" onclick="launchSmartImporter()" class="btn-ghost" style="width: 100%; padding: 12px; font-weight: 700; font-size: 0.88rem; border-color: var(--neon-cyan); color: var(--neon-cyan); background: rgba(0, 240, 255, 0.1); border-radius: 8px; cursor: pointer;">
                                 🚀 Launch Smart Media Importer
                             </button>
+                            <button type="button" id="btnLaunchCdgRipper" onclick="launchCdgRipper()" class="btn-ghost" style="width: 100%; margin-top: 6px; padding: 10px; font-weight: 700; font-size: 0.85rem; border-color: var(--neon-gold); color: var(--neon-gold); background: rgba(255, 183, 3, 0.08); border-radius: 8px; cursor: pointer;">
+                                📀 Launch CD+G Optical Disc Ripper
+                            </button>
                             <div id="importerLaunchStatus" style="display: none; margin-top: 8px; font-size: 0.75rem; text-align: center; color: var(--neon-lime);">
                             </div>
+                        </div>
+
+                        <!-- Stage Marquee Broadcast Card -->
+                        <div style="margin-top: 14px; padding: 12px; border-radius: 8px; background: rgba(255, 183, 3, 0.08); border: 1px solid rgba(255, 183, 3, 0.35);">
+                            <div style="font-size: 0.85rem; color: var(--neon-gold); font-weight: 700; margin-bottom: 6px;">
+                                📢 Stage Marquee Broadcast (Crawling Text)
+                            </div>
+                            <div style="font-size: 0.74rem; color: #cbd5e1; margin-bottom: 8px;">
+                                Broadcast announcements, happy birthdays, drink specials, or food alerts directly onto the TV stage marquee.
+                            </div>
+                            <input type="text" id="hostMarqueeInput" placeholder="e.g. 🎂 Happy 40th Birthday Sarah! 🍹 Drinks at the bar!" 
+                                   style="width: 100%; box-sizing: border-box; padding: 8px 10px; border-radius: 6px; background: rgba(0,0,0,0.5); border: 1px solid rgba(255,183,3,0.3); color: #fff; font-size: 0.85rem; margin-bottom: 8px;">
+                            <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+                                <button type="button" onclick="submitHostMarquee(10)" class="btn-ghost" style="flex: 1; min-width: 90px; padding: 6px 8px; font-size: 0.75rem; border-color: var(--neon-gold); color: var(--neon-gold); border-radius: 6px;">
+                                    Broadcast (10m)
+                                </button>
+                                <button type="button" onclick="submitHostMarquee(0)" class="btn-ghost" style="flex: 1; min-width: 90px; padding: 6px 8px; font-size: 0.75rem; border-color: var(--neon-cyan); color: var(--neon-cyan); border-radius: 6px;">
+                                    All Night
+                                </button>
+                                <button type="button" onclick="clearHostMarquee()" class="btn-ghost" style="padding: 6px 10px; font-size: 0.75rem; border-color: #ff5555; color: #ff5555; border-radius: 6px;">
+                                    Clear
+                                </button>
+                            </div>
+                            <div id="marqueeBroadcastFeedback" style="display: none; margin-top: 6px; font-size: 0.72rem; color: var(--neon-lime); text-align: center;"></div>
                         </div>
 
                         <!-- Curated Local Library Only Mode -->
@@ -960,6 +1002,15 @@
                 </label>
                 <input type="text" id="duetInput" placeholder="Friend's Name" 
                        style="width: 100%; padding: 10px 14px; border-radius: 10px; background: rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.2); color: #fff;">
+            </div>
+
+            <!-- Dedication / Shoutout -->
+            <div style="margin-bottom: 16px;">
+                <label style="font-size: 0.85rem; color: var(--neon-gold); display: block; margin-bottom: 6px; font-weight: 600;">
+                    💌 Dedication / Shoutout (Optional, scrolls on stage TV):
+                </label>
+                <input type="text" id="dedicationInput" maxlength="60" placeholder="e.g. For Jenny's 30th birthday! 🌺" 
+                       style="width: 100%; padding: 10px 14px; border-radius: 10px; background: rgba(0,0,0,0.5); border: 1px solid rgba(255,183,3,0.35); color: #fff;">
             </div>
 
             <!-- Under all of that: Duplicate / Singer Advisory Section -->

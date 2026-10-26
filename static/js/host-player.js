@@ -258,6 +258,9 @@ function handleSocketMessage(data) {
         case "singer_joined":
             spawnSingerJoinedPill(data.name, data.avatar);
             break;
+        case "marquee_updated":
+            handleMarqueeUpdate(data);
+            break;
         case "queue_updated":
             updateNextTicker(data.queue);
             break;
@@ -445,6 +448,12 @@ function startTrackPlayback(track) {
     if (audioDSP) audioDSP.setBetweenSongs(false);
     onDeckAlertFiredForQueueId = null;
 
+    // Start live performance audio recording for this singer
+    if (audioDSP && track.singer_id) {
+        audioDSP.startPerformanceRecording(track.queue_id, track.singer_id, track.track_id);
+    }
+    renderStageMarquee();
+
     document.getElementById("nowPlayingBar").style.display = "flex";
     const joinQR = document.getElementById("joinQROverlay");
     if (joinQR) joinQR.style.bottom = "105px";
@@ -536,16 +545,23 @@ function onPlaybackFailure(reason, failedTrack) {
 
 function onSongFinished() {
     stopCdgPlayback();
+    if (audioDSP && audioDSP.mediaRecorder && audioDSP.mediaRecorder.state !== "inactive") {
+        audioDSP.stopAndUploadPerformanceRecording();
+    }
     if (!currentTrack) return;
     if (isSpectatorViewer) return;
     fetch(`/api/queue/${currentTrack.queue_id}/complete`, { method: "POST" });
     currentTrack = null;
     fadeInBGM();
     fetchNextTrackForIntermission();
+    renderStageMarquee();
 }
 
 function skipCurrentTrack() {
     stopCdgPlayback();
+    if (audioDSP && audioDSP.mediaRecorder && audioDSP.mediaRecorder.state !== "inactive") {
+        audioDSP.stopAndUploadPerformanceRecording();
+    }
     const localVideo = document.getElementById("localVideo");
     if (localVideo) {
         localVideo.pause();
@@ -563,6 +579,7 @@ function skipCurrentTrack() {
     stopFillerPlayback();
     currentTrack = null;
     fadeInBGM();
+    renderStageMarquee();
 }
 
 function pausePlayback() {
@@ -675,12 +692,16 @@ function triggerIntermission(nextTrack, duration = 20) {
 
 function stopCurrentTrack(nextTrack) {
     stopCdgPlayback();
+    if (audioDSP && audioDSP.mediaRecorder && audioDSP.mediaRecorder.state !== "inactive") {
+        audioDSP.stopAndUploadPerformanceRecording();
+    }
     isIntermission = true;
     if (audioDSP) audioDSP.setBetweenSongs(true);
     currentTrack = null;
     stopFillerPlayback();
     clearInterval(intermissionTimer);
     intermissionTimer = null;
+    renderStageMarquee();
 
     const overlay = document.getElementById("intermissionOverlay");
     if (overlay) overlay.style.display = "flex";
@@ -1123,6 +1144,10 @@ function fetchCurrentState(forceResync = false) {
                 }
             }
             if (data.queue) updateNextTicker(data.queue);
+            if (data.marquee) {
+                currentMarqueeState = data.marquee;
+                renderStageMarquee();
+            }
         })
         .catch(err => {
             console.warn("[Stage Sync] Notice: state poll error:", err);
@@ -1614,6 +1639,72 @@ function stopFillerPlayback() {
         fillerVideo.removeAttribute("src");
         fillerVideo.volume = 1.0;
     }
+}
+
+// -------------------------------------------------------------
+// Dynamic Stage Marquee & Announcements Engine
+// -------------------------------------------------------------
+let currentMarqueeState = null;
+
+function handleMarqueeUpdate(data) {
+    currentMarqueeState = data;
+    renderStageMarquee();
+}
+
+function renderStageMarquee() {
+    const tickerBar = document.getElementById("fillerTickerBar");
+    const tickerText = document.getElementById("fillerTickerText");
+    if (!tickerBar || !tickerText) return;
+
+    const m = currentMarqueeState;
+    if (m && m.mode === "off") {
+        if (!fillerActive) tickerBar.style.display = "none";
+        return;
+    }
+
+    let textToShow = "";
+    if (m && m.message) {
+        textToShow = `📢 <strong>HOST ANNOUNCEMENT:</strong> ${escapeHtml(m.message)} • 🌺 `;
+    } else if (currentTrack && currentTrack.dedication) {
+        textToShow = `💌 <strong>DEDICATED TO:</strong> ${escapeHtml(currentTrack.dedication)} • 🎤 ${escapeHtml(currentTrack.singer_name)} singing "${escapeHtml(currentTrack.title)}" • 🌺 `;
+    } else if (m && m.queue_ticker) {
+        textToShow = `🌴 ${escapeHtml(m.queue_ticker)} • 🌺 OPEN MIC: Scan QR to Sing! • `;
+    } else if (fillerActive && currentFillerTrack) {
+        textToShow = currentFillerTrack.is_sing_along 
+            ? `🎤 SING-ALONG INTERMISSION: ${escapeHtml(currentFillerTrack.artist)} - ${escapeHtml(currentFillerTrack.title)} • 🌺 Sing along with the stage or scan to queue next!`
+            : `🌴 DJ LOUNGE MUSIC: ${escapeHtml(currentFillerTrack.artist)} - ${escapeHtml(currentFillerTrack.title)} • 🌺 OPEN MIC: Scan the QR code to queue your favorite song!`;
+    }
+
+    if (!textToShow) {
+        if (!fillerActive) tickerBar.style.display = "none";
+        return;
+    }
+
+    const isIntermission = document.getElementById("intermissionOverlay") && document.getElementById("intermissionOverlay").style.display !== "none";
+    const isSinging = currentTrack && document.getElementById("nowPlayingBar") && document.getElementById("nowPlayingBar").style.display !== "none";
+    
+    let shouldShow = false;
+    if (m && m.mode === "always") {
+        shouldShow = true;
+    } else if (m && m.message) {
+        shouldShow = true;
+    } else if (isSinging && currentTrack && currentTrack.dedication) {
+        shouldShow = true;
+    } else if (isIntermission || fillerActive) {
+        shouldShow = true;
+    }
+
+    if (!shouldShow) {
+        tickerBar.style.display = "none";
+        return;
+    }
+
+    tickerBar.style.display = "flex";
+    tickerBar.style.background = isSinging ? "rgba(8, 14, 24, 0.85)" : "rgba(8, 14, 24, 0.95)";
+    tickerText.innerHTML = textToShow;
+    tickerText.style.animation = "none";
+    tickerText.offsetHeight; // trigger reflow to restart smoothly from off-screen right
+    tickerText.style.animation = "tickerMarquee 25s linear infinite";
 }
 
 // -------------------------------------------------------------

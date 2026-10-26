@@ -459,9 +459,72 @@ function updateSingerHeader() {
     const badge = document.getElementById("headerSingerBadge");
     if (!badge) return;
     if (currentSinger && currentSinger.name && currentSinger.name !== "undefined") {
-        badge.innerText = `${currentSinger.avatar || '🌺'} ${currentSinger.name}`;
+        const isOnBreak = currentSinger.status === "on_break";
+        badge.innerHTML = `${currentSinger.avatar || '🌺'} ${escapeHtml(currentSinger.name)} ${isOnBreak ? '<span style="color:var(--neon-gold); font-size:0.75rem; margin-left: 4px;">(Paused ⏸️)</span>' : ''}`;
     } else {
         badge.innerText = "🌺 Tap to Set Nickname";
+    }
+    renderSingerStatusBanner();
+}
+
+function renderSingerStatusBanner() {
+    const banner = document.getElementById("singerSelfStatusBanner");
+    if (!banner) return;
+    if (!currentSinger || !currentSinger.token) {
+        banner.innerHTML = "";
+        return;
+    }
+    const isOnBreak = currentSinger.status === "on_break";
+    if (isOnBreak) {
+        banner.innerHTML = `
+            <div style="background: rgba(255, 183, 3, 0.12); border: 1px solid var(--neon-gold); border-radius: 12px; padding: 12px 14px; margin-bottom: 14px; display: flex; justify-content: space-between; align-items: center; gap: 10px; box-shadow: 0 0 15px rgba(255, 183, 3, 0.15);">
+                <div>
+                    <div style="font-weight: 700; font-size: 0.9rem; color: var(--neon-gold); display: flex; align-items: center; gap: 6px;">
+                        <span>⏸️</span> <span>Your Stage Turn is Paused</span>
+                    </div>
+                    <div style="font-size: 0.74rem; color: #cbd5e1; margin-top: 2px;">Your songs stay in queue without losing your spot. Stage will skip to active singers until you tap ready!</div>
+                </div>
+                <button onclick="toggleSingerSelfStatus('active')" class="btn-ghost" style="padding: 8px 14px; font-size: 0.82rem; font-weight: 700; background: rgba(57, 255, 20, 0.15); color: var(--neon-lime); border-color: var(--neon-lime); border-radius: 8px; white-space: nowrap; cursor: pointer;">
+                    🎤 I'm Ready!
+                </button>
+            </div>
+        `;
+    } else {
+        banner.innerHTML = `
+            <div style="display: flex; justify-content: flex-end; margin-bottom: 10px;">
+                <button onclick="toggleSingerSelfStatus('on_break')" class="btn-ghost" style="padding: 4px 10px; font-size: 0.75rem; border-color: rgba(255,183,3,0.4); color: var(--neon-gold); border-radius: 8px; display: inline-flex; align-items: center; gap: 5px; cursor: pointer;">
+                    <span>🍹</span> <span>Step Away (Pause My Turn)</span>
+                </button>
+            </div>
+        `;
+    }
+}
+
+async function toggleSingerSelfStatus(forcedStatus = null) {
+    if (!currentSinger || !currentSinger.token) {
+        showOnboardingModal();
+        return;
+    }
+    const currentStatus = currentSinger.status || "active";
+    const nextStatus = forcedStatus || (currentStatus === "active" ? "on_break" : "active");
+    try {
+        const res = await fetch(`/api/singer/${currentSinger.token}/status`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ status: nextStatus })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "Failed to update your status");
+        currentSinger.status = nextStatus;
+        updateSingerHeader();
+        loadLiveQueue();
+        if (nextStatus === "on_break") {
+            showToast("🍹 You're on break! Your turn in queue is paused until you're back.");
+        } else {
+            showToast("🎤 Welcome back! You are active in the rotation.");
+        }
+    } catch (e) {
+        showToast(`⚠️ ${e.message}`);
     }
 }
 
@@ -516,6 +579,21 @@ function initWebSocket() {
                 loadLiveQueue();
                 if (isHost) {
                     loadHostSingerRoster();
+                }
+            } else if (data.type === "singer_status_updated") {
+                if (currentSinger && (data.singer_id === currentSinger.id || data.token === currentSinger.token)) {
+                    currentSinger.status = data.status;
+                    updateSingerHeader();
+                }
+                if (isHost) {
+                    loadHostSingerRoster();
+                }
+                loadLiveQueue();
+            } else if (data.type === "recording_ready") {
+                showToast(`🎙️ Performance recording ready: "${data.track_title || 'Your Song'}"! Check My Songbook to stream or download MP3 souvenir!`);
+                const recList = document.getElementById("singerRecordingsList");
+                if (recList) {
+                    loadSingerRecordings();
                 }
             } else if (data.type === "displays_updated") {
                 if (isHost) {
@@ -971,6 +1049,8 @@ async function openQueueModal(trackId, title, artist, videoId, initialPitch = 0,
         selectPitch(selectedPitch);
     }
     document.getElementById("duetInput").value = "";
+    const dedInput = document.getElementById("dedicationInput");
+    if (dedInput) dedInput.value = "";
 
     const dupSec = document.getElementById("queueModalDuplicateSection");
     if (dupSec) dupSec.style.display = "none";
@@ -1034,6 +1114,8 @@ function submitQueue() {
     }
 
     const duet = document.getElementById("duetInput").value.trim();
+    const dedicationEl = document.getElementById("dedicationInput");
+    const dedication = dedicationEl ? dedicationEl.value.trim() : "";
     const payload = {
         track_id: selectedTrackForQueue.trackId,
         video_id: selectedTrackForQueue.videoId,
@@ -1042,6 +1124,7 @@ function submitQueue() {
         singer_token: currentSinger.token,
         duet_partner: duet,
         pitch_shift: selectedPitch,
+        dedication: dedication,
         force: Boolean(activeDuplicateInfo),
         is_sing_along: Boolean(selectedTrackForQueue.isSingAlong)
     };
@@ -1250,14 +1333,23 @@ function renderQueue(queue) {
         card.style.marginBottom = "12px";
 
         const pitchText = item.pitch_shift !== 0 ? `Key: ${item.pitch_shift > 0 ? '+' : ''}${item.pitch_shift}` : "Standard Key";
+        const isOnBreak = item.singer_status === "on_break";
+        const statusBadge = isOnBreak 
+            ? `<span class="badge" style="background: rgba(255,183,3,0.15); color: var(--neon-gold); border: 1px solid var(--neon-gold); font-size: 0.72rem; padding: 2px 6px; border-radius: 4px; ${isHost ? 'cursor: pointer;' : ''}" ${isHost ? `onclick="toggleHostSingerStatus(${item.singer_id}, 'active')"` : ''}>⏸️ On Break ${isHost ? '(Tap to Resume)' : ''}</span>`
+            : (isHost && !isPlaying ? `<span class="badge" style="background: rgba(57,255,20,0.1); color: var(--neon-lime); border: 1px solid var(--neon-lime); font-size: 0.72rem; padding: 2px 6px; border-radius: 4px; cursor: pointer;" onclick="toggleHostSingerStatus(${item.singer_id}, 'on_break')">🟢 Active (Pause)</span>` : '');
+
+        const dedicationHtml = item.dedication 
+            ? `<div style="font-size: 0.76rem; color: var(--neon-gold); font-style: italic; margin-top: 3px;">💌 "${escapeHtml(item.dedication)}"</div>`
+            : '';
 
         card.innerHTML = `
             <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px;">
                 <div style="display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0;">
                     <div style="font-size: 1.8rem; flex-shrink: 0;">${item.singer_avatar || "🌺"}</div>
                     <div style="min-width: 0; overflow: hidden;">
-                        <div style="font-size: 0.8rem; font-weight: 700; color: ${isPlaying ? 'var(--neon-pink)' : 'var(--neon-cyan)'};">
-                            ${isPlaying ? 'NOW SINGING' : `#${index + 1} IN LINE`}
+                        <div style="font-size: 0.8rem; font-weight: 700; color: ${isPlaying ? 'var(--neon-pink)' : 'var(--neon-cyan)'}; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                            <span>${isPlaying ? 'NOW SINGING' : `#${index + 1} IN LINE`}</span>
+                            ${statusBadge}
                         </div>
                         <div style="font-weight: 700; font-size: 1.05rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
                             ${escapeHtml(item.singer_name)} ${item.duet_partner ? `& ${escapeHtml(item.duet_partner)}` : ''}
@@ -1265,6 +1357,7 @@ function renderQueue(queue) {
                         <div style="color: var(--text-muted); font-size: 0.88rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
                             ${escapeHtml(item.artist)} - ${escapeHtml(item.title)}
                         </div>
+                        ${dedicationHtml}
                         <div style="display: flex; gap: 6px; align-items: center; margin-top: 4px; flex-wrap: wrap;">
                             <span class="badge-key">${pitchText}</span>
                             ${item.is_sing_along ? '<span class="badge-sing-along">🎙️ Sing-Along</span>' : ''}
@@ -1683,6 +1776,7 @@ function installStarterCrate(e) {
 
 function loadHistory() {
     loadSongbook();
+    loadSingerRecordings();
 }
 
 function spinTikiWheel() {
@@ -2229,15 +2323,28 @@ function loadHostSingerRoster() {
                     `;
                 }
 
+                const isBreak = s.singer_status === "on_break";
+                const statusBadge = isBreak
+                    ? `<span style="background: rgba(255,183,3,0.15); color: var(--neon-gold); border: 1px solid var(--neon-gold); font-size: 0.68rem; font-weight: 700; padding: 2px 6px; border-radius: 4px;">⏸️ BREAK</span>`
+                    : `<span style="background: rgba(57,255,20,0.15); color: var(--neon-lime); border: 1px solid var(--neon-lime); font-size: 0.68rem; font-weight: 700; padding: 2px 6px; border-radius: 4px;">🟢 ACTIVE</span>`;
+                
+                const toggleStatusBtn = isBreak
+                    ? `<button onclick="toggleHostSingerStatus(${s.singer_id}, 'active')" class="btn-ghost" style="padding: 3px 8px; font-size: 0.72rem; border-color: var(--neon-lime); color: var(--neon-lime); border-radius: 6px; cursor: pointer;">▶️ Resume</button>`
+                    : `<button onclick="toggleHostSingerStatus(${s.singer_id}, 'on_break')" class="btn-ghost" style="padding: 3px 8px; font-size: 0.72rem; border-color: var(--neon-gold); color: var(--neon-gold); border-radius: 6px; cursor: pointer;">⏸️ Break</button>`;
+
                 card.innerHTML = `
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <div style="display: flex; align-items: center; gap: 8px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px;">
+                        <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
                             <span style="font-size: 1.3rem;">${s.singer_avatar || '🌺'}</span>
                             <span style="font-weight: 700; font-size: 0.95rem; color: #fff;">${escapeHtml(s.singer_name)}</span>
+                            ${statusBadge}
                         </div>
-                        <span style="font-size: 0.75rem; color: ${totalActive > 0 ? 'var(--neon-gold)' : 'var(--text-muted)'}; font-weight: 600;">
-                            ${totalActive} song${totalActive === 1 ? '' : 's'} in queue
-                        </span>
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            ${toggleStatusBtn}
+                            <span style="font-size: 0.75rem; color: ${totalActive > 0 ? 'var(--neon-gold)' : 'var(--text-muted)'}; font-weight: 600;">
+                                ${totalActive} song${totalActive === 1 ? '' : 's'}
+                            </span>
+                        </div>
                     </div>
                     ${songsHtml}
                     ${removeBtnHtml}
@@ -2248,6 +2355,26 @@ function loadHostSingerRoster() {
         .catch(err => {
             container.innerHTML = `<div style="text-align: center; color: #ff5555; font-size: 0.8rem; padding: 10px;">Failed to load roster: ${err.message}</div>`;
         });
+}
+
+async function toggleHostSingerStatus(singerId, newStatus) {
+    try {
+        const res = await fetch(`/api/host/singer/${singerId}/status`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "X-Host-Token": typeof HOST_TOKEN !== "undefined" ? HOST_TOKEN : ""
+            },
+            body: JSON.stringify({ status: newStatus })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "Failed to update singer status");
+        showToast(newStatus === "on_break" ? "⏸️ Singer placed on break (queue held)" : "🟢 Singer active in rotation!");
+        loadHostSingerRoster();
+        loadLiveQueue();
+    } catch (e) {
+        showToast(`⚠️ ${e.message}`);
+    }
 }
 
 let activeManageSinger = null;
@@ -3702,6 +3829,166 @@ async function launchSmartImporter() {
             btn.disabled = false;
             btn.innerText = "🚀 Launch Smart Media Importer";
         }
+    }
+}
+
+async function launchCdgRipper() {
+    const btn = document.getElementById("btnLaunchCdgRipper");
+    const statusDiv = document.getElementById("importerLaunchStatus");
+    if (btn) {
+        btn.disabled = true;
+        btn.innerText = "⏳ Launching Ripper...";
+    }
+    if (statusDiv) {
+        statusDiv.style.display = "block";
+        statusDiv.style.color = "var(--neon-gold)";
+        statusDiv.innerText = "⏳ Launching CD+G Optical Disc Ripper on host machine...";
+    }
+    try {
+        const res = await fetch("/api/host/launch-cdg-ripper", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "X-Host-Token": typeof HOST_TOKEN !== "undefined" ? HOST_TOKEN : ""
+            }
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || data.message || "Failed to launch CD+G Ripper");
+        if (statusDiv) {
+            statusDiv.style.color = "var(--neon-lime)";
+            statusDiv.innerText = "✅ CD+G Ripper window is open on your desktop!";
+        }
+        showToast("📀 CD+G Optical Disc Ripper launched!");
+    } catch (e) {
+        if (statusDiv) {
+            statusDiv.style.color = "var(--neon-pink)";
+            statusDiv.innerText = `⚠️ ${e.message}`;
+        }
+        showToast(`⚠️ ${e.message}`);
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerText = "📀 Launch CD+G Optical Disc Ripper";
+        }
+    }
+}
+
+async function submitHostMarquee(durationMinutes = 10) {
+    const input = document.getElementById("hostMarqueeInput");
+    const feedback = document.getElementById("marqueeBroadcastFeedback");
+    const msg = input ? input.value.trim() : "";
+    if (!msg) {
+        showToast("⚠️ Please enter an announcement message to broadcast");
+        if (input) input.focus();
+        return;
+    }
+    try {
+        const res = await fetch("/api/host/marquee", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "X-Host-Token": typeof HOST_TOKEN !== "undefined" ? HOST_TOKEN : ""
+            },
+            body: JSON.stringify({
+                message: msg,
+                duration_minutes: durationMinutes,
+                mode: "announcement"
+            })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "Failed to broadcast marquee message");
+        if (feedback) {
+            feedback.style.display = "block";
+            feedback.style.color = "var(--neon-lime)";
+            feedback.innerText = `📢 Broadcast active on TV Stage: "${msg}" (${durationMinutes === 0 ? 'All Night' : durationMinutes + ' mins'})`;
+        }
+        showToast("📢 Stage Marquee broadcast active!");
+    } catch (e) {
+        if (feedback) {
+            feedback.style.display = "block";
+            feedback.style.color = "var(--neon-pink)";
+            feedback.innerText = `⚠️ ${e.message}`;
+        }
+        showToast(`⚠️ ${e.message}`);
+    }
+}
+
+async function clearHostMarquee() {
+    const input = document.getElementById("hostMarqueeInput");
+    const feedback = document.getElementById("marqueeBroadcastFeedback");
+    try {
+        const res = await fetch("/api/host/marquee", {
+            method: "DELETE",
+            headers: {
+                "Content-Type": "application/json",
+                "X-Host-Token": typeof HOST_TOKEN !== "undefined" ? HOST_TOKEN : ""
+            }
+        });
+        if (input) input.value = "";
+        if (feedback) {
+            feedback.style.display = "block";
+            feedback.style.color = "var(--neon-cyan)";
+            feedback.innerText = "Stage marquee broadcast cleared. TV will show standard queue ticker.";
+        }
+        showToast("Stage marquee cleared");
+    } catch (e) {
+        showToast(`⚠️ ${e.message}`);
+    }
+}
+
+async function loadSingerRecordings() {
+    const container = document.getElementById("singerRecordingsList");
+    if (!container) return;
+    if (!currentSinger || !currentSinger.token) {
+        container.innerHTML = `<div style="text-align: center; color: var(--text-muted); font-size: 0.8rem; padding: 12px;">Log in or pick a nickname to access your live recording souvenirs.</div>`;
+        return;
+    }
+    container.innerHTML = `<div style="text-align: center; color: var(--text-muted); font-size: 0.8rem; padding: 12px;">Loading your recordings...</div>`;
+    try {
+        const res = await fetch(`/api/singer/${currentSinger.token}/recordings`);
+        if (!res.ok) throw new Error("Could not load recordings");
+        const list = await res.json();
+        container.innerHTML = "";
+        if (!list || list.length === 0) {
+            container.innerHTML = `
+                <div style="text-align: center; padding: 16px; background: rgba(16,28,45,0.5); border-radius: 10px; border: 1px dashed rgba(255,255,255,0.15);">
+                    <div style="font-size: 1.8rem; margin-bottom: 6px;">🎙️</div>
+                    <div style="font-size: 0.85rem; color: #fff; font-weight: 600;">No live recordings yet!</div>
+                    <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">Sing a song with our stage mics connected, and your souvenir MP3 will appear here instantly!</div>
+                </div>
+            `;
+            return;
+        }
+        list.forEach(r => {
+            const card = document.createElement("div");
+            card.className = "tiki-card";
+            card.style.marginBottom = "10px";
+            card.style.padding = "12px";
+            card.style.border = "1px solid rgba(255, 183, 3, 0.35)";
+
+            const durationMins = r.duration_seconds ? `${Math.floor(r.duration_seconds / 60)}:${String(Math.floor(r.duration_seconds % 60)).padStart(2, '0')}` : "";
+            const createdDate = r.created_at ? new Date(r.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "";
+
+            card.innerHTML = `
+                <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; margin-bottom: 8px;">
+                    <div>
+                        <div style="font-weight: 700; font-size: 0.95rem; color: #fff;">🎵 ${escapeHtml(r.title || 'Karaoke Performance')}</div>
+                        <div style="font-size: 0.8rem; color: var(--neon-gold);">${escapeHtml(r.artist || 'Live at Tiki Lounge')}</div>
+                        <div style="font-size: 0.72rem; color: var(--text-muted); margin-top: 2px;">Recorded at ${createdDate} ${durationMins ? `• ${durationMins}` : ''}</div>
+                    </div>
+                    <a href="/api/recordings/${r.id}/download" download class="btn-ghost" style="padding: 6px 10px; font-size: 0.75rem; border-color: var(--neon-cyan); color: var(--neon-cyan); text-decoration: none; border-radius: 6px; display: flex; align-items: center; gap: 4px; white-space: nowrap;">
+                        ⬇️ MP3
+                    </a>
+                </div>
+                <audio controls preload="none" style="width: 100%; height: 32px; border-radius: 6px; margin-top: 4px;">
+                    <source src="/api/recordings/${r.id}/stream" type="audio/mpeg">
+                    Your browser does not support audio playback.
+                </audio>
+            `;
+            container.appendChild(card);
+        });
+    } catch (e) {
+        container.innerHTML = `<div style="text-align: center; color: #ff5555; font-size: 0.8rem; padding: 12px;">Failed to load recordings: ${e.message}</div>`;
     }
 }
 

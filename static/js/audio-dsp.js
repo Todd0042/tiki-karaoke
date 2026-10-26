@@ -502,6 +502,85 @@ class AudioDSPPipeline {
             }
         }
     }
+
+    startPerformanceRecording(queueId, singerId, trackId) {
+        if (!this.ctx || !this.masterSumNode) return false;
+        if (!this.recDestination) {
+            this.recDestination = this.ctx.createMediaStreamDestination();
+            this.masterSumNode.connect(this.recDestination);
+        }
+        this.recordedChunks = [];
+        this.recMetadata = { queueId, singerId, trackId, startTime: Date.now() };
+
+        let options = { mimeType: 'audio/webm;codecs=opus' };
+        if (typeof MediaRecorder === "undefined") return false;
+        if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+            options = { mimeType: 'audio/webm' };
+            if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+                options = {};
+            }
+        }
+
+        try {
+            this.mediaRecorder = new MediaRecorder(this.recDestination.stream, options);
+            this.mediaRecorder.ondataavailable = (e) => {
+                if (e.data && e.data.size > 0) {
+                    this.recordedChunks.push(e.data);
+                }
+            };
+            this.mediaRecorder.start(1000);
+            console.log("[AudioDSP] Started live performance recording for singer", singerId);
+            return true;
+        } catch (err) {
+            console.warn("[AudioDSP] Could not start MediaRecorder:", err);
+            return false;
+        }
+    }
+
+    async stopAndUploadPerformanceRecording() {
+        if (!this.mediaRecorder || this.mediaRecorder.state === "inactive") return null;
+        const meta = this.recMetadata || {};
+        return new Promise((resolve) => {
+            this.mediaRecorder.onstop = async () => {
+                try {
+                    if (!this.recordedChunks || this.recordedChunks.length === 0) {
+                        resolve(null);
+                        return;
+                    }
+                    const blob = new Blob(this.recordedChunks, { type: this.mediaRecorder.mimeType || 'audio/webm' });
+                    const durationSec = Math.max(1, (Date.now() - (meta.startTime || Date.now())) / 1000);
+
+                    const formData = new FormData();
+                    formData.append("file", blob, `perf_${meta.singerId}_${meta.trackId}.webm`);
+                    if (meta.queueId) formData.append("queue_id", meta.queueId);
+                    formData.append("singer_id", meta.singerId);
+                    formData.append("track_id", meta.trackId);
+                    formData.append("duration", durationSec.toFixed(1));
+
+                    const res = await fetch("/api/recordings/upload", {
+                        method: "POST",
+                        body: formData
+                    });
+                    const data = await res.json();
+                    console.log("[AudioDSP] Performance recording uploaded successfully:", data);
+                    resolve(data);
+                } catch (err) {
+                    console.error("[AudioDSP] Uploading performance recording failed:", err);
+                    resolve(null);
+                } finally {
+                    this.recordedChunks = [];
+                    this.recMetadata = null;
+                    this.mediaRecorder = null;
+                }
+            };
+            try {
+                this.mediaRecorder.stop();
+            } catch (e) {
+                console.warn("[AudioDSP] Stop recording error:", e);
+                resolve(null);
+            }
+        });
+    }
 }
 
 /**
