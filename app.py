@@ -2320,6 +2320,90 @@ async def api_import_local_library(payload: ImportLocalMediaRequest, request: Re
         "tracks": imported[:50]
     }
 
+
+def find_importer_executable() -> Optional[Tuple[List[str], Optional[Path]]]:
+    """
+    Locates the Tiki Karaoke Smart Importer executable or script.
+    Returns (cmd_args, working_dir) or None.
+    """
+    current_dir = Path(__file__).resolve().parent
+
+    # 1. Bundled in same directory or bin (Windows .exe or Linux binary)
+    if sys.platform == "win32":
+        candidates = [
+            current_dir / "TikiKaraokeImporter.exe",
+            current_dir / "bin" / "TikiKaraokeImporter.exe",
+            current_dir.parent / "TikiKaraokeImporter.exe",
+            current_dir.parent / "bin" / "TikiKaraokeImporter.exe",
+        ]
+        for c in candidates:
+            if c.is_file():
+                return ([str(c)], c.parent)
+    else:
+        candidates = [
+            current_dir / "TikiKaraokeImporter",
+            current_dir / "bin" / "TikiKaraokeImporter",
+            Path("/usr/bin/TikiKaraokeImporter"),
+        ]
+        for c in candidates:
+            if c.is_file() and os.access(c, os.X_OK):
+                return ([str(c)], c.parent)
+        for c in sorted(current_dir.glob("TikiKaraokeImporter*.AppImage"), key=lambda p: p.stat().st_mtime, reverse=True):
+            if c.is_file() and os.access(c, os.X_OK):
+                return ([str(c)], c.parent)
+
+    # 2. Check sibling repository: ../tiki-karaoke-importer
+    importer_repo = current_dir.parent / "tiki-karaoke-importer"
+    if importer_repo.is_dir():
+        if sys.platform == "win32":
+            win_exe = importer_repo / "dist" / "windows" / "TikiKaraokeImporter.exe"
+            if win_exe.is_file():
+                return ([str(win_exe)], win_exe.parent)
+        else:
+            for appimage in sorted((importer_repo / "dist").glob("TikiKaraokeImporter*.AppImage"), key=lambda p: p.stat().st_mtime, reverse=True):
+                if appimage.is_file() and os.access(appimage, os.X_OK):
+                    return ([str(appimage)], appimage.parent)
+
+        main_py = importer_repo / "main.py"
+        if main_py.is_file():
+            return ([sys.executable, str(main_py)], importer_repo)
+
+    return None
+
+
+@app.post("/api/host/launch-importer")
+async def api_launch_importer(request: Request):
+    if not (is_host_request(request) or is_local_request(request)):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
+
+    found = find_importer_executable()
+    if not found:
+        raise HTTPException(
+            status_code=404,
+            detail="Tiki Karaoke Smart Importer executable not found. Please ensure TikiKaraokeImporter is installed."
+        )
+
+    cmd_base, work_dir = found
+    db_path = str(get_db_path().resolve()) if hasattr(get_db_path(), "resolve") else str(get_db_path())
+    tracks_dir = str(get_tracks_dir().resolve()) if hasattr(get_tracks_dir(), "resolve") else str(get_tracks_dir())
+
+    cmd = list(cmd_base) + ["--db", db_path, "--folder", tracks_dir]
+
+    try:
+        if sys.platform == "win32":
+            flags = 0x00000008 | subprocess.CREATE_NEW_PROCESS_GROUP
+            subprocess.Popen(cmd, cwd=str(work_dir) if work_dir else None, creationflags=flags)
+        else:
+            subprocess.Popen(cmd, cwd=str(work_dir) if work_dir else None, start_new_session=True)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to launch Smart Importer: {e}")
+
+    return {
+        "status": "ok",
+        "message": "Tiki Karaoke Smart Importer launched successfully on desktop",
+        "cmd": cmd[0]
+    }
+
 @app.post("/api/host/filler/import-from-song/{track_id}")
 async def api_import_filler_from_song(track_id: int, request: Request):
     if not is_host_request(request):

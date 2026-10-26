@@ -318,6 +318,21 @@
                     <div id="dataDiskInfo" class="field-desc" style="margin-top: 6px; font-weight: 500;"></div>
                 </div>
 
+                <!-- Launch Smart Importer Card -->
+                <div style="margin-top: 14px; padding: 12px 14px; background: rgba(0, 240, 255, 0.05); border: 1px solid rgba(0, 240, 255, 0.25); border-radius: 10px; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;">
+                    <div style="flex: 1; min-width: 260px;">
+                        <div style="font-weight: 700; color: var(--neon-cyan); font-size: 0.92rem; display: flex; align-items: center; gap: 6px;">
+                            📂 Already have karaoke tracks or CompuHost?
+                        </div>
+                        <div class="field-desc" style="margin-top: 2px;">
+                            Launch the Smart Importer to sanitize messy YouTube filenames, autocorrect release years, or migrate your CompuHost <code>SongList.tps</code> library directly.
+                        </div>
+                    </div>
+                    <button type="button" id="btnSetupLaunchImporter" class="btn-ghost" style="padding: 10px 18px; font-weight: 700; font-size: 0.88rem; border-color: var(--neon-gold); color: var(--neon-gold); background: rgba(255, 183, 3, 0.08); border-radius: 10px; white-space: nowrap; cursor: pointer;" onclick="launchSetupSmartImporter()">
+                        🚀 Launch Smart Importer...
+                    </button>
+                </div>
+
                 <div class="field-group" style="margin-top: 16px;">
                     <label>Video Quality & Storage Footprint Profile</label>
                     <div style="display: grid; grid-template-columns: 1fr; gap: 10px; margin-top: 6px;">
@@ -1235,6 +1250,30 @@
                 closeDirModal();
             } else if (currentBrowserPath === 'This PC') {
                 alert("Please select a specific hard drive or folder first.");
+            }
+        }
+
+        async function launchSetupSmartImporter() {
+            const btn = document.getElementById("btnSetupLaunchImporter");
+            if (btn) {
+                btn.disabled = true;
+                btn.innerText = "⏳ Launching...";
+            }
+            try {
+                const res = await fetch("/api/host/launch-importer", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" }
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.detail || data.message || "Failed to launch importer");
+                alert("✅ Tiki Karaoke Smart Importer has opened on your desktop! You can now import or migrate your songs.");
+            } catch (err) {
+                alert("⚠️ " + err.message);
+            } finally {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.innerText = "🚀 Launch Smart Importer...";
+                }
             }
         }
     </script>

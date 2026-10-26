@@ -3664,6 +3664,47 @@ function useHostPathPreset(presetType) {
     }
 }
 
+async function launchSmartImporter() {
+    const btn = document.getElementById("btnLaunchImporter");
+    const statusDiv = document.getElementById("importerLaunchStatus");
+    if (btn) {
+        btn.disabled = true;
+        btn.innerText = "⏳ Launching Importer...";
+    }
+    if (statusDiv) {
+        statusDiv.style.display = "block";
+        statusDiv.style.color = "var(--neon-cyan)";
+        statusDiv.innerText = "⏳ Launching Smart Importer on host machine...";
+    }
+    try {
+        const res = await fetch("/api/host/launch-importer", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "X-Host-Token": typeof HOST_TOKEN !== "undefined" ? HOST_TOKEN : ""
+            }
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || data.message || "Failed to launch importer");
+        if (statusDiv) {
+            statusDiv.style.color = "var(--neon-lime)";
+            statusDiv.innerText = "✅ Smart Importer is open on your desktop!";
+        }
+        showToast("✅ Smart Importer launched!");
+    } catch (e) {
+        if (statusDiv) {
+            statusDiv.style.color = "var(--neon-pink)";
+            statusDiv.innerText = `⚠️ ${e.message}`;
+        }
+        showToast(`⚠️ ${e.message}`);
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerText = "🚀 Launch Smart Media Importer";
+        }
+    }
+}
+
 async function submitLocalKaraokeImport() {
     const folderInput = document.getElementById("hostImportFolderPath");
     const recursiveToggle = document.getElementById("hostImportRecursive");

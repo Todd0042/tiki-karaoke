@@ -252,6 +252,22 @@ class TikiControlHub:
         )
         stage_btn.pack(fill="x", pady=3)
 
+        # 3. Open Smart Media Importer
+        importer_btn = tk.Button(
+            btn_frame,
+            text="📂 Smart Media Importer (CompuHost & YouTube)",
+            font=("Helvetica", 9, "bold"),
+            bg="#1a1424",
+            fg="#ffd166",
+            activebackground="#2a1f3d",
+            activeforeground="#ffd166",
+            relief="flat",
+            cursor="hand2",
+            pady=7,
+            command=self._launch_importer
+        )
+        importer_btn.pack(fill="x", pady=3)
+
         # Secondary row: Setup & Copy Link
         row2 = tk.Frame(btn_frame, bg="#0d0814")
         row2.pack(fill="x", pady=3)
@@ -297,10 +313,53 @@ class TikiControlHub:
             print(f"[Control Hub] Clipboard error: {e}")
 
     def _flash_toast(self, msg: str):
-        if hasattr(self, "ticker_lbl") and self.ticker_lbl:
-            old = self.ticker_lbl.cget("text")
-            self.ticker_lbl.config(text=msg, fg="#39ff14")
-            self.root.after(2500, lambda: self.ticker_lbl.config(text=old, fg="#94a3b8"))
+        if hasattr(self, "ticker_lbl") and self.ticker_lbl and self.root:
+            def _apply():
+                try:
+                    old = self.ticker_lbl.cget("text")
+                    self.ticker_lbl.config(text=msg, fg="#39ff14")
+                    self.root.after(3000, lambda: self.ticker_lbl.config(text=old, fg="#94a3b8"))
+                except Exception:
+                    pass
+            self.root.after(0, _apply)
+
+    def _launch_importer(self):
+        def _call():
+            try:
+                import urllib.request
+                import json
+                port = self.urls.get("port", "8000")
+                url = f"http://127.0.0.1:{port}/api/host/launch-importer"
+                req = urllib.request.Request(
+                    url,
+                    data=b"{}",
+                    headers={"Content-Type": "application/json", "User-Agent": "TikiHub/1.0"},
+                    method="POST"
+                )
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    if resp.status == 200:
+                        self._flash_toast("🚀 Smart Media Importer launched!")
+                        return
+            except Exception as e:
+                try:
+                    from app import find_importer_executable, get_db_path, get_tracks_dir
+                    found = find_importer_executable()
+                    if found:
+                        cmd_base, work_dir = found
+                        cmd = list(cmd_base) + ["--db", str(get_db_path()), "--folder", str(get_tracks_dir())]
+                        if sys.platform == "win32":
+                            flags = 0x00000008 | subprocess.CREATE_NEW_PROCESS_GROUP
+                            subprocess.Popen(cmd, cwd=str(work_dir) if work_dir else None, creationflags=flags)
+                        else:
+                            subprocess.Popen(cmd, cwd=str(work_dir) if work_dir else None, start_new_session=True)
+                        self._flash_toast("🚀 Smart Media Importer launched!")
+                        return
+                except Exception:
+                    pass
+                if HAS_GUI:
+                    self.root.after(0, lambda: messagebox.showerror("Smart Importer", f"Could not launch Smart Importer:\n{e}"))
+
+        threading.Thread(target=_call, daemon=True).start()
 
     def _build_live_ticker(self):
         card = tk.Frame(self.root, bg="#130d1f", highlightbackground="#2a1b40", highlightthickness=1)

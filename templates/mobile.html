@@ -558,55 +558,23 @@
                         </div>
                     </div>
 
-                    <!-- Bring Your Own Media (BYOM) Local Importer -->
+                    <!-- Smart Library Importer (CompuHost & YouTube) -->
                     <div>
-                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                            <span style="font-size: 0.85rem; color: var(--neon-cyan); font-weight: 700;">📂 IMPORT LOCAL KARAOKE MEDIA (BYOM)</span>
-                            <span style="font-size: 0.72rem; color: var(--neon-gold); font-weight: 600;">Offline Ready</span>
-                        </div>
-                        <div style="font-size: 0.78rem; color: var(--text-muted); margin-bottom: 10px;">
-                            Import your own karaoke videos (<code style="color: var(--neon-cyan);">.mp4</code>, <code style="color: var(--neon-cyan);">.mkv</code>, <code style="color: var(--neon-cyan);">.webm</code>, <code style="color: var(--neon-cyan);">.avi</code>) from your hard drive directly into the searchable songbook.
-                        </div>
-
-                        <!-- Folder Input -->
-                        <div style="margin-bottom: 8px;">
-                            <input type="text" id="hostImportFolderPath" placeholder="Folder path, e.g. C:\Karaoke or /home/user/karaoke" style="width: 100%; box-sizing: border-box; padding: 10px 12px; background: rgba(16, 28, 45, 0.9); border: 1px solid var(--border-neon); border-radius: 8px; color: #fff; font-size: 0.82rem; outline: none;">
-                        </div>
-
-                        <!-- Preset Path Buttons -->
-                        <div style="display: flex; gap: 8px; margin-bottom: 10px;">
-                            <button type="button" onclick="useHostPathPreset('default')" class="btn-ghost" style="flex: 1; padding: 6px 8px; font-size: 0.74rem; border-color: rgba(0, 240, 255, 0.4); color: var(--neon-cyan);" title="Use default Tiki Karaoke folder">
-                                🌴 Default Tiki Folder
+                        <div style="padding: 14px; border-radius: 10px; background: rgba(0, 240, 255, 0.06); border: 1px solid rgba(0, 240, 255, 0.35); margin-bottom: 12px;">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                                <span style="font-size: 0.85rem; color: var(--neon-cyan); font-weight: 700; display: flex; align-items: center; gap: 6px;">
+                                    📂 SMART LIBRARY IMPORTER
+                                </span>
+                                <span style="font-size: 0.72rem; color: var(--neon-gold); font-weight: 600;">CompuHost & YouTube</span>
+                            </div>
+                            <div style="font-size: 0.78rem; color: var(--text-muted); margin-bottom: 12px; line-height: 1.4;">
+                                Sanitize messy YouTube titles, autocorrect release years & genres via iTunes, or migrate directly from legacy CompuHost (<code style="color: var(--neon-cyan);">SongList.tps</code>).
+                            </div>
+                            <button type="button" id="btnLaunchImporter" onclick="launchSmartImporter()" class="btn-ghost" style="width: 100%; padding: 12px; font-weight: 700; font-size: 0.88rem; border-color: var(--neon-cyan); color: var(--neon-cyan); background: rgba(0, 240, 255, 0.1); border-radius: 8px; cursor: pointer;">
+                                🚀 Launch Smart Media Importer
                             </button>
-                            <button type="button" onclick="useHostPathPreset('parent')" class="btn-ghost" style="flex: 1; padding: 6px 8px; font-size: 0.74rem; border-color: rgba(255, 183, 3, 0.4); color: var(--neon-gold);" title="Scan parent Karaoke directory">
-                                📁 All Karaoke Folder
-                            </button>
-                        </div>
-
-                        <!-- Destination & Options -->
-                        <div style="margin-bottom: 10px;">
-                            <label style="display: block; font-size: 0.74rem; color: var(--neon-cyan); margin-bottom: 4px; font-weight: 600;">IMPORT DESTINATION</label>
-                            <select id="hostImportDestination" style="width: 100%; box-sizing: border-box; padding: 8px 10px; background: rgba(16, 28, 45, 0.9); border: 1px solid var(--border-neon); border-radius: 8px; color: #fff; font-size: 0.8rem; outline: none;">
-                                <option value="karaoke" selected>🌴 Main Karaoke Songbook (Instrumental Tracks)</option>
-                                <option value="sing_along">🎤 True Karaoke (Sing-Alongs with Lead Vocals)</option>
-                                <option value="filler">🎬 Intermission Music Videos (BGM Filler Crate)</option>
-                            </select>
-                        </div>
-
-                        <div style="display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; font-size: 0.78rem; color: #cbd5e1;">
-                            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-                                <input type="checkbox" id="hostImportRecursive" checked style="accent-color: var(--neon-cyan);">
-                                <span>Include all subfolders (recursive scan)</span>
-                            </label>
-                        </div>
-
-                        <!-- Submit Button -->
-                        <button type="button" id="hostImportSubmitBtn" onclick="submitLocalKaraokeImport()" class="btn-ghost" style="width: 100%; padding: 10px; font-weight: 700; font-size: 0.85rem; border-color: var(--neon-lime); color: var(--neon-lime); background: rgba(57, 255, 20, 0.08); border-radius: 8px;">
-                            🚀 Scan & Import Local Songs
-                        </button>
-
-                        <!-- Import Result Feedback Container -->
-                        <div id="hostImportResultContainer" style="display: none; margin-top: 10px; padding: 10px; border-radius: 8px; font-size: 0.78rem; line-height: 1.4;">
+                            <div id="importerLaunchStatus" style="display: none; margin-top: 8px; font-size: 0.75rem; text-align: center; color: var(--neon-lime);">
+                            </div>
                         </div>
 
                         <!-- Curated Local Library Only Mode -->

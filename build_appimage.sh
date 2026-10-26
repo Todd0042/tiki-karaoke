@@ -93,6 +93,17 @@ if [ -d "${REPO_ROOT}/bin" ]; then
     chmod +x "$APPDIR/usr/bin/bin/"* 2>/dev/null || true
 fi
 
+# Bundle Tiki Karaoke Smart Importer if built in sibling repo
+IMPORTER_DIR="$(dirname "${REPO_ROOT}")/tiki-karaoke-importer"
+if [ -d "${IMPORTER_DIR}" ]; then
+    IMPORTER_APPIMAGE=$(ls -t "${IMPORTER_DIR}/dist"/TikiKaraokeImporter*.AppImage 2>/dev/null | head -n 1)
+    if [ -n "$IMPORTER_APPIMAGE" ] && [ -f "$IMPORTER_APPIMAGE" ]; then
+        echo "Bundling TikiKaraokeImporter standalone binary: $IMPORTER_APPIMAGE"
+        cp "$IMPORTER_APPIMAGE" "$APPDIR/usr/bin/TikiKaraokeImporter"
+        chmod +x "$APPDIR/usr/bin/TikiKaraokeImporter"
+    fi
+fi
+
 cp "${REPO_ROOT}/tray.py" "$APPDIR/usr/bin/tray.py"
 cp "${REPO_ROOT}/tray.py" "$APPDIR/usr/bin/_internal/tray.py" 2>/dev/null || true
 cp "${REPO_ROOT}/static/tiki-icon.png" "$APPDIR/tiki-icon.png"
