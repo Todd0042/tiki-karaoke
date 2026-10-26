@@ -1699,7 +1699,16 @@ function spinTikiWheel() {
 
 // Host DJ Controls
 function hostSkip() {
-    fetch("/api/host/skip", { method: "POST" });
+    fetch("/api/host/skip", { method: "POST" })
+        .then(res => res.json())
+        .then(data => {
+            if (data && data.skipped_to_filler) {
+                showToast(`⏭️ Skipped to filler: ${data.skipped_to_filler}`);
+            } else if (data && data.skipped_to_bgm) {
+                showToast("⏭️ Skipped to next background track");
+            }
+        })
+        .catch(err => console.error("Skip error:", err));
 }
 
 function hostPauseResume() {

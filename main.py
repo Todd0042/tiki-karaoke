@@ -190,6 +190,36 @@ def check_single_instance() -> bool:
         except Exception:
             return True
 
+def set_windows_sleep_prevention(enable: bool = True):
+    """Prevents Windows system and display from entering sleep mode while Tiki Karaoke is active."""
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            ES_CONTINUOUS = 0x80000000
+            ES_SYSTEM_REQUIRED = 0x00000001
+            ES_DISPLAY_REQUIRED = 0x00000002
+            if enable:
+                ctypes.windll.kernel32.SetThreadExecutionState(
+                    ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED
+                )
+            else:
+                ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS)
+        except Exception:
+            pass
+
+def init_windows_dpi_awareness():
+    """Configures high-DPI awareness on Windows to prevent blurry GUI on 4K TVs and high-res screens."""
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            ctypes.windll.shcore.SetProcessDpiAwareness(1)
+        except Exception:
+            try:
+                import ctypes
+                ctypes.windll.user32.SetProcessDPIAware()
+            except Exception:
+                pass
+
 def kill_process_tree(proc: Optional[subprocess.Popen], timeout: float = 2.0):
     """Gracefully terminates proc and its child processes across Unix and Windows."""
     if not proc or proc.poll() is not None:
@@ -237,6 +267,7 @@ def cleanup_all_services():
         return
     is_shutting_down = True
 
+    set_windows_sleep_prevention(False)
     print("\n🌴 [Shutdown] Gracefully shutting down Tiki Karaoke Lounge...")
     stop_tray()
 
@@ -729,6 +760,9 @@ def main():
         debug_tray_status()
         sys.exit(0)
 
+    # Initialize high-DPI scaling on Windows (crisp UI on 4K TVs and high-res screens)
+    init_windows_dpi_awareness()
+
     # Enforce single instance across the system
     if not check_single_instance():
         print("⚠️  [Tiki Karaoke] Another instance of Tiki Karaoke is already running.")
@@ -760,6 +794,9 @@ def main():
             except Exception:
                 pass
         sys.exit(0)
+
+    # Prevent Windows computer and display from sleeping during party/karaoke show
+    set_windows_sleep_prevention(True)
 
     # Write PID file for process tracking
     try:

@@ -210,6 +210,9 @@ function handleSocketMessage(data) {
         case "skip_track":
             skipCurrentTrack();
             break;
+        case "skip_bgm":
+            playNextBGM();
+            break;
         case "stop_track":
             stopCurrentTrack(data.next_track);
             break;
@@ -1214,6 +1217,34 @@ function setupEventListeners() {
             if (overlay) overlay.style.display = "none";
         });
     }
+
+    // Auto-hide mouse cursor after 3.5s of inactivity so TV stage display is clean
+    let mouseIdleTimer = null;
+    window.addEventListener("mousemove", () => {
+        document.body.style.cursor = "default";
+        if (mouseIdleTimer) clearTimeout(mouseIdleTimer);
+        mouseIdleTimer = setTimeout(() => {
+            document.body.style.cursor = "none";
+        }, 3500);
+    });
+
+    // Request screen wake lock so the display never sleeps during a show
+    let screenWakeLock = null;
+    async function requestScreenWakeLock() {
+        if ("wakeLock" in navigator && !screenWakeLock) {
+            try {
+                screenWakeLock = await navigator.wakeLock.request("screen");
+                screenWakeLock.addEventListener("release", () => {
+                    screenWakeLock = null;
+                });
+            } catch (e) {}
+        }
+    }
+    document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible") requestScreenWakeLock();
+    });
+    window.addEventListener("click", () => requestScreenWakeLock(), { once: true });
+    requestScreenWakeLock();
 }
 
 function applyStageAudioMute(muted) {

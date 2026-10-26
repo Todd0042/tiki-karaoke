@@ -476,6 +476,25 @@ class TestAPIEndpoints(unittest.TestCase):
         self.assertIsNone(state["playing"])
         self.assertIsNone(state["next"])
 
+        # Verify skipping when queue is empty: advances through filler crate
+        from database import add_filler_track, update_filler_track_status
+        f1 = add_filler_track("yt_f1", "Filler Alpha", "Artist Alpha", "Artist Alpha - Filler Alpha", is_downloaded=1)
+        f2 = add_filler_track("yt_f2", "Filler Beta", "Artist Beta", "Artist Beta - Filler Beta", is_downloaded=1)
+        update_filler_track_status(f1, "ready", is_downloaded=1)
+        update_filler_track_status(f2, "ready", is_downloaded=1)
+
+        r_skip1 = self.client.post("/api/host/skip", headers={"X-Host-Token": HOST_TOKEN})
+        self.assertEqual(r_skip1.status_code, 200)
+        self.assertIn("skipped_to_filler", r_skip1.json())
+        first_filler = r_skip1.json()["skipped_to_filler"]
+
+        # Skip again: rotates to a different filler track
+        r_skip2 = self.client.post("/api/host/skip", headers={"X-Host-Token": HOST_TOKEN})
+        self.assertEqual(r_skip2.status_code, 200)
+        self.assertIn("skipped_to_filler", r_skip2.json())
+        second_filler = r_skip2.json()["skipped_to_filler"]
+        self.assertNotEqual(first_filler, second_filler)
+
     def test_singer_songbook_and_profile(self):
         token = "tok_scott_songbook"
         # Register singer Scott

@@ -1647,7 +1647,8 @@ def get_next_vibe_filler_track(
     last_track_genre: str = "",
     last_track_year: int = 0,
     mode: Optional[str] = None,
-    is_paused: bool = False
+    is_paused: bool = False,
+    exclude_track_id: Optional[int] = None
 ) -> Optional[Dict[str, Any]]:
     """
     Selects the next ready BGM / intermission track according to the host's selected vibe mode:
@@ -1705,6 +1706,11 @@ def get_next_vibe_filler_track(
             candidate_pool = filler_tracks if filler_tracks else sing_along_tracks
         else:
             candidate_pool = sing_along_tracks if sing_along_tracks else filler_tracks
+
+    if exclude_track_id is not None and len(candidate_pool) > 1:
+        filtered = [t for t in candidate_pool if t.get("id") != exclude_track_id]
+        if filtered:
+            candidate_pool = filtered
 
     if not candidate_pool:
         conn.close()

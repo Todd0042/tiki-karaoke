@@ -1847,34 +1847,90 @@ async def host_download_track(track_id: int, request: Request):
 async def host_skip_action(request: Request):
     if not is_host_request(request) and not is_local_request(request) and not is_stage_request(request):
         raise HTTPException(status_code=403, detail="Host DJ authorization required")
-    global current_intermission_end
+    global current_intermission_end, filler_active, filler_transition_state, filler_current_track, filler_buffer_end
     current = get_current_playing()
+    queue = get_queue()
+    pending = [q for q in queue if q["status"] == "pending"]
+
     if current:
         set_queue_status(current["queue_id"], "skipped")
-    else:
+        await manager.broadcast({"type": "skip_track"})
         queue = get_queue()
         pending = [q for q in queue if q["status"] == "pending"]
         if pending:
-            set_queue_status(pending[0]["queue_id"], "skipped")
+            dur = int(get_setting("intermission_seconds", str(DEFAULT_INTERMISSION_SECONDS)))
+            current_intermission_end = time.time() + dur
+            await manager.broadcast({
+                "type": "start_intermission",
+                "next_track": pending[0],
+                "duration": dur
+            })
+        else:
+            current_intermission_end = None
+            await manager.broadcast({"type": "queue_empty"})
+            if get_setting("bgm_video_enabled", "true") == "true":
+                last_artist = current.get("artist", "")
+                await trigger_filler_sequence(last_artist=last_artist)
+        await manager.broadcast({"type": "queue_updated", "queue": queue})
+        return {"status": "ok"}
 
-    await manager.broadcast({"type": "skip_track"})
+    elif pending:
+        set_queue_status(pending[0]["queue_id"], "skipped")
+        await manager.broadcast({"type": "skip_track"})
+        queue = get_queue()
+        pending = [q for q in queue if q["status"] == "pending"]
+        if pending:
+            dur = int(get_setting("intermission_seconds", str(DEFAULT_INTERMISSION_SECONDS)))
+            current_intermission_end = time.time() + dur
+            await manager.broadcast({
+                "type": "start_intermission",
+                "next_track": pending[0],
+                "duration": dur
+            })
+        else:
+            current_intermission_end = None
+            await manager.broadcast({"type": "queue_empty"})
+            if get_setting("bgm_video_enabled", "true") == "true":
+                await trigger_filler_sequence()
+        await manager.broadcast({"type": "queue_updated", "queue": queue})
+        return {"status": "ok"}
 
-    queue = get_queue()
-    pending = [q for q in queue if q["status"] == "pending"]
-    if pending:
-        dur = int(get_setting("intermission_seconds", str(DEFAULT_INTERMISSION_SECONDS)))
-        current_intermission_end = time.time() + dur
-        await manager.broadcast({
-            "type": "start_intermission",
-            "next_track": pending[0],
-            "duration": dur
-        })
     else:
-        current_intermission_end = None
-        await manager.broadcast({"type": "queue_empty"})
+        # No karaoke track playing AND no tracks in queue:
+        # Host requested skipping to next filler/background song!
+        bgm_video_on = get_setting("bgm_video_enabled", "true") == "true"
+        current_id = filler_current_track.get("id") if filler_current_track else None
+        last_artist = filler_current_track.get("artist", "") if filler_current_track else ""
+        last_genre = filler_current_track.get("genre", "") if filler_current_track else ""
+        last_year = filler_current_track.get("release_year", 0) if filler_current_track else 0
+        vibe_mode = get_setting("intermission_vibe_mode", "sing_along")
 
-    await manager.broadcast({"type": "queue_updated", "queue": queue})
-    return {"status": "ok"}
+        next_filler = None
+        if bgm_video_on:
+            next_filler = get_next_vibe_filler_track(
+                last_track_artist=last_artist,
+                last_track_genre=last_genre,
+                last_track_year=last_year,
+                mode=vibe_mode,
+                is_paused=False,
+                exclude_track_id=current_id
+            )
+
+        if next_filler:
+            filler_current_track = next_filler
+            filler_active = True
+            filler_transition_state = "playing"
+            filler_buffer_end = None
+            record_filler_play(next_filler["id"], is_sing_along=bool(next_filler.get("is_sing_along")))
+            await manager.broadcast({
+                "type": "play_filler_track",
+                "track": next_filler
+            })
+            return {"status": "ok", "skipped_to_filler": f"{next_filler.get('artist', '')} - {next_filler.get('title', '')}"}
+        else:
+            # Fallback when no filler music videos are available: advance background audio
+            await manager.broadcast({"type": "skip_bgm"})
+            return {"status": "ok", "skipped_to_bgm": True}
 
 @app.post("/api/host/stop")
 async def host_stop_action(request: Request):
