@@ -57,3 +57,5 @@ dist/
 *.AppImage
 # Research & design notes
 VOCAL_AUTOTUNE_RESEARCH.md
+VOCAL_PROFILE.md
+vocal_profile*.md
