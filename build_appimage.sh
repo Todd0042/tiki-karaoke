@@ -11,7 +11,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILD_TMP="/tmp/tiki_build_$(date +%s)"
 OUT_DIR="${REPO_ROOT}/dist"
 APPDIR="/tmp/TikiKaraoke.AppDir"
-OUT_APPIMAGE="${OUT_DIR}/TikiKaraoke-v1.0.3-x86_64.AppImage"
+OUT_APPIMAGE="${OUT_DIR}/TikiKaraoke-v1.0.4-x86_64.AppImage"
 
 echo "=== [1/5] Setting up build directories ==="
 mkdir -p "$OUT_DIR"

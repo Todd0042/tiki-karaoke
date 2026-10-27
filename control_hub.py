@@ -136,7 +136,7 @@ class TikiControlHub:
 
         port = self.urls.get("port", "8000")
         pub_url = self.urls.get("public") or self.urls.get("join") or f"http://127.0.0.1:{port}"
-        status_text = f" Server Online on :{port}  •  v1.0.3"
+        status_text = f" Server Online on :{port}  •  v1.0.4"
         txt_lbl = tk.Label(status_frame, text=status_text, font=("Helvetica", 9), fg="#94a3b8", bg="#0d0814")
         txt_lbl.pack(side="left")
 
