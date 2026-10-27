@@ -26,7 +26,7 @@ cat << 'EOF' > "${BUILD_TMP}/docker_build.sh"
 set -e
 apt-get update
 apt-get install -y --no-install-recommends \
-    python3 python3-pip python3-venv python3-dev libpython3.11 binutils curl file ca-certificates gcc libc6-dev
+    python3 python3-pip python3-venv python3-dev python3-tk tk-dev libpython3.11 binutils curl file ca-certificates gcc libc6-dev
 
 python3 -m venv /tmp/venv
 . /tmp/venv/bin/activate
@@ -74,6 +74,11 @@ pyinstaller --clean -y --onedir \
     --collect-all pystray \
     --hidden-import Xlib \
     --collect-all Xlib \
+    --collect-all tkinter \
+    --collect-all PIL \
+    --hidden-import PIL._tkinter_finder \
+    --hidden-import tkinter \
+    --hidden-import tkinter.messagebox \
     /src/main.py
 EOF
 

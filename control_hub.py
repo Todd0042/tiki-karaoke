@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 Tiki Karaoke Lounge - Native Desktop Control Hub Window
 Provides a lightweight, zero-terminal desktop launcher with:
@@ -28,6 +29,8 @@ try:
 except Exception as e:
     HAS_GUI = False
     _gui_import_error = str(e)
+    tk = None
+    ImageTk = None
 
 
 class TikiControlHub:
