@@ -489,9 +489,9 @@
                 <div class="field-group" style="margin-top: 18px; padding-top: 14px; border-top: 1px solid rgba(255,255,255,0.08);">
                     <label for="micMonitoringModeSelect">🎧 Mic Monitoring Mode</label>
                     <select id="micMonitoringModeSelect" name="mic_monitoring_mode" onchange="onMonitoringModeChanged(this.value)" style="width: 100%;">
-                        <option value="native">Native OS Routing — Low-latency pactl / WASAPI loopback (recommended for wired speakers)</option>
-                        <option value="hardware_direct">Hardware Direct — Interface has its own zero-latency monitor knob (no software routing)</option>
-                        <option value="browser">Browser WebRTC — Software mic processing via browser (80–300ms, safe for Bluetooth / TV)</option>
+                        <option value="hardware_direct">Hardware Mixer / Direct Interface — Zero-latency hardware monitoring (Clean bypass, Pro Recommended)</option>
+                        <option value="native">Native OS Routing — Low-latency pactl / WASAPI loopback (recommended for wired PC soundcards)</option>
+                        <option value="browser">Browser WebRTC — Casual USB mic processing with software reverb & volume (Bluetooth / TV / Fallback)</option>
                     </select>
                     <div id="monitoringModeDesc" class="field-desc" style="margin-top: 6px;"></div>
 

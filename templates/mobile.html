@@ -549,9 +549,9 @@
                         <div style="margin-bottom: 10px;">
                             <label for="mobileMonitoringModeSelect" style="display: block; font-size: 0.74rem; font-weight: 700; color: var(--text-muted); margin-bottom: 4px;">Monitoring Mode:</label>
                             <select id="mobileMonitoringModeSelect" onchange="hostSetMonitoringMode(this.value)" style="width: 100%; padding: 8px 10px; border-radius: 8px; background: rgba(16, 28, 45, 0.95); border: 1px solid var(--border-neon); color: #fff; font-size: 0.8rem; outline: none;">
-                                <option value="native">Native OS Direct (Low latency pactl / WASAPI)</option>
-                                <option value="hardware_direct">Hardware Direct (Interface Monitor Knob)</option>
-                                <option value="browser">Browser WebRTC (Bluetooth / TV / Fallback)</option>
+                                <option value="hardware_direct">Hardware Mixer / Direct Interface (Clean Bypass - Pro Recommended)</option>
+                                <option value="native">Native OS Router (Low-latency loopback via pactl / WASAPI)</option>
+                                <option value="browser">Casual USB Mic DSP (Software Reverb & Volume - Bypassed for Mixers)</option>
                             </select>
                         </div>
                         <div>
@@ -1132,10 +1132,16 @@
                 <div class="avatar-option" data-avatar="🍍" onclick="selectAvatar(this)">🍍</div>
             </div>
 
-            <input type="text" id="singerNameInput" placeholder="Your Singer Nickname..." 
-                   oninput="onSingerNameInput(this.value)"
-                   onblur="onSingerNameInput(this.value)"
-                   style="width: 100%; padding: 14px; border-radius: 12px; background: rgba(0,0,0,0.6); border: 1px solid var(--border-neon); color: #fff; font-size: 1.1rem; text-align: center; margin-bottom: 12px; outline: none;">
+            <div style="display: flex; gap: 8px; margin-bottom: 12px;">
+                <input type="text" id="singerNameInput" placeholder="Your Singer Nickname..." 
+                       oninput="onSingerNameInput(this.value)"
+                       onblur="onSingerNameInput(this.value)"
+                       style="flex: 1; min-width: 0; padding: 14px; border-radius: 12px; background: rgba(0,0,0,0.6); border: 1px solid var(--border-neon); color: #fff; font-size: 1.05rem; text-align: center; outline: none;">
+                <button type="button" onclick="rollTikiPersona()" class="btn-ghost" title="Roll a fun Tiki Persona"
+                        style="padding: 0 14px; border-color: var(--neon-gold); color: var(--neon-gold); background: rgba(255, 183, 3, 0.1); border-radius: 12px; font-weight: 700; font-size: 0.88rem; white-space: nowrap; cursor: pointer;">
+                    🎲 Roll Alias
+                </button>
+            </div>
 
             <div id="nameErrorMsg" style="display: none; color: #ff5555; background: rgba(255,85,85,0.15); border: 1px solid rgba(255,85,85,0.4); padding: 8px 12px; border-radius: 8px; font-size: 0.85rem; margin-bottom: 14px; font-weight: 600;"></div>
 
@@ -1207,6 +1213,61 @@
 
             <!-- Modal Footer Actions -->
             <div id="previewModalActions" style="display: flex; gap: 10px; justify-content: flex-end;"></div>
+        </div>
+    </div>
+
+    <!-- Singer Private Rehearsal / Lyric Practice Modal -->
+    <div id="rehearsalPreviewModal" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.92); backdrop-filter: blur(14px); display: none; align-items: center; justify-content: center; z-index: 250; padding: 16px;" onclick="if(event.target === this) closeRehearsalModal()">
+        <div class="tiki-card" style="max-width: 500px; width: 100%; padding: 20px; border: 1px solid var(--neon-cyan); box-shadow: 0 0 30px rgba(0,240,255,0.25);">
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px;">
+                <div style="overflow: hidden; padding-right: 8px;">
+                    <span class="badge-local font-tiki" style="font-size: 0.72rem; padding: 2px 8px; color: var(--neon-cyan); border-color: var(--neon-cyan);">👁️ PRIVATE REHEARSAL</span>
+                    <h3 id="rehearsalModalTitle" style="font-size: 1.1rem; font-weight: 700; color: #fff; margin: 6px 0 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Song Title</h3>
+                    <div id="rehearsalModalArtist" style="font-size: 0.85rem; color: var(--neon-gold); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Artist Name</div>
+                </div>
+                <button type="button" onclick="closeRehearsalModal()" class="btn-ghost" style="padding: 4px 10px; font-size: 1.1rem; border-radius: 8px; cursor: pointer;">✕</button>
+            </div>
+
+            <!-- Video Viewport (16:9 ratio) -->
+            <div style="position: relative; width: 100%; padding-top: 56.25%; background: #000; border-radius: 12px; overflow: hidden; margin-bottom: 14px; border: 1px solid rgba(0, 240, 255, 0.35);">
+                <video id="rehearsalLocalVideo" controls playsinline muted style="display: none; position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: contain;"></video>
+                <iframe id="rehearsalYoutubeIframe" src="" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen style="display: none; position: absolute; top: 0; left: 0; width: 100%; height: 100%; border: none;"></iframe>
+            </div>
+
+            <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap;">
+                <div style="font-size: 0.74rem; color: var(--text-muted); display: flex; align-items: center; gap: 4px;">
+                    <span>🔒 Private Preview</span> • <span>Stage is not affected</span>
+                </div>
+                <div style="display: flex; gap: 8px;">
+                    <button type="button" id="rehearsalMuteToggleBtn" onclick="toggleRehearsalMute()" class="btn-ghost" style="padding: 6px 12px; font-size: 0.8rem; border-color: var(--neon-gold); color: var(--neon-gold); border-radius: 8px; cursor: pointer;">
+                        🔇 Unmute Audio
+                    </button>
+                    <button type="button" onclick="closeRehearsalModal()" class="btn-ghost" style="padding: 6px 14px; font-size: 0.85rem; border-radius: 8px; cursor: pointer;">
+                        Done
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Souvenir Album Art Modal -->
+    <div id="souvenirAlbumModal" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.92); backdrop-filter: blur(14px); display: none; align-items: center; justify-content: center; z-index: 260; padding: 16px;" onclick="if(event.target === this) closeSouvenirAlbumModal()">
+        <div class="tiki-card-pink" style="max-width: 440px; width: 100%; padding: 22px; text-align: center; border: 1px solid var(--neon-pink); box-shadow: 0 0 35px rgba(255,42,133,0.3);">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                <span class="font-tiki neon-gold" style="font-size: 0.95rem;">🎨 SOUVENIR ALBUM JACKET</span>
+                <button type="button" onclick="closeSouvenirAlbumModal()" class="btn-ghost" style="padding: 4px 10px; font-size: 1rem; border-radius: 8px; cursor: pointer;">✕</button>
+            </div>
+            <div style="position: relative; width: 100%; border-radius: 12px; overflow: hidden; margin-bottom: 14px; box-shadow: 0 8px 30px rgba(0,0,0,0.6); border: 2px solid rgba(255,183,3,0.4);">
+                <img id="souvenirAlbumImage" src="" alt="Souvenir Album Jacket" style="width: 100%; height: auto; display: block;">
+            </div>
+            <div style="font-size: 0.78rem; color: #cbd5e1; margin-bottom: 14px;">
+                📸 Long-press or tap below to save your retro record sleeve to your camera roll!
+            </div>
+            <div style="display: flex; gap: 8px; justify-content: center;">
+                <a id="souvenirDownloadBtn" href="" download="tiki_karaoke_souvenir.png" class="btn-neon-pink" style="padding: 10px 20px; font-weight: 700; text-decoration: none; border-radius: 10px;">
+                    ⬇️ Save to Camera Roll
+                </a>
+            </div>
         </div>
     </div>
 

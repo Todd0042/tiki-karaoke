@@ -10,7 +10,7 @@ let ytPlayer = null;
 let ws = null;
 let currentTrack = null;
 let intermissionTimer = null;
-let intermissionRemaining = 20;
+let intermissionRemaining = 15;
 let isIntermission = false;
 let isSpectatorViewer = false;
 let isMutedAudio = false;
@@ -53,6 +53,7 @@ document.addEventListener("DOMContentLoaded", () => {
     setupEventListeners();
     fetchCurrentState();
     fetchHostNetworkStatus();
+    initCrowdParticleEngine();
 });
 
 function initAudio() {
@@ -265,7 +266,7 @@ function handleSocketMessage(data) {
             updateNextTicker(data.queue);
             break;
         case "start_intermission":
-            triggerIntermission(data.next_track, data.duration || 20);
+            triggerIntermission(data.next_track, data.duration || 15);
             break;
         case "start_filler_buffer":
             triggerFillerBuffer(data.duration || 15);
@@ -868,6 +869,362 @@ function fadeInBGM() {
     }, 150);
 }
 
+// ==============================================================
+// 🌴 STAGE CROWD PARTICLE & AUDIO-REACTIVE LIVING TIKI ENGINE
+// ==============================================================
+let crowdCanvas = null;
+let crowdCtx = null;
+let crowdEmbers = [];
+let crowdParticles = [];
+let crowdAnimFrameId = null;
+let crowdBassSmooth = 0;
+let crowdHypeBannerTimer = null;
+
+function initCrowdParticleEngine() {
+    crowdCanvas = document.getElementById("crowdParticleCanvas");
+    if (!crowdCanvas) return;
+    crowdCtx = crowdCanvas.getContext("2d");
+    if (!crowdCtx) return;
+
+    function resizeCanvas() {
+        if (!crowdCanvas) return;
+        const rect = crowdCanvas.getBoundingClientRect();
+        if (rect.width > 0 && rect.height > 0) {
+            crowdCanvas.width = rect.width;
+            crowdCanvas.height = rect.height;
+        }
+    }
+    window.addEventListener("resize", resizeCanvas);
+    resizeCanvas();
+
+    // Initialize 24 ambient embers floating gently
+    crowdEmbers = [];
+    const emberColors = ["#ffb703", "#ff2a85", "#00f0ff", "#ff8800"];
+    for (let i = 0; i < 24; i++) {
+        crowdEmbers.push({
+            x: Math.random() * (crowdCanvas.width || 1920),
+            y: Math.random() * (crowdCanvas.height || 1080),
+            radius: 1.2 + Math.random() * 2.2,
+            vy: -0.35 - Math.random() * 0.65,
+            vxPhase: Math.random() * Math.PI * 2,
+            vxSpeed: 0.015 + Math.random() * 0.02,
+            alpha: 0.2 + Math.random() * 0.45,
+            color: emberColors[Math.floor(Math.random() * emberColors.length)]
+        });
+    }
+
+    if (crowdAnimFrameId) cancelAnimationFrame(crowdAnimFrameId);
+    renderCrowdParticlesLoop();
+}
+
+function renderCrowdParticlesLoop() {
+    if (!crowdCanvas || !crowdCtx) return;
+    const w = crowdCanvas.width;
+    const h = crowdCanvas.height;
+
+    crowdCtx.clearRect(0, 0, w, h);
+
+    // 1. Bass Energy Reading from AudioDSP
+    let targetBass = 0;
+    if (window.audioDSP && typeof window.audioDSP.getBassEnergy === "function") {
+        targetBass = window.audioDSP.getBassEnergy();
+    }
+    crowdBassSmooth = crowdBassSmooth * 0.82 + targetBass * 0.18;
+
+    // 2. Render Ambient Embers
+    const time = Date.now() * 0.002;
+    for (let i = 0; i < crowdEmbers.length; i++) {
+        const em = crowdEmbers[i];
+        em.y += em.vy;
+        em.x += Math.sin(time + em.vxPhase) * 0.45;
+        if (em.y < -15) {
+            em.y = h + 10;
+            em.x = Math.random() * w;
+        }
+        crowdCtx.save();
+        crowdCtx.globalAlpha = em.alpha;
+        crowdCtx.shadowBlur = 8;
+        crowdCtx.shadowColor = em.color;
+        crowdCtx.fillStyle = em.color;
+        crowdCtx.beginPath();
+        crowdCtx.arc(em.x, em.y, em.radius, 0, Math.PI * 2);
+        crowdCtx.fill();
+        crowdCtx.restore();
+    }
+
+    // 3. Render Audio-Reactive Living Neon Tiki Masks in Top Corners
+    if (w > 400 && h > 300) {
+        // Left Tiki Mask (Electric Cyan theme)
+        drawLivingTikiMask(crowdCtx, 52, 60, 0.72, "#00f0ff", "#ff2a85", crowdBassSmooth, true);
+        // Right Tiki Mask (Hot Magenta theme)
+        drawLivingTikiMask(crowdCtx, w - 52, 60, 0.72, "#ff2a85", "#00f0ff", crowdBassSmooth, false);
+    }
+
+    // 4. Render Active Reaction Particles
+    for (let i = crowdParticles.length - 1; i >= 0; i--) {
+        const p = crowdParticles[i];
+        p.life -= 1;
+        p.x += p.vx;
+        p.y += p.vy;
+        p.vy += p.gravity || 0;
+        p.alpha = Math.max(0, p.life / p.maxLife);
+
+        crowdCtx.save();
+        crowdCtx.globalAlpha = p.alpha;
+        crowdCtx.shadowBlur = p.glow ? 12 : 4;
+        crowdCtx.shadowColor = p.color;
+
+        if (p.type === "bubble") {
+            crowdCtx.strokeStyle = p.color;
+            crowdCtx.lineWidth = 1.5;
+            crowdCtx.beginPath();
+            crowdCtx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+            crowdCtx.stroke();
+            // Highlight shine
+            crowdCtx.fillStyle = "rgba(255, 255, 255, 0.8)";
+            crowdCtx.beginPath();
+            crowdCtx.arc(p.x - p.size * 0.35, p.y - p.size * 0.35, p.size * 0.25, 0, Math.PI * 2);
+            crowdCtx.fill();
+        } else if (p.type === "spark") {
+            crowdCtx.fillStyle = p.color;
+            crowdCtx.beginPath();
+            crowdCtx.arc(p.x, p.y, p.size * (p.life / p.maxLife), 0, Math.PI * 2);
+            crowdCtx.fill();
+        } else if (p.type === "star") {
+            drawStarParticle(crowdCtx, p.x, p.y, 4, p.size, p.size * 0.4, p.color);
+        } else {
+            // Default flame/burst
+            crowdCtx.fillStyle = p.color;
+            crowdCtx.beginPath();
+            crowdCtx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+            crowdCtx.fill();
+        }
+        crowdCtx.restore();
+
+        if (p.life <= 0) {
+            crowdParticles.splice(i, 1);
+        }
+    }
+
+    crowdAnimFrameId = requestAnimationFrame(renderCrowdParticlesLoop);
+}
+
+function drawStarParticle(ctx, cx, cy, spikes, outerRadius, innerRadius, color) {
+    let rot = Math.PI / 2 * 3;
+    let step = Math.PI / spikes;
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy - outerRadius);
+    for (let i = 0; i < spikes; i++) {
+        let x = cx + Math.cos(rot) * outerRadius;
+        let y = cy + Math.sin(rot) * outerRadius;
+        ctx.lineTo(x, y);
+        rot += step;
+        x = cx + Math.cos(rot) * innerRadius;
+        y = cy + Math.sin(rot) * innerRadius;
+        ctx.lineTo(x, y);
+        rot += step;
+    }
+    ctx.lineTo(cx, cy - outerRadius);
+    ctx.closePath();
+    ctx.fill();
+}
+
+function drawLivingTikiMask(ctx, cx, cy, baseScale, neonColor, eyeColor, bass, isLeft) {
+    ctx.save();
+    ctx.translate(cx, cy);
+    const pulse = 1.0 + bass * 0.22;
+    ctx.scale(baseScale * pulse, baseScale * pulse);
+
+    ctx.shadowBlur = 12 + bass * 35;
+    ctx.shadowColor = neonColor;
+    ctx.strokeStyle = neonColor;
+    ctx.lineWidth = 2.2;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+
+    // 1. Totem Headdress / Crown slats
+    ctx.beginPath();
+    ctx.moveTo(-24, -30);
+    ctx.lineTo(-32, -48);
+    ctx.lineTo(-18, -40);
+    ctx.lineTo(-8, -52);
+    ctx.lineTo(0, -42);
+    ctx.lineTo(8, -52);
+    ctx.lineTo(18, -40);
+    ctx.lineTo(32, -48);
+    ctx.lineTo(24, -30);
+    ctx.stroke();
+
+    // 2. Head Outline (Carved Totem geometry)
+    ctx.beginPath();
+    ctx.moveTo(-24, -30);
+    ctx.lineTo(24, -30);
+    ctx.lineTo(26, -10);
+    ctx.lineTo(21, 14);
+    ctx.lineTo(25, 34);
+    ctx.lineTo(16, 46);
+    ctx.lineTo(0, 50);
+    ctx.lineTo(-16, 46);
+    ctx.lineTo(-25, 34);
+    ctx.lineTo(-21, 14);
+    ctx.lineTo(-26, -10);
+    ctx.closePath();
+    ctx.stroke();
+
+    // 3. Forehead Tribal Chevron
+    ctx.beginPath();
+    ctx.moveTo(-16, -20);
+    ctx.lineTo(0, -14);
+    ctx.lineTo(16, -20);
+    ctx.stroke();
+
+    // 4. Carved Nose Bridge
+    ctx.beginPath();
+    ctx.moveTo(0, -10);
+    ctx.lineTo(0, 10);
+    ctx.lineTo(-7, 16);
+    ctx.lineTo(7, 16);
+    ctx.lineTo(0, 10);
+    ctx.stroke();
+
+    // 5. Living Glowing Tiki Eyes
+    const eyeGlowAlpha = Math.min(1.0, 0.45 + bass * 0.55);
+    ctx.save();
+    ctx.shadowBlur = 15 + bass * 30;
+    ctx.shadowColor = eyeColor;
+    ctx.fillStyle = eyeColor;
+    ctx.globalAlpha = eyeGlowAlpha;
+
+    // Left Eye (Slanted almond)
+    ctx.beginPath();
+    ctx.moveTo(-18, -4);
+    ctx.quadraticCurveTo(-11, -12, -4, -4);
+    ctx.quadraticCurveTo(-11, 2, -18, -4);
+    ctx.fill();
+
+    // Right Eye (Slanted almond)
+    ctx.beginPath();
+    ctx.moveTo(4, -4);
+    ctx.quadraticCurveTo(11, -12, 18, -4);
+    ctx.quadraticCurveTo(11, 2, 4, -4);
+    ctx.fill();
+    ctx.restore();
+
+    // 6. Grinning Mouth with Tiki Teeth
+    ctx.beginPath();
+    ctx.rect(-15, 23, 30, 14);
+    ctx.stroke();
+
+    // Carved teeth grid inside mouth
+    ctx.beginPath();
+    ctx.moveTo(-15, 30); ctx.lineTo(15, 30); // Center line
+    ctx.moveTo(-7.5, 23); ctx.lineTo(-7.5, 37); // Tooth separator L
+    ctx.moveTo(0, 23); ctx.lineTo(0, 37);       // Tooth separator C
+    ctx.moveTo(7.5, 23); ctx.lineTo(7.5, 37);   // Tooth separator R
+    ctx.stroke();
+
+    ctx.restore();
+}
+
+function spawnCrowdParticleBurst(emoji) {
+    if (!crowdCanvas) return;
+    const w = crowdCanvas.width || 1280;
+    const h = crowdCanvas.height || 720;
+
+    // Origin: near bottom right / QR code area if active, else stage lower third
+    const { activeQR } = getActiveReactionContainer();
+    let ox = w * 0.82;
+    let oy = h * 0.78;
+    if (activeQR) {
+        const rect = activeQR.getBoundingClientRect();
+        if (rect.width > 0) {
+            ox = rect.left + rect.width / 2;
+            oy = rect.top + 20;
+        }
+    }
+
+    if (emoji.includes("🔥")) {
+        // Flame / Firestorm explosion: 22 flame particles
+        const flameColors = ["#ff0055", "#ff5500", "#ffb703", "#ffea00", "#ffffff"];
+        for (let i = 0; i < 22; i++) {
+            crowdParticles.push({
+                x: ox + (Math.random() - 0.5) * 40,
+                y: oy + (Math.random() - 0.5) * 20,
+                vx: (Math.random() - 0.5) * 6,
+                vy: -3.5 - Math.random() * 6.5,
+                gravity: 0.08,
+                size: 4 + Math.random() * 6,
+                color: flameColors[Math.floor(Math.random() * flameColors.length)],
+                life: 45 + Math.floor(Math.random() * 30),
+                maxLife: 75,
+                type: "flame",
+                glow: true
+            });
+        }
+    } else if (emoji.includes("🍹") || emoji.includes("🍻")) {
+        // Cocktail Bubbles & Tropical Splash: 18 neon bubbles
+        const bubbleColors = ["#00f0ff", "#39ff14", "#ffffaa", "#00d4ff"];
+        for (let i = 0; i < 18; i++) {
+            crowdParticles.push({
+                x: ox + (Math.random() - 0.5) * 50,
+                y: oy + (Math.random() - 0.5) * 20,
+                vx: (Math.random() - 0.5) * 4.5,
+                vy: -2.2 - Math.random() * 4.8,
+                gravity: -0.04, // Float upward gently
+                size: 5 + Math.random() * 9,
+                color: bubbleColors[Math.floor(Math.random() * bubbleColors.length)],
+                life: 55 + Math.floor(Math.random() * 35),
+                maxLife: 90,
+                type: "bubble",
+                glow: true
+            });
+        }
+    } else {
+        // Starburst / Flower Blossom sparks (👏, 🌺, etc.): 20 radiant stars
+        const starColors = ["#ff2a85", "#ffb703", "#00f0ff", "#d946ef", "#ffffff"];
+        for (let i = 0; i < 20; i++) {
+            const angle = Math.random() * Math.PI * 2;
+            const speed = 2.5 + Math.random() * 6.0;
+            crowdParticles.push({
+                x: ox,
+                y: oy,
+                vx: Math.cos(angle) * speed,
+                vy: Math.sin(angle) * speed - 1.5,
+                gravity: 0.12,
+                size: 5 + Math.random() * 6,
+                color: starColors[Math.floor(Math.random() * starColors.length)],
+                life: 40 + Math.floor(Math.random() * 30),
+                maxLife: 70,
+                type: "star",
+                glow: true
+            });
+        }
+    }
+}
+
+function triggerCrowdHypeComboBanner(streak) {
+    const banner = document.getElementById("crowdHypeComboBanner");
+    if (!banner) return;
+
+    banner.style.display = "block";
+    requestAnimationFrame(() => {
+        banner.style.opacity = "1";
+        banner.style.transform = "translate(-50%, -50%) scale(1.0)";
+    });
+
+    clearTimeout(crowdHypeBannerTimer);
+    crowdHypeBannerTimer = setTimeout(() => {
+        banner.style.opacity = "0";
+        banner.style.transform = "translate(-50%, -50%) scale(0.6)";
+        setTimeout(() => {
+            if (banner.style.opacity === "0") {
+                banner.style.display = "none";
+            }
+        }, 350);
+    }, 3500);
+}
+
 // ==========================================
 // 🌴 Crowd Hype System & Floating Reactions
 // ==========================================
@@ -909,6 +1266,12 @@ function spawnFloatingEmoji(emoji) {
     reactionStreakTimer = setTimeout(() => {
         reactionStreakCount = 0;
     }, 3500);
+
+    // Stage Particle Burst & Hyper-Drive Combo Multiplier Banner
+    spawnCrowdParticleBurst(emoji);
+    if (reactionStreakCount >= 4) {
+        triggerCrowdHypeComboBanner(reactionStreakCount);
+    }
 
     // Is this a Milestone Hype event? (Every 5th reaction or when streak is a multiple of 5)
     const isMilestone = (reactionTotalCount % 5 === 0) || (reactionStreakCount >= 5 && reactionStreakCount % 5 === 0);

@@ -135,9 +135,17 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
 
+        CREATE TABLE IF NOT EXISTS filler_play_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            filler_id INTEGER NOT NULL,
+            is_sing_along INTEGER DEFAULT 0,
+            played_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_filler_play_history_id ON filler_play_history(id DESC);
+
         -- Default settings
         INSERT OR IGNORE INTO settings (key, value) VALUES ('tts_enabled', 'false');
-        INSERT OR IGNORE INTO settings (key, value) VALUES ('intermission_seconds', '20');
+        INSERT OR IGNORE INTO settings (key, value) VALUES ('intermission_seconds', '15');
         INSERT OR IGNORE INTO settings (key, value) VALUES ('bgm_enabled', 'true');
         INSERT OR IGNORE INTO settings (key, value) VALUES ('bgm_volume', '0.25');
         INSERT OR IGNORE INTO settings (key, value) VALUES ('bar_name', 'The Tiki Hut Karaoke Lounge');
@@ -1714,6 +1722,12 @@ def record_filler_play(filler_id: int, is_sing_along: bool = False):
                     last_played = CURRENT_TIMESTAMP
                 WHERE id = ?
             """, (filler_id,))
+
+        # Record into FIFO play history ring buffer table
+        conn.execute("""
+            INSERT INTO filler_play_history (filler_id, is_sing_along)
+            VALUES (?, ?)
+        """, (filler_id, 1 if is_sing_along else 0))
     conn.close()
 
 def get_next_vibe_filler_track(
@@ -1730,11 +1744,11 @@ def get_next_vibe_filler_track(
     - sing_along: Only downloaded sing-along tracks with lyrics.
     - intelligent_mashup: Sing-alongs when queue is naturally empty, music videos when show is paused.
     
-    Applies Vibe Engine scoring:
-    1. 90-Minute Sung Song Cooldown
-    2. Artist Diversity bonus/penalty
-    3. Genre & Year Proximity bonus
-    4. Fair Rotation across the crate
+    Upgraded Vibe Engine:
+    1. Rolling 3-Song Multi-History Context: Smoothed era release year + composite genre set + 3-artist diversity.
+    2. Adaptive FIFO Blacklist Ring Buffer (Last 6 Plays): Strictly excludes recently played filler tracks.
+    3. 90-Minute Sung Song Cooldown: Blocks music videos of tracks live guests sang tonight.
+    4. Fair Rotation across crate: Penalizes high play counts.
     """
     conn = get_db()
     strict_byom = get_setting("strict_byom_only", "false") == "true"
@@ -1790,7 +1804,28 @@ def get_next_vibe_filler_track(
         conn.close()
         return None
 
-    # 1. 90-Minute Sung Song Cooldown
+    # 1. FIFO Blacklist Ring Buffer (Last 6 Plays)
+    try:
+        filler_hist_rows = conn.execute("""
+            SELECT filler_id, is_sing_along
+            FROM filler_play_history
+            ORDER BY id DESC
+            LIMIT 7
+        """).fetchall()
+        recent_filler_keys = [(r["filler_id"], r["is_sing_along"]) for r in filler_hist_rows]
+    except Exception as e:
+        print(f"[Database] Error checking filler_play_history: {e}")
+        recent_filler_keys = []
+
+    # Adaptive ring buffer size: never starve a small crate
+    max_blacklist = min(6, max(0, len(candidate_pool) - 2))
+    if max_blacklist > 0 and recent_filler_keys:
+        active_blacklist = set(recent_filler_keys[:max_blacklist])
+        unblacklisted = [t for t in candidate_pool if (t["id"], 1 if t.get("is_sing_along") else 0) not in active_blacklist]
+        if unblacklisted:
+            candidate_pool = unblacklisted
+
+    # 2. 90-Minute Sung Song Cooldown
     try:
         recent_sung = conn.execute("""
             SELECT LOWER(t.title) as title, LOWER(t.artist) as artist
@@ -1803,7 +1838,58 @@ def get_next_vibe_filler_track(
         print(f"[Database] Error checking recent sung history: {e}")
         recent_sung_pairs = set()
 
+    # 3. Rolling 3-Song Multi-History Context (Era & Genre Vectors)
+    try:
+        recent_history_rows = [dict(r) for r in conn.execute("""
+            SELECT t.id, t.title, t.artist, coalesce(t.genre, '') as genre, coalesce(t.release_year, 0) as release_year
+            FROM history h
+            JOIN tracks t ON h.track_id = t.id
+            ORDER BY h.id DESC
+            LIMIT 3
+        """).fetchall()]
+    except Exception as e:
+        print(f"[Database] Error checking recent performance history: {e}")
+        recent_history_rows = []
+
     conn.close()
+
+    # Build composite rolling window of up to 3 songs
+    history_window = []
+    if last_track_artist or last_track_genre or last_track_year:
+        history_window.append({
+            "artist": last_track_artist or "",
+            "genre": last_track_genre or "",
+            "release_year": int(last_track_year or 0)
+        })
+    for r in recent_history_rows:
+        if len(history_window) >= 3:
+            break
+        # Avoid duplicate if first history row matches last_track
+        if history_window and history_window[0].get("artist", "").lower() == r.get("artist", "").lower() and history_window[0].get("release_year") == r.get("release_year"):
+            continue
+        history_window.append(r)
+
+    # Multi-artist blacklist from last 3 songs
+    recent_artists = {s["artist"].strip().lower() for s in history_window if s.get("artist")}
+
+    # Multi-genre set from last 3 songs (ordered by recency)
+    recent_genres = [s["genre"].strip().lower() for s in history_window if s.get("genre")]
+    latest_genre = recent_genres[0] if recent_genres else ""
+
+    # Weighted era release year calculation
+    years_with_weights = []
+    default_weights = [0.5, 0.3, 0.2]
+    for idx, s in enumerate(history_window):
+        y = s.get("release_year") or 0
+        if y > 0:
+            w = default_weights[idx] if idx < len(default_weights) else 0.2
+            years_with_weights.append((w, y))
+
+    if years_with_weights:
+        total_w = sum(w for w, _ in years_with_weights)
+        target_era_year = sum(w * y for w, y in years_with_weights) / total_w
+    else:
+        target_era_year = float(last_track_year) if last_track_year > 0 else 0.0
 
     # Filter out tracks sung recently tonight unless doing so leaves 0 candidates
     cooled_pool = []
@@ -1816,28 +1902,30 @@ def get_next_vibe_filler_track(
 
     pool = cooled_pool if cooled_pool else candidate_pool
 
-    # 2. Vibe Scoring Engine
+    # 4. Upgraded Vibe Scoring Engine
     def score_track(t: Dict[str, Any]) -> float:
         score = 100.0
 
-        # Artist diversity: heavy bonus for different artist
-        if last_track_artist:
-            if t["artist"].strip().lower() != last_track_artist.strip().lower():
-                score += 50.0
-            else:
-                score -= 80.0
-
-        # Genre affinity
-        if last_track_genre and t.get("genre"):
-            cand_g = t["genre"].strip().lower()
-            target_g = last_track_genre.strip().lower()
-            if cand_g == target_g or cand_g in target_g or target_g in cand_g:
-                score += 40.0
-
-        # Year / Era proximity
+        cand_artist = t["artist"].strip().lower()
+        cand_genre = (t.get("genre") or "").strip().lower()
         cand_year = t.get("release_year") or 0
-        if last_track_year > 0 and cand_year > 0:
-            year_diff = abs(cand_year - last_track_year)
+
+        # Multi-artist diversity: heavy penalty if artist appeared anywhere in last 3 songs
+        if cand_artist in recent_artists:
+            score -= 80.0
+        elif recent_artists:
+            score += 50.0
+
+        # Multi-genre affinity
+        if cand_genre:
+            if latest_genre and (cand_genre == latest_genre or cand_genre in latest_genre or latest_genre in cand_genre):
+                score += 40.0
+            elif any(cand_genre == g or cand_genre in g or g in cand_genre for g in recent_genres):
+                score += 25.0
+
+        # Era / Year proximity to smoothed 3-song target year
+        if target_era_year > 0 and cand_year > 0:
+            year_diff = abs(cand_year - target_era_year)
             if year_diff <= 3:
                 score += 35.0
             elif year_diff <= 7:
@@ -1845,7 +1933,7 @@ def get_next_vibe_filler_track(
             elif year_diff <= 12:
                 score += 10.0
             else:
-                score -= min(20.0, (year_diff - 12) * 1.5)
+                score -= min(25.0, (year_diff - 12) * 1.5)
 
         # Fair crate rotation: penalize higher play counts
         play_cnt = t.get("play_count") or 0

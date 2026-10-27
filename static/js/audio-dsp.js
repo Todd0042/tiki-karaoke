@@ -76,6 +76,11 @@ class AudioDSPPipeline {
         this.masterGain.connect(this.musicDuckingGain);
         this.musicDuckingGain.connect(this.masterSumNode);
 
+        // Music Bass Analyser (for audio-reactive stage visuals)
+        this.musicAnalyser = this.ctx.createAnalyser();
+        this.musicAnalyser.fftSize = 64;
+        this.masterGain.connect(this.musicAnalyser);
+
         // 7. Venue A/V Sync Delay Node
         this.avDelayNode = this.ctx.createDelay(1.0);
         this.avDelayNode.delayTime.value = Math.max(0, this.currentSyncOffsetMs) / 1000.0;
@@ -459,6 +464,18 @@ class AudioDSPPipeline {
             peakR: Math.min(100, Math.round((maxR / 128) * 100)),
             isLive: !this.micMuted
         };
+    }
+
+    getBassEnergy() {
+        if (!this.musicAnalyser) return 0;
+        try {
+            const data = new Uint8Array(this.musicAnalyser.frequencyBinCount);
+            this.musicAnalyser.getByteFrequencyData(data);
+            const bass = (data[0] + data[1] + data[2]) / 3.0;
+            return Math.min(1.0, bass / 255.0);
+        } catch (e) {
+            return 0;
+        }
     }
 
     setPitch(semitones) {

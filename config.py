@@ -180,7 +180,7 @@ DEFAULT_CONFIG = {
     "duckdns_domain": "",
     "duckdns_token": "",
     "target_lufs": -16.0,
-    "intermission_seconds": 20,
+    "intermission_seconds": 15,
     "tts_enabled": False,
     "bgm_enabled": True,
     "bgm_volume": 0.25,
@@ -632,7 +632,7 @@ def refresh_globals():
     PORT = int(os.getenv("TIKI_PORT", str(_current_cfg.get("port", 8000))))
     PUBLIC_HOST = os.getenv("TIKI_PUBLIC_HOST", _current_cfg.get("public_host", "")).strip()
     TARGET_LUFS = float(_current_cfg.get("target_lufs", -23.0))
-    DEFAULT_INTERMISSION_SECONDS = int(_current_cfg.get("intermission_seconds", 20))
+    DEFAULT_INTERMISSION_SECONDS = int(_current_cfg.get("intermission_seconds", 15))
     REMOTE_MODE = os.getenv("TIKI_REMOTE_MODE", _current_cfg.get("remote_mode", "cloudflare_quick"))
     REMOTE_PORT = int(os.getenv("TIKI_REMOTE_PORT", str(_current_cfg.get("remote_port", 38480))))
     BAR_NAME = os.getenv("TIKI_BAR_NAME", _current_cfg.get("bar_name", "The Tiki Hut Karaoke Lounge"))
@@ -761,7 +761,7 @@ HOST_PIN = os.getenv("TIKI_HOST_PIN", _current_cfg.get("host_pin", "1234"))
 PORT = int(os.getenv("TIKI_PORT", str(_current_cfg.get("port", 8000))))
 PUBLIC_HOST = os.getenv("TIKI_PUBLIC_HOST", _current_cfg.get("public_host", "")).strip()
 TARGET_LUFS = float(_current_cfg.get("target_lufs", -23.0))
-DEFAULT_INTERMISSION_SECONDS = int(_current_cfg.get("intermission_seconds", 20))
+DEFAULT_INTERMISSION_SECONDS = int(_current_cfg.get("intermission_seconds", 15))
 REMOTE_MODE = os.getenv("TIKI_REMOTE_MODE", _current_cfg.get("remote_mode", "bore"))
 REMOTE_PORT = int(os.getenv("TIKI_REMOTE_PORT", str(_current_cfg.get("remote_port", 38480))))
 BAR_NAME = os.getenv("TIKI_BAR_NAME", _current_cfg.get("bar_name", "The Tiki Hut Karaoke Lounge"))

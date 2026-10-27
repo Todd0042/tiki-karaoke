@@ -212,6 +212,15 @@
             <div id="youtubeContainer" style="display: none;">
                 <div id="youtubePlayer"></div>
             </div>
+            <!-- Stage Particle & Audio-Reactive Canvas Layer -->
+            <canvas id="crowdParticleCanvas" style="position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 15;"></canvas>
+            <!-- Crowd Hype Combo Multiplier Banner -->
+            <div id="crowdHypeComboBanner" style="position: absolute; top: 35%; left: 50%; transform: translate(-50%, -50%) scale(0.6); display: none; opacity: 0; z-index: 28; pointer-events: none; text-align: center; transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);">
+                <div style="background: rgba(8, 6, 18, 0.92); border: 3px solid var(--neon-gold); box-shadow: 0 0 45px rgba(255, 183, 3, 0.7), inset 0 0 20px rgba(255, 42, 133, 0.5); border-radius: 24px; padding: 18px 36px;">
+                    <div class="font-tiki neon-gold" style="font-size: 2.6rem; letter-spacing: 2px; text-shadow: 0 0 20px #ffb703;">🔥 CROWD IN HYPER-DRIVE! 🔥</div>
+                    <div style="color: #fff; font-size: 1.15rem; font-weight: 700; margin-top: 4px; letter-spacing: 1px;">THE LOUNGE IS GOING WILD! 🍹👏🌴</div>
+                </div>
+            </div>
         </div>
 
         <!-- Tap to Start / Unmute Overlay (For Mobile & Autoplay Policy) -->

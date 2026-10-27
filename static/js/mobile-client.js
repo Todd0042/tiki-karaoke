@@ -1365,7 +1365,15 @@ function renderQueue(queue) {
                     </div>
                 </div>
 
-                <div style="display: flex; align-items: center; gap: 6px; flex-shrink: 0;">
+                <div style="display: flex; align-items: center; gap: 6px; flex-shrink: 0; flex-wrap: wrap; justify-content: flex-end;">
+                    ${amISingerOnSong && !isPlaying ? `
+                        <button onclick="openRehearsalModal(${item.track_id}, '${escapeHtml(item.title)}', '${escapeHtml(item.artist)}', '${item.video_id || ''}', ${item.is_downloaded ? 1 : 0})" 
+                                class="btn-ghost" 
+                                style="padding: 6px 10px; font-size: 0.76rem; font-weight: 700; color: var(--neon-cyan); border-color: rgba(0,240,255,0.4); border-radius: 8px; white-space: nowrap;" title="Privately rehearse video & lyrics">
+                            👁️ Rehearse
+                        </button>
+                    ` : ''}
+
                     ${showDuetToggle ? `
                         <button onclick="${isLeaving ? `leaveQueueDuet(${item.queue_id})` : `joinQueueDuet(${item.queue_id})`}" 
                                 class="btn-ghost ${duetBtnClass}" 
@@ -3976,9 +3984,14 @@ async function loadSingerRecordings() {
                         <div style="font-size: 0.8rem; color: var(--neon-gold);">${escapeHtml(r.artist || 'Live at Tiki Lounge')}</div>
                         <div style="font-size: 0.72rem; color: var(--text-muted); margin-top: 2px;">Recorded at ${createdDate} ${durationMins ? `• ${durationMins}` : ''}</div>
                     </div>
-                    <a href="/api/recordings/${r.id}/download" download class="btn-ghost" style="padding: 6px 10px; font-size: 0.75rem; border-color: var(--neon-cyan); color: var(--neon-cyan); text-decoration: none; border-radius: 6px; display: flex; align-items: center; gap: 4px; white-space: nowrap;">
-                        ⬇️ MP3
-                    </a>
+                    <div style="display: flex; gap: 6px; flex-shrink: 0;">
+                        <button onclick="generateSouvenirAlbumArt(${r.id}, '${escapeHtml(r.title || 'Karaoke Performance')}', '${escapeHtml(r.artist || 'Live at Tiki Lounge')}', '${escapeHtml(currentSinger ? currentSinger.name : 'Singer')}', '${currentSinger ? currentSinger.avatar : '🌺'}', '${createdDate}')" class="btn-ghost" style="padding: 6px 10px; font-size: 0.75rem; border-color: var(--neon-pink); color: var(--neon-pink); border-radius: 6px; display: flex; align-items: center; gap: 4px; white-space: nowrap;">
+                            🎨 Art
+                        </button>
+                        <a href="/api/recordings/${r.id}/download" download class="btn-ghost" style="padding: 6px 10px; font-size: 0.75rem; border-color: var(--neon-cyan); color: var(--neon-cyan); text-decoration: none; border-radius: 6px; display: flex; align-items: center; gap: 4px; white-space: nowrap;">
+                            ⬇️ MP3
+                        </a>
+                    </div>
                 </div>
                 <audio controls preload="none" style="width: 100%; height: 32px; border-radius: 6px; margin-top: 4px;">
                     <source src="/api/recordings/${r.id}/stream" type="audio/mpeg">
@@ -3990,6 +4003,253 @@ async function loadSingerRecordings() {
     } catch (e) {
         container.innerHTML = `<div style="text-align: center; color: #ff5555; font-size: 0.8rem; padding: 12px;">Failed to load recordings: ${e.message}</div>`;
     }
+}
+
+// -------------------------------------------------------------
+// Singer Rehearsal & Lyric Preview Engine
+// -------------------------------------------------------------
+let rehearsalIsMuted = true;
+
+function openRehearsalModal(trackId, title, artist, videoId, isDownloaded) {
+    const modal = document.getElementById("rehearsalPreviewModal");
+    if (!modal) return;
+
+    const titleEl = document.getElementById("rehearsalModalTitle");
+    const artistEl = document.getElementById("rehearsalModalArtist");
+    const localV = document.getElementById("rehearsalLocalVideo");
+    const iframe = document.getElementById("rehearsalYoutubeIframe");
+    const muteBtn = document.getElementById("rehearsalMuteToggleBtn");
+
+    if (titleEl) titleEl.innerText = title || "Karaoke Song";
+    if (artistEl) artistEl.innerText = artist || "";
+
+    rehearsalIsMuted = true;
+    if (muteBtn) {
+        muteBtn.innerText = "🔇 Unmute Audio";
+        muteBtn.style.color = "var(--neon-gold)";
+        muteBtn.style.borderColor = "var(--neon-gold)";
+    }
+
+    if (isDownloaded && localV) {
+        if (iframe) { iframe.src = ""; iframe.style.display = "none"; }
+        localV.style.display = "block";
+        localV.muted = true;
+        localV.src = `/stream/${trackId}`;
+        localV.play().catch(() => {});
+    } else if (videoId && iframe) {
+        if (localV) { localV.pause(); localV.removeAttribute("src"); localV.style.display = "none"; }
+        iframe.style.display = "block";
+        iframe.src = `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&mute=1`;
+    }
+
+    modal.style.display = "flex";
+}
+
+function closeRehearsalModal() {
+    const modal = document.getElementById("rehearsalPreviewModal");
+    if (modal) modal.style.display = "none";
+
+    const localV = document.getElementById("rehearsalLocalVideo");
+    if (localV) {
+        localV.pause();
+        localV.removeAttribute("src");
+        localV.load();
+        localV.style.display = "none";
+    }
+
+    const iframe = document.getElementById("rehearsalYoutubeIframe");
+    if (iframe) {
+        iframe.src = "";
+        iframe.style.display = "none";
+    }
+}
+
+function toggleRehearsalMute() {
+    rehearsalIsMuted = !rehearsalIsMuted;
+    const localV = document.getElementById("rehearsalLocalVideo");
+    const muteBtn = document.getElementById("rehearsalMuteToggleBtn");
+
+    if (localV && localV.style.display !== "none") {
+        localV.muted = rehearsalIsMuted;
+    }
+    if (muteBtn) {
+        if (rehearsalIsMuted) {
+            muteBtn.innerText = "🔇 Unmute Audio";
+            muteBtn.style.color = "var(--neon-gold)";
+            muteBtn.style.borderColor = "var(--neon-gold)";
+        } else {
+            muteBtn.innerText = "🔊 Mute Audio";
+            muteBtn.style.color = "var(--neon-cyan)";
+            muteBtn.style.borderColor = "var(--neon-cyan)";
+        }
+    }
+}
+
+// -------------------------------------------------------------
+// Tiki Persona & Nickname Roller
+// -------------------------------------------------------------
+const TIKI_PERSONAS = [
+    { name: "Captain Mai Tai", avatar: "🍹" },
+    { name: "Neon Kahuna", avatar: "🌴" },
+    { name: "Disco Flamingo", avatar: "🦩" },
+    { name: "Velvet Volcano", avatar: "🌋" },
+    { name: "The Ukulele Phantom", avatar: "🌺" },
+    { name: "Sunset Sinatra", avatar: "🕶️" },
+    { name: "Retro Rumrunner", avatar: "🥥" },
+    { name: "Coco Loco", avatar: "🍍" },
+    { name: "Lagoon Legend", avatar: "🏄" },
+    { name: "Tropical Thunder", avatar: "⚡" },
+    { name: "Bamboo Boogeyman", avatar: "🦜" },
+    { name: "Island Idol", avatar: "👑" },
+    { name: "Electric Hibiscus", avatar: "🌺" },
+    { name: "Polynesian Prince", avatar: "🌴" }
+];
+
+function rollTikiPersona() {
+    const input = document.getElementById("singerNameInput");
+    if (!input) return;
+
+    const pick = TIKI_PERSONAS[Math.floor(Math.random() * TIKI_PERSONAS.length)];
+    input.value = pick.name;
+
+    const options = document.querySelectorAll("#avatarPickerContainer .avatar-option");
+    options.forEach(opt => {
+        if (opt.dataset.avatar === pick.avatar) {
+            options.forEach(o => o.classList.remove("selected"));
+            opt.classList.add("selected");
+        }
+    });
+
+    onSingerNameInput(pick.name);
+    showToast(`🎲 Rolled Persona: ${pick.avatar} ${pick.name}!`);
+}
+
+// -------------------------------------------------------------
+// Souvenir Retro Vinyl / Cassette Album Art Generator
+// -------------------------------------------------------------
+function generateSouvenirAlbumArt(recId, title, artist, singerName, singerAvatar, dateStr) {
+    const modal = document.getElementById("souvenirAlbumModal");
+    const imgEl = document.getElementById("souvenirAlbumImage");
+    const downloadBtn = document.getElementById("souvenirDownloadBtn");
+    if (!modal || !imgEl) return;
+
+    const canvas = document.createElement("canvas");
+    canvas.width = 1080;
+    canvas.height = 1080;
+    const ctx = canvas.getContext("2d");
+
+    // 1. Synthwave Dark Tropical Background Gradient
+    const bgGrad = ctx.createLinearGradient(0, 0, 1080, 1080);
+    bgGrad.addColorStop(0, "#080612");
+    bgGrad.addColorStop(0.5, "#15092a");
+    bgGrad.addColorStop(1, "#031726");
+    ctx.fillStyle = bgGrad;
+    ctx.fillRect(0, 0, 1080, 1080);
+
+    // 2. Vinyl Record Grooves Graphic
+    const cx = 540;
+    const cy = 460;
+    ctx.save();
+    for (let r = 400; r >= 160; r -= 18) {
+        ctx.beginPath();
+        ctx.arc(cx, cy, r, 0, Math.PI * 2);
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.04)";
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+    }
+
+    // Vinyl Outer Edge Glow
+    ctx.beginPath();
+    ctx.arc(cx, cy, 415, 0, Math.PI * 2);
+    ctx.strokeStyle = "rgba(0, 240, 255, 0.35)";
+    ctx.lineWidth = 4;
+    ctx.stroke();
+
+    // Vinyl Center Label
+    const centerGrad = ctx.createRadialGradient(cx, cy, 30, cx, cy, 150);
+    centerGrad.addColorStop(0, "#ff2a85");
+    centerGrad.addColorStop(0.7, "#7928ca");
+    centerGrad.addColorStop(1, "#180829");
+    ctx.beginPath();
+    ctx.arc(cx, cy, 150, 0, Math.PI * 2);
+    ctx.fillStyle = centerGrad;
+    ctx.fill();
+    ctx.strokeStyle = "rgba(255, 183, 3, 0.6)";
+    ctx.lineWidth = 3;
+    ctx.stroke();
+
+    // Center Spindle Hole
+    ctx.beginPath();
+    ctx.arc(cx, cy, 24, 0, Math.PI * 2);
+    ctx.fillStyle = "#080612";
+    ctx.fill();
+    ctx.restore();
+
+    // 3. Vintage Outer Cardboard Frame & Neon Border
+    ctx.strokeStyle = "rgba(0, 240, 255, 0.5)";
+    ctx.lineWidth = 14;
+    ctx.strokeRect(40, 40, 1000, 1000);
+
+    ctx.strokeStyle = "rgba(255, 42, 133, 0.6)";
+    ctx.lineWidth = 3;
+    ctx.strokeRect(58, 58, 964, 964);
+
+    // 4. Vintage Header Badges
+    ctx.fillStyle = "#ffb703";
+    ctx.font = "bold 26px sans-serif";
+    ctx.textAlign = "left";
+    ctx.fillText("🌴 TIKI LOUNGE RECORDS • STEREO HIGH-FIDELITY", 80, 105);
+
+    ctx.fillStyle = "#00f0ff";
+    ctx.font = "bold 24px sans-serif";
+    ctx.textAlign = "right";
+    ctx.fillText("45 RPM • SOUVENIR EDITION", 1000, 105);
+
+    // 5. Singer & Track Title Typography
+    ctx.textAlign = "center";
+
+    ctx.font = "60px sans-serif";
+    ctx.fillText(singerAvatar || "🌺", cx, 360);
+
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 34px sans-serif";
+    ctx.fillText(`FEATURING: ${singerName.toUpperCase()}`, cx, 415);
+
+    ctx.fillStyle = "rgba(255,255,255,0.7)";
+    ctx.font = "bold 20px sans-serif";
+    ctx.fillText("SIDE A • LIVE STAGE RECORDING", cx, 450);
+
+    // Bottom Track Info Plaque
+    ctx.fillStyle = "rgba(8, 14, 24, 0.85)";
+    ctx.fillRect(80, 860, 920, 130);
+    ctx.strokeStyle = "rgba(255, 183, 3, 0.5)";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(80, 860, 920, 130);
+
+    // Track Title
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 44px sans-serif";
+    const displayTitle = title.length > 28 ? title.substring(0, 26) + "..." : title;
+    ctx.fillText(`"${displayTitle}"`, cx, 915);
+
+    // Artist & Recording Info
+    ctx.fillStyle = "#00f0ff";
+    ctx.font = "26px sans-serif";
+    ctx.fillText(`Originally by ${artist} • Recorded Live ${dateStr || ''}`, cx, 960);
+
+    // Convert to Image Data
+    const dataUrl = canvas.toDataURL("image/png");
+    imgEl.src = dataUrl;
+    if (downloadBtn) {
+        downloadBtn.href = dataUrl;
+        downloadBtn.download = `${title.replace(/[^a-zA-Z0-9]/g, '_')}_tiki_record.png`;
+    }
+    modal.style.display = "flex";
+}
+
+function closeSouvenirAlbumModal() {
+    const modal = document.getElementById("souvenirAlbumModal");
+    if (modal) modal.style.display = "none";
 }
 
 async function submitLocalKaraokeImport() {
