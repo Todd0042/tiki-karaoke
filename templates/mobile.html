@@ -616,6 +616,15 @@
                                     Clear
                                 </button>
                             </div>
+                            <div style="display: flex; align-items: center; justify-content: space-between; margin-top: 10px; padding-top: 8px; border-top: 1px dashed rgba(255, 183, 3, 0.25);">
+                                <span style="font-size: 0.75rem; color: #cbd5e1; font-weight: 600;">Scroll Speed:</span>
+                                <select id="hostMarqueeSpeedSelect" onchange="updateHostMarqueeSpeed(this.value)" style="padding: 4px 8px; border-radius: 6px; background: rgba(0,0,0,0.6); border: 1px solid rgba(255,183,3,0.4); color: var(--neon-gold); font-size: 0.75rem; font-weight: 600; cursor: pointer;">
+                                    <option value="60">Calm / Relaxed (60 px/s)</option>
+                                    <option value="85" selected>Standard (85 px/s)</option>
+                                    <option value="115">Brisk Party (115 px/s)</option>
+                                    <option value="145">Fast Crawl (145 px/s)</option>
+                                </select>
+                            </div>
                             <div id="marqueeBroadcastFeedback" style="display: none; margin-top: 6px; font-size: 0.72rem; color: var(--neon-lime); text-align: center;"></div>
                         </div>
 

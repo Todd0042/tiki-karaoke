@@ -198,8 +198,8 @@
         }
 
         @keyframes tickerMarquee {
-            0% { transform: translateX(100vw); }
-            100% { transform: translateX(-100%); }
+            0% { transform: translateX(var(--marquee-start, 100vw)); }
+            100% { transform: translateX(var(--marquee-end, -100%)); }
         }
     </style>
 </head>
@@ -356,7 +356,7 @@
 
         <!-- BGM Filler Bottom Scrolling Ticker -->
         <div id="fillerTickerBar" style="display: none; position: absolute; bottom: 0; left: 0; right: 0; height: 38px; z-index: 18; background: rgba(8, 14, 24, 0.95); border-top: 1px solid rgba(0, 240, 255, 0.3); overflow: hidden; align-items: center;">
-            <div id="fillerTickerText" style="white-space: nowrap; font-size: 0.95rem; font-weight: 600; color: var(--neon-cyan); will-change: transform; display: inline-block; animation: tickerMarquee 25s linear infinite;">
+            <div id="fillerTickerText" style="white-space: nowrap; font-size: 0.95rem; font-weight: 600; color: var(--neon-cyan); will-change: transform; display: inline-block;">
                 🌴 DJ LOUNGE MUSIC • 🌺 OPEN MIC: Scan the QR code to queue your favorite song!
             </div>
         </div>

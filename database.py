@@ -160,6 +160,7 @@ def init_db():
         INSERT OR IGNORE INTO settings (key, value) VALUES ('hotspot_enabled', 'false');
         INSERT OR IGNORE INTO settings (key, value) VALUES ('hotspot_ssid', '');
         INSERT OR IGNORE INTO settings (key, value) VALUES ('hotspot_password', '');
+        INSERT OR IGNORE INTO settings (key, value) VALUES ('marquee_scroll_speed', '85');
         """)
 
         # Migration: Ensure strict_byom_only defaults to 'false' (online search ON by default)

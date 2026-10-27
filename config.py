@@ -211,7 +211,8 @@ DEFAULT_CONFIG = {
     "host_display_width": 1920,
     "host_display_height": 1080,
     "host_kiosk_mode": False,
-    "video_quality_profile": "pro"
+    "video_quality_profile": "pro",
+    "marquee_scroll_speed": 85
 }
 
 def get_available_displays() -> List[Dict[str, Any]]:

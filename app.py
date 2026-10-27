@@ -482,6 +482,10 @@ class MarqueeMessageRequest(BaseModel):
     message: str
     duration_minutes: Optional[int] = 0
     mode: Optional[str] = "auto"
+    speed: Optional[int] = None
+
+class MarqueeSpeedRequest(BaseModel):
+    speed: int
 
 class JoinDuetRequest(BaseModel):
     singer_token: str
@@ -1841,7 +1845,8 @@ async def api_get_state():
             "expires_at": marquee_expires_at,
             "mode": marquee_mode,
             "queue_ticker": queue_ticker_str,
-            "current_dedication": current.get("dedication", "") if current else ""
+            "current_dedication": current.get("dedication", "") if current else "",
+            "speed": int(get_setting("marquee_scroll_speed", "85"))
         },
         "intermission_seconds": intermission_remaining,
         "has_stage_display": len(stage_displays) > 0,
@@ -2779,19 +2784,40 @@ async def api_set_marquee(req: MarqueeMessageRequest, request: Request):
         marquee_expires_at = None
     if req.mode:
         marquee_mode = req.mode
+    if req.speed is not None and req.speed > 0:
+        bounded_speed = max(30, min(300, req.speed))
+        set_setting("marquee_scroll_speed", str(bounded_speed))
 
+    current_speed = int(get_setting("marquee_scroll_speed", "85"))
     await manager.broadcast({
         "type": "marquee_updated",
         "message": active_marquee_message,
         "mode": marquee_mode,
-        "expires_at": marquee_expires_at
+        "expires_at": marquee_expires_at,
+        "speed": current_speed
     })
     return {
         "status": "ok",
         "message": active_marquee_message,
         "mode": marquee_mode,
-        "expires_at": marquee_expires_at
+        "expires_at": marquee_expires_at,
+        "speed": current_speed
     }
+
+@app.post("/api/host/marquee/speed")
+async def api_set_marquee_speed(req: MarqueeSpeedRequest, request: Request):
+    if not (is_host_request(request) or is_local_request(request)):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
+    bounded_speed = max(30, min(300, req.speed))
+    set_setting("marquee_scroll_speed", str(bounded_speed))
+    await manager.broadcast({
+        "type": "marquee_updated",
+        "message": active_marquee_message,
+        "mode": marquee_mode,
+        "expires_at": marquee_expires_at,
+        "speed": bounded_speed
+    })
+    return {"status": "ok", "speed": bounded_speed}
 
 @app.delete("/api/host/marquee")
 async def api_clear_marquee(request: Request):
@@ -2800,13 +2826,15 @@ async def api_clear_marquee(request: Request):
     global active_marquee_message, marquee_expires_at
     active_marquee_message = None
     marquee_expires_at = None
+    current_speed = int(get_setting("marquee_scroll_speed", "85"))
     await manager.broadcast({
         "type": "marquee_updated",
         "message": None,
         "mode": marquee_mode,
-        "expires_at": None
+        "expires_at": None,
+        "speed": current_speed
     })
-    return {"status": "ok", "cleared": True}
+    return {"status": "ok", "cleared": True, "speed": current_speed}
 
 # ------------------------------------------------------------------------------
 # Live Singer Performance Recording Endpoints

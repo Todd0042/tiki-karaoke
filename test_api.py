@@ -1279,6 +1279,64 @@ class TestAPIEndpoints(unittest.TestCase):
         set_setting("remote_mode", "cloudflare_quick")
         set_setting("hotspot_enabled", "false")
 
+    def test_marquee_configuration_and_speed_control(self):
+        """Verifies stage marquee speed configuration, bounds validation, and Host Desk control."""
+        from config import DEFAULT_CONFIG, HOST_TOKEN
+        from database import get_setting, set_setting
+
+        # 1. Config default
+        self.assertEqual(DEFAULT_CONFIG.get("marquee_scroll_speed"), 85)
+
+        # 2. State endpoint reflects marquee speed
+        res = self.client.get("/api/state")
+        self.assertEqual(res.status_code, 200)
+        state_data = res.json()
+        self.assertIn("marquee", state_data)
+        self.assertEqual(state_data["marquee"]["speed"], int(get_setting("marquee_scroll_speed", "85")))
+
+        # 3. Post announcement with speed requires auth
+        unauth_res = self.client.post("/api/host/marquee", json={
+            "message": "Welcome singers!",
+            "duration_minutes": 10,
+            "speed": 115
+        })
+        self.assertEqual(unauth_res.status_code, 403)
+
+        # 4. Authorized post announcement with speed updates setting and returns payload
+        auth_res = self.client.post("/api/host/marquee", json={
+            "message": "Welcome singers!",
+            "duration_minutes": 10,
+            "speed": 115
+        }, headers={"X-Host-Token": HOST_TOKEN})
+        self.assertEqual(auth_res.status_code, 200)
+        auth_data = auth_res.json()
+        self.assertEqual(auth_data["status"], "ok")
+        self.assertEqual(auth_data["message"], "Welcome singers!")
+        self.assertEqual(auth_data["speed"], 115)
+        self.assertEqual(get_setting("marquee_scroll_speed"), "115")
+
+        # 5. Dedicated speed endpoint updates speed independently
+        speed_res = self.client.post("/api/host/marquee/speed", json={"speed": 145}, headers={"X-Host-Token": HOST_TOKEN})
+        self.assertEqual(speed_res.status_code, 200)
+        self.assertEqual(speed_res.json()["speed"], 145)
+        self.assertEqual(get_setting("marquee_scroll_speed"), "145")
+
+        # 6. Bounding check (clamp between 30 and 300)
+        clamp_low = self.client.post("/api/host/marquee/speed", json={"speed": 10}, headers={"X-Host-Token": HOST_TOKEN})
+        self.assertEqual(clamp_low.json()["speed"], 30)
+
+        clamp_high = self.client.post("/api/host/marquee/speed", json={"speed": 999}, headers={"X-Host-Token": HOST_TOKEN})
+        self.assertEqual(clamp_high.json()["speed"], 300)
+
+        # 7. Clear marquee maintains configured speed
+        clear_res = self.client.delete("/api/host/marquee", headers={"X-Host-Token": HOST_TOKEN})
+        self.assertEqual(clear_res.status_code, 200)
+        self.assertTrue(clear_res.json()["cleared"])
+        self.assertEqual(clear_res.json()["speed"], 300)
+
+        # Reset to default
+        set_setting("marquee_scroll_speed", "85")
+
 if __name__ == "__main__":
     unittest.main()
 

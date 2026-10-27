@@ -1522,8 +1522,22 @@ function fetchCurrentState(forceResync = false) {
             }
             if (data.queue) updateNextTicker(data.queue);
             if (data.marquee) {
-                currentMarqueeState = data.marquee;
-                renderStageMarquee();
+                if (data.marquee.speed) {
+                    configuredMarqueeSpeed = parseInt(data.marquee.speed, 10) || configuredMarqueeSpeed;
+                }
+                const newM = data.marquee;
+                const oldM = currentMarqueeState;
+                const changed = !oldM ||
+                    oldM.message !== newM.message ||
+                    oldM.mode !== newM.mode ||
+                    oldM.expires_at !== newM.expires_at ||
+                    oldM.queue_ticker !== newM.queue_ticker ||
+                    oldM.current_dedication !== newM.current_dedication ||
+                    oldM.speed !== newM.speed;
+                currentMarqueeState = newM;
+                if (changed) {
+                    renderStageMarquee();
+                }
             }
         })
         .catch(err => {
@@ -1801,18 +1815,35 @@ function triggerFillerBuffer(durationSeconds) {
     fadeInBGM();
 }
 
-function triggerTickerScroll() {
+function triggerTickerScroll(resetAnimation = true) {
+    const tickerBar = document.getElementById("fillerTickerBar");
     const tickerText = document.getElementById("fillerTickerText");
-    if (!tickerText) return;
-    tickerText.style.animation = "none";
-    tickerText.style.paddingLeft = "0";
+    if (!tickerBar || !tickerText) return;
+
+    tickerBar.style.display = "flex";
     tickerText.style.display = "inline-block";
     tickerText.style.whiteSpace = "nowrap";
-    tickerText.offsetHeight; // trigger reflow to reset translation off-screen right (100vw)
-    const textWidth = tickerText.scrollWidth || 600;
-    const screenWidth = window.innerWidth || 1920;
-    const duration = Math.max(18, Math.round((screenWidth + textWidth) / 90));
-    tickerText.style.animation = `tickerMarquee ${duration}s linear infinite`;
+
+    const containerWidth = tickerBar.offsetWidth || window.innerWidth || 1920;
+    const textWidth = tickerText.scrollWidth || tickerText.offsetWidth || 800;
+
+    const startPx = containerWidth;
+    const endPx = -(Math.ceil(textWidth) + 60);
+
+    tickerText.style.setProperty("--marquee-start", `${startPx}px`);
+    tickerText.style.setProperty("--marquee-end", `${endPx}px`);
+
+    const totalDistance = startPx + Math.abs(endPx);
+    const speed = configuredMarqueeSpeed || 85;
+    const duration = Math.max(12, Math.round(totalDistance / speed));
+
+    if (resetAnimation) {
+        tickerText.style.animation = "none";
+        tickerText.offsetHeight; // trigger reflow to reset translation off-screen right
+        tickerText.style.animation = `tickerMarquee ${duration}s linear infinite`;
+    } else {
+        tickerText.style.animationDuration = `${duration}s`;
+    }
 }
 
 function startFillerPlayback(track) {
@@ -1843,28 +1874,7 @@ function startFillerPlayback(track) {
     const qrCard = document.getElementById("fillerQRCard");
     if (qrCard) qrCard.style.display = "flex";
 
-    const tickerBar = document.getElementById("fillerTickerBar");
-    if (tickerBar) {
-        tickerBar.style.display = "flex";
-        tickerBar.style.background = "rgba(8, 14, 24, 0.95)";
-        tickerBar.style.borderTop = "1px solid rgba(0, 240, 255, 0.3)";
-    }
-
-    const tickerText = document.getElementById("fillerTickerText");
-    if (tickerText) {
-        tickerText.style.textAlign = "left";
-        tickerText.style.width = "auto";
-        tickerText.style.paddingLeft = "0";
-        tickerText.style.color = "var(--neon-cyan)";
-        tickerText.style.fontSize = "0.95rem";
-        tickerText.style.fontWeight = "600";
-        if (track.is_sing_along) {
-            tickerText.innerText = `🎤 SING-ALONG INTERMISSION: ${track.artist} - ${track.title} • 🌺 Sing along with the stage or scan to queue next!`;
-        } else {
-            tickerText.innerText = `🌴 DJ LOUNGE MUSIC: ${track.artist} - ${track.title} • 🌺 OPEN MIC: Scan the QR code to queue your favorite song!`;
-        }
-        triggerTickerScroll();
-    }
+    renderStageMarquee(true);
 
     const fillerVideo = document.getElementById("fillerVideo");
     const localVideo = document.getElementById("localVideo");
@@ -2018,6 +2028,7 @@ function stopFillerPlayback() {
         tickerText.style.fontSize = "0.95rem";
         tickerText.style.fontWeight = "600";
     }
+    activeMarqueeText = "";
 
     const fillerVideo = document.getElementById("fillerVideo");
     if (fillerVideo) {
@@ -2032,20 +2043,33 @@ function stopFillerPlayback() {
 // Dynamic Stage Marquee & Announcements Engine
 // -------------------------------------------------------------
 let currentMarqueeState = null;
+let activeMarqueeText = "";
+let configuredMarqueeSpeed = 85;
+let lastMarqueeSpeed = 85;
 
 function handleMarqueeUpdate(data) {
-    currentMarqueeState = data;
-    renderStageMarquee();
+    if (data.speed) {
+        configuredMarqueeSpeed = parseInt(data.speed, 10) || configuredMarqueeSpeed;
+    }
+    currentMarqueeState = {
+        ...(currentMarqueeState || {}),
+        message: data.message,
+        mode: data.mode,
+        expires_at: data.expires_at,
+        speed: data.speed || configuredMarqueeSpeed
+    };
+    renderStageMarquee(true);
 }
 
-function renderStageMarquee() {
+function renderStageMarquee(forceRestart = false) {
     const tickerBar = document.getElementById("fillerTickerBar");
     const tickerText = document.getElementById("fillerTickerText");
     if (!tickerBar || !tickerText) return;
 
     const m = currentMarqueeState;
     if (m && m.mode === "off") {
-        if (!isFillerPlaying) tickerBar.style.display = "none";
+        tickerBar.style.display = "none";
+        activeMarqueeText = "";
         return;
     }
 
@@ -2062,11 +2086,6 @@ function renderStageMarquee() {
             : `🌴 DJ LOUNGE MUSIC: ${escapeHtml(currentFillerTrack.artist)} - ${escapeHtml(currentFillerTrack.title)} • 🌺 OPEN MIC: Scan the QR code to queue your favorite song!`;
     }
 
-    if (!textToShow) {
-        if (!isFillerPlaying) tickerBar.style.display = "none";
-        return;
-    }
-
     const isIntermission = document.getElementById("intermissionOverlay") && document.getElementById("intermissionOverlay").style.display !== "none";
     const isSinging = currentTrack && document.getElementById("nowPlayingBar") && document.getElementById("nowPlayingBar").style.display !== "none";
     
@@ -2081,16 +2100,48 @@ function renderStageMarquee() {
         shouldShow = true;
     }
 
-    if (!shouldShow) {
+    if (!shouldShow || !textToShow) {
         tickerBar.style.display = "none";
+        activeMarqueeText = "";
         return;
     }
 
     tickerBar.style.display = "flex";
     tickerBar.style.background = isSinging ? "rgba(8, 14, 24, 0.85)" : "rgba(8, 14, 24, 0.95)";
+
+    // If text is already active and displaying, do not restart in-flight marquee!
+    if (textToShow === activeMarqueeText && !forceRestart) {
+        if (configuredMarqueeSpeed !== lastMarqueeSpeed) {
+            lastMarqueeSpeed = configuredMarqueeSpeed;
+            triggerTickerScroll(false); // Adjust animation duration in-place without resetting scroll
+        }
+        return;
+    }
+
+    // New text or explicit restart
+    activeMarqueeText = textToShow;
+    lastMarqueeSpeed = configuredMarqueeSpeed;
+    tickerText.style.textAlign = "left";
+    tickerText.style.width = "auto";
+    tickerText.style.color = "var(--neon-cyan)";
+    tickerText.style.fontSize = "0.95rem";
+    tickerText.style.fontWeight = "600";
     tickerText.innerHTML = textToShow;
-    triggerTickerScroll();
+
+    triggerTickerScroll(true);
 }
+
+// Window resize handler to maintain accurate marquee boundaries across monitor/display changes
+let marqueeResizeTimeout = null;
+window.addEventListener("resize", () => {
+    if (marqueeResizeTimeout) clearTimeout(marqueeResizeTimeout);
+    marqueeResizeTimeout = setTimeout(() => {
+        const tickerBar = document.getElementById("fillerTickerBar");
+        if (tickerBar && tickerBar.style.display !== "none" && activeMarqueeText) {
+            triggerTickerScroll(false);
+        }
+    }, 200);
+});
 
 // -------------------------------------------------------------
 // Live Host Microphone & Audio Mixing Engine

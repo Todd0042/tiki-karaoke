@@ -2130,6 +2130,10 @@ function loadHostSettings() {
         .then(settings => {
             const ttsCheck = document.getElementById("ttsToggle");
             if (ttsCheck) ttsCheck.checked = (settings.tts_enabled === "true");
+            const speedSelect = document.getElementById("hostMarqueeSpeedSelect");
+            if (speedSelect && settings.marquee_scroll_speed) {
+                speedSelect.value = settings.marquee_scroll_speed;
+            }
         });
 }
 
@@ -3930,6 +3934,8 @@ async function launchCdgRipper() {
 async function submitHostMarquee(durationMinutes = 10) {
     const input = document.getElementById("hostMarqueeInput");
     const feedback = document.getElementById("marqueeBroadcastFeedback");
+    const speedSelect = document.getElementById("hostMarqueeSpeedSelect");
+    const speed = speedSelect ? parseInt(speedSelect.value, 10) : 85;
     const msg = input ? input.value.trim() : "";
     if (!msg) {
         showToast("⚠️ Please enter an announcement message to broadcast");
@@ -3946,7 +3952,8 @@ async function submitHostMarquee(durationMinutes = 10) {
             body: JSON.stringify({
                 message: msg,
                 duration_minutes: durationMinutes,
-                mode: "announcement"
+                mode: "announcement",
+                speed: speed
             })
         });
         const data = await res.json();
@@ -3954,7 +3961,7 @@ async function submitHostMarquee(durationMinutes = 10) {
         if (feedback) {
             feedback.style.display = "block";
             feedback.style.color = "var(--neon-lime)";
-            feedback.innerText = `📢 Broadcast active on TV Stage: "${msg}" (${durationMinutes === 0 ? 'All Night' : durationMinutes + ' mins'})`;
+            feedback.innerText = `📢 Broadcast active on TV Stage: "${msg}" (${durationMinutes === 0 ? 'All Night' : durationMinutes + ' mins'} • ${speed} px/s)`;
         }
         showToast("📢 Stage Marquee broadcast active!");
     } catch (e) {
@@ -3963,6 +3970,25 @@ async function submitHostMarquee(durationMinutes = 10) {
             feedback.style.color = "var(--neon-pink)";
             feedback.innerText = `⚠️ ${e.message}`;
         }
+        showToast(`⚠️ ${e.message}`);
+    }
+}
+
+async function updateHostMarqueeSpeed(speedVal) {
+    const speed = parseInt(speedVal, 10) || 85;
+    try {
+        const res = await fetch("/api/host/marquee/speed", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "X-Host-Token": typeof HOST_TOKEN !== "undefined" ? HOST_TOKEN : ""
+            },
+            body: JSON.stringify({ speed: speed })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "Failed to update marquee speed");
+        showToast(`⚡ Marquee crawl speed: ${speed} px/s`);
+    } catch (e) {
         showToast(`⚠️ ${e.message}`);
     }
 }
