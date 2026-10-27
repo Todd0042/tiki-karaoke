@@ -318,6 +318,18 @@
                     <div id="dataDiskInfo" class="field-desc" style="margin-top: 6px; font-weight: 500;"></div>
                 </div>
 
+                <div class="field-group">
+                    <label for="recordingsDir">🎙️ Live Singer Performance Recordings Storage Path</label>
+                    <div style="display: flex; gap: 8px;">
+                        <input type="text" id="recordingsDir" name="recordings_dir" value="{{ config.recordings_dir or default_recordings_dir }}" placeholder="Paste or select custom directory for live recordings" onblur="checkStoragePath('recordingsDir', 'recDiskInfo')">
+                        <button type="button" class="btn-ghost" style="white-space: nowrap; padding: 0 16px; border-color: var(--neon-gold); color: var(--neon-gold); border-radius: 10px; cursor: pointer;" onclick="openDirectoryPicker('recordingsDir', 'recDiskInfo')">📁 Browse...</button>
+                        <button type="button" class="btn-ghost" style="white-space: nowrap; padding: 0 16px; border-color: var(--neon-cyan); color: var(--neon-cyan); border-radius: 10px; cursor: pointer;" onclick="checkStoragePath('recordingsDir', 'recDiskInfo')">🔍 Check Drive</button>
+                    </div>
+                    <div id="recDiskInfo" class="field-desc" style="margin-top: 6px; font-weight: 500;">
+                        Live MP3 performance recordings are permanently organized inside by each singer's persistent cookie ID (tracks stay linked even if singers change their nickname).
+                    </div>
+                </div>
+
                 <!-- Launch Smart Importer Card -->
                 <div style="margin-top: 14px; padding: 12px 14px; background: rgba(0, 240, 255, 0.05); border: 1px solid rgba(0, 240, 255, 0.25); border-radius: 10px; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;">
                     <div style="flex: 1; min-width: 260px;">
@@ -1088,6 +1100,7 @@
                 tts_enabled: formData.get('tts_enabled') === 'true',
                 library_dir: formData.get('library_dir') || "",
                 data_dir: formData.get('data_dir') || "",
+                recordings_dir: formData.get('recordings_dir') || "",
                 migrate_files: formData.get('migrate_files') === 'true',
                 stage_display: parseInt(formData.get('stage_display') || "0"),
                 stage_display_name: formData.get('stage_display_name') || "",

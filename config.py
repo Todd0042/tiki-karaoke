@@ -188,6 +188,7 @@ DEFAULT_CONFIG = {
     "google_client_secret": "",
     "library_dir": "",
     "data_dir": "",
+    "recordings_dir": "",
     "stage_display": 0,
     "stage_display_name": "Primary Display",
     "stage_display_x": 0,
@@ -541,8 +542,15 @@ def get_filler_dir() -> Path:
 def get_sing_along_dir() -> Path:
     return get_library_dir() / "sing_along"
 
+def get_default_recordings_dir() -> Path:
+    return (get_library_dir() / "recordings").resolve()
+
 def get_recordings_dir() -> Path:
-    return get_library_dir() / "recordings"
+    cfg = load_config()
+    p = os.getenv("TIKI_RECORDINGS_DIR", "").strip() or cfg.get("recordings_dir", "").strip()
+    if p:
+        return Path(p).expanduser().resolve()
+    return get_default_recordings_dir()
 
 def get_data_dir() -> Path:
     cfg = load_config()
@@ -717,6 +725,22 @@ def get_storage_status() -> Dict[str, Any]:
     lib_mb = round(lib_bytes / (1024**2), 1)
     lib_gb = round(lib_bytes / (1024**3), 2)
 
+    # Live singer performance recordings metrics
+    rec_dir = get_recordings_dir()
+    rec_bytes = 0
+    rec_count = 0
+    singer_dirs = set()
+    if rec_dir.exists():
+        try:
+            for f in rec_dir.glob("**/*"):
+                if f.is_file() and f.suffix.lower() in (".mp3", ".webm", ".wav", ".m4a"):
+                    rec_bytes += f.stat().st_size
+                    rec_count += 1
+                    singer_dirs.add(f.parent.name)
+        except Exception:
+            pass
+    rec_mb = round(rec_bytes / (1024**2), 1)
+
     # Color thresholds: green default, orange at >= 75%, red at >= 90%
     if used_pct >= 90.0:
         status_color = "red"
@@ -743,7 +767,12 @@ def get_storage_status() -> Dict[str, Any]:
         "library_bytes": lib_bytes,
         "library_mb": lib_mb,
         "library_gb": lib_gb,
-        "downloaded_track_count": track_count
+        "downloaded_track_count": track_count,
+        "recordings_dir": str(rec_dir),
+        "recordings_bytes": rec_bytes,
+        "recordings_mb": rec_mb,
+        "recordings_count": rec_count,
+        "recordings_singers_count": len(singer_dirs)
     }
 
 # Initial export of globals
@@ -752,6 +781,7 @@ LIBRARY_DIR = get_library_dir()
 TRACKS_DIR = get_tracks_dir()
 PLAYLISTS_DIR = get_playlists_dir()
 SING_ALONG_DIR = get_sing_along_dir()
+RECORDINGS_DIR = get_recordings_dir()
 DB_PATH = get_db_path()
 SECRET_FILE = get_secret_file()
 HOST_TOKEN = get_host_token()

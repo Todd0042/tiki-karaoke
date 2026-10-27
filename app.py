@@ -4,6 +4,7 @@ import re
 import sys
 import json
 import time
+import datetime
 import socket
 import asyncio
 import secrets
@@ -34,10 +35,10 @@ from config import (
     get_library_dir, get_tracks_dir, get_playlists_dir, get_recordings_dir, get_data_dir,
     get_db_path, get_path_info, ensure_storage_dirs, get_storage_status,
     get_available_displays, get_available_audio_sinks, get_available_audio_sources, get_bundled_binary_path,
-    get_default_library_dir, get_default_data_dir, find_system_browser, get_system_drives
+    get_default_library_dir, get_default_data_dir, get_default_recordings_dir, find_system_browser, get_system_drives
 )
 from database import (
-    init_db, get_or_create_singer, get_singer_by_token,
+    init_db, get_db, get_or_create_singer, get_singer_by_token,
     save_track, get_track_by_id, get_track_by_video_id,
     search_local_tracks, enqueue_song, get_queue,
     get_current_playing, set_queue_status, remove_from_queue,
@@ -493,6 +494,9 @@ class LeaveDuetRequest(BaseModel):
 class PruneTracksRequest(BaseModel):
     track_ids: List[int]
 
+class HostUpdateRecordingsPathRequest(BaseModel):
+    recordings_dir: str = ""
+
 # Host Auth Helper
 def is_host_request(request: Request) -> bool:
     if not HOST_TOKEN:
@@ -570,6 +574,8 @@ async def setup_page(request: Request):
         "config": cfg,
         "default_library_dir": str(get_library_dir()),
         "default_data_dir": str(get_data_dir()),
+        "default_recordings_dir": str(get_default_recordings_dir()),
+        "current_recordings_dir": str(get_recordings_dir()),
         "displays": get_available_displays(),
         "audio_sinks": get_available_audio_sinks(),
         "audio_sources": get_available_audio_sources()
@@ -1049,6 +1055,16 @@ async def api_save_setup(payload: Dict[str, Any], request: Request, response: Re
             if old_db.exists() and old_db.resolve() != new_db.resolve() and not new_db.exists():
                 new_data_path.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(str(old_db), str(new_db))
+
+        new_recs = payload.get("recordings_dir", "").strip()
+        if new_recs:
+            new_recs_path = Path(new_recs).expanduser().resolve()
+            payload["recordings_dir"] = str(new_recs_path)
+            new_recs_path.mkdir(parents=True, exist_ok=True)
+            set_setting("recordings_dir", str(new_recs_path))
+        elif "recordings_dir" in payload:
+            payload["recordings_dir"] = ""
+            set_setting("recordings_dir", "")
 
         cfg = save_config(payload)
         init_db()
@@ -2770,22 +2786,41 @@ async def api_upload_recording(
 ):
     recordings_dir = get_recordings_dir()
     date_str = datetime.datetime.now().strftime("%Y-%m-%d")
-    out_dir = recordings_dir / date_str
-    out_dir.mkdir(parents=True, exist_ok=True)
 
     track = get_track_by_id(track_id)
     conn = get_db()
-    s_row = conn.execute("SELECT name, token FROM singers WHERE id = ?", (singer_id,)).fetchone()
+    s_row = conn.execute("SELECT id, name, token, avatar FROM singers WHERE id = ?", (singer_id,)).fetchone()
     conn.close()
     singer_name = s_row["name"] if s_row else "Singer"
-    singer_token = s_row["token"] if s_row else ""
+    singer_token = s_row["token"] if s_row and s_row["token"] else f"usr_{singer_id}"
+    singer_avatar = s_row["avatar"] if s_row and "avatar" in s_row.keys() else "🌺"
     track_title = track["title"] if track else "Song"
     track_artist = track["artist"] if track else "Artist"
 
+    # Organize within recordings_dir by singer's persistent cookie / token
+    clean_token = re.sub(r'[^\w\-]', '_', singer_token).strip() or f"usr_{singer_id}"
+    singer_folder = recordings_dir / clean_token
+    singer_folder.mkdir(parents=True, exist_ok=True)
+
+    # Save/update singer_info.json inside singer_folder for human & host reference
+    try:
+        info_file = singer_folder / "singer_info.json"
+        with open(info_file, "w", encoding="utf-8") as f:
+            json.dump({
+                "singer_id": singer_id,
+                "token": singer_token,
+                "latest_name": singer_name,
+                "avatar": singer_avatar,
+                "last_recorded_at": datetime.datetime.now().isoformat()
+            }, f, indent=2)
+    except Exception:
+        pass
+
+    out_dir = singer_folder
     clean_s = re.sub(r'[^\w\-_\. ]', '_', singer_name).strip()
     clean_t = re.sub(r'[^\w\-_\. ]', '_', track_title).strip()
     timestamp = int(time.time())
-    base_name = f"{clean_s} - {clean_t}_{timestamp}"
+    base_name = f"{date_str} - {clean_s} - {clean_t}_{timestamp}"
 
     raw_path = out_dir / f"{base_name}_raw.webm"
     mp3_path = out_dir / f"{base_name}.mp3"
@@ -2891,6 +2926,79 @@ async def api_delete_recording(recording_id: int, request: Request):
             except Exception:
                 pass
     return {"status": "ok", "deleted": recording_id}
+
+@app.get("/api/host/storage/recordings")
+async def api_get_host_recordings_storage(request: Request):
+    if not (is_host_request(request) or is_local_request(request)):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
+    rec_dir = get_recordings_dir()
+    def_dir = get_default_recordings_dir()
+    total_bytes = 0
+    total_count = 0
+    singer_dirs = set()
+    if rec_dir.exists():
+        try:
+            for f in rec_dir.glob("**/*"):
+                if f.is_file() and f.suffix.lower() in (".mp3", ".webm", ".wav", ".m4a"):
+                    total_bytes += f.stat().st_size
+                    total_count += 1
+                    singer_dirs.add(f.parent.name)
+        except Exception:
+            pass
+    return {
+        "status": "ok",
+        "recordings_dir": str(rec_dir),
+        "default_recordings_dir": str(def_dir),
+        "is_custom": (str(rec_dir) != str(def_dir)),
+        "count": total_count,
+        "bytes": total_bytes,
+        "mb": round(total_bytes / (1024**2), 1),
+        "singers_count": len(singer_dirs)
+    }
+
+@app.post("/api/host/storage/recordings")
+async def api_update_host_recordings_storage(req: HostUpdateRecordingsPathRequest, request: Request):
+    if not (is_host_request(request) or is_local_request(request)):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
+    target_path_str = req.recordings_dir.strip()
+    if target_path_str:
+        target_path = Path(target_path_str).expanduser().resolve()
+        try:
+            target_path.mkdir(parents=True, exist_ok=True)
+            test_file = target_path / ".tiki_write_test"
+            test_file.touch()
+            test_file.unlink()
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Cannot write to folder: {e}")
+        save_config({"recordings_dir": str(target_path)})
+        set_setting("recordings_dir", str(target_path))
+    else:
+        # Revert to default
+        save_config({"recordings_dir": ""})
+        set_setting("recordings_dir", "")
+
+    return {
+        "status": "ok",
+        "recordings_dir": str(get_recordings_dir()),
+        "default_recordings_dir": str(get_default_recordings_dir())
+    }
+
+@app.post("/api/host/storage/recordings/open-folder")
+async def api_open_recordings_folder(request: Request):
+    if not (is_host_request(request) or is_local_request(request)):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
+    rec_dir = get_recordings_dir()
+    rec_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        if sys.platform == "win32":
+            os.startfile(str(rec_dir))
+        elif sys.platform == "darwin":
+            subprocess.run(["open", str(rec_dir)], check=False)
+        else:
+            subprocess.run(["xdg-open", str(rec_dir)], check=False)
+        return {"status": "ok", "message": f"Opened {rec_dir}"}
+    except Exception as e:
+        return {"status": "error", "detail": str(e), "path": str(rec_dir)}
 
 @app.post("/api/singer/leave")
 async def api_singer_leave(request: Request):

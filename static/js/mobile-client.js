@@ -2873,9 +2873,55 @@ function loadHostStorageStatus() {
             if (details) {
                 details.innerText = `${freeGb} GB Free of ${totalGb} GB (${libGb} GB Karaoke Library • ${tracks} songs)`;
             }
+            loadHostRecordingsStorageStatus();
         })
         .catch(err => {
             console.error("[Storage] Failed to load status:", err);
+        });
+}
+
+function loadHostRecordingsStorageStatus() {
+    const card = document.getElementById("hostRecordingsStorageCard");
+    const badge = document.getElementById("recordingsStorageBadge");
+    const pathText = document.getElementById("hostRecordingsPathText");
+    const stats = document.getElementById("hostRecordingsStats");
+    if (!card || !pathText) return;
+
+    fetch("/api/host/storage/recordings")
+        .then(res => res.json())
+        .then(data => {
+            if (data && data.status === "ok") {
+                pathText.innerText = data.recordings_dir || "Default";
+                if (badge) {
+                    badge.innerText = data.is_custom ? "Custom Folder" : "Default Folder";
+                    badge.style.color = data.is_custom ? "var(--neon-cyan)" : "var(--neon-pink)";
+                    badge.style.background = data.is_custom ? "rgba(0, 240, 255, 0.15)" : "rgba(255, 42, 133, 0.15)";
+                }
+                if (stats) {
+                    const mb = data.mb || 0;
+                    const count = data.count || 0;
+                    const singers = data.singers_count || 0;
+                    stats.innerText = `${count} recordings (${mb} MB) across ${singers} singers`;
+                }
+            }
+        })
+        .catch(err => {
+            console.error("[Recordings] Failed to load recordings storage:", err);
+        });
+}
+
+function openRecordingsFolder() {
+    fetch("/api/host/storage/recordings/open-folder", { method: "POST" })
+        .then(res => res.json())
+        .then(data => {
+            if (data && data.status === "ok") {
+                showToast("📂 Opened recordings folder on host PC!");
+            } else {
+                showToast("⚠️ Could not open folder: " + (data.detail || "Error"));
+            }
+        })
+        .catch(err => {
+            showToast("⚠️ Failed to open folder on host");
         });
 }
 

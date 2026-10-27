@@ -715,6 +715,27 @@
                         </div>
                     </div>
 
+                    <!-- Live Performance Recordings Storage Card -->
+                    <div id="hostRecordingsStorageCard" class="tiki-card" style="margin-bottom: 14px; padding: 12px 14px; border-left: 4px solid var(--neon-pink);">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                            <span style="font-weight: 700; font-size: 0.85rem; color: #fff;">🎙️ Live Recordings Storage</span>
+                            <span id="recordingsStorageBadge" style="font-size: 0.78rem; font-weight: 700; padding: 2px 8px; border-radius: 8px; background: rgba(255,42,133,0.15); color: var(--neon-pink);">Checking...</span>
+                        </div>
+                        <div style="font-size: 0.74rem; color: #cbd5e1; margin-bottom: 6px; word-break: break-all;">
+                            <span style="color: var(--text-muted);">Folder:</span> <code id="hostRecordingsPathText" style="color: var(--neon-cyan); font-size: 0.72rem;">Loading...</code>
+                        </div>
+                        <div style="font-size: 0.72rem; color: var(--text-muted); margin-bottom: 8px;">
+                            Tracks are organized into subfolders by each guest's persistent cookie ID (stays linked even if names vary).
+                        </div>
+                        <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.76rem; color: var(--text-muted);">
+                            <span id="hostRecordingsStats">Loading stats...</span>
+                            <div style="display: flex; gap: 6px;">
+                                <button type="button" onclick="openRecordingsFolder()" class="btn-ghost" style="padding: 2px 8px; font-size: 0.72rem; border-color: var(--neon-gold); color: var(--neon-gold); cursor: pointer;">📂 Open Folder</button>
+                                <a href="/setup" class="btn-ghost" style="padding: 2px 8px; font-size: 0.72rem; border-color: var(--neon-cyan); color: var(--neon-cyan); text-decoration: none; cursor: pointer;">⚙️ Change Path</a>
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- yt-dlp Video Engine Maintenance Banner -->
                     <div id="hostYtdlpBanner" class="tiki-card" style="margin-bottom: 14px; padding: 12px 14px; border-left: 4px solid var(--neon-cyan);">
                         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
