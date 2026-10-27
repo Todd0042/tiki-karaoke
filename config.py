@@ -543,7 +543,7 @@ def get_sing_along_dir() -> Path:
     return get_library_dir() / "sing_along"
 
 def get_default_recordings_dir() -> Path:
-    return (get_library_dir() / "recordings").resolve()
+    return (get_library_dir() / "performance_recordings").resolve()
 
 def get_recordings_dir() -> Path:
     cfg = load_config()
@@ -573,7 +573,21 @@ def ensure_storage_dirs():
         get_playlists_dir().mkdir(parents=True, exist_ok=True)
         get_filler_dir().mkdir(parents=True, exist_ok=True)
         get_sing_along_dir().mkdir(parents=True, exist_ok=True)
-        get_recordings_dir().mkdir(parents=True, exist_ok=True)
+        rec_dir = get_recordings_dir()
+        rec_dir.mkdir(parents=True, exist_ok=True)
+
+        # Legacy recordings directory migration safeguard:
+        legacy_rec_dir = (get_library_dir() / "recordings").resolve()
+        if legacy_rec_dir.exists() and legacy_rec_dir.is_dir() and legacy_rec_dir != rec_dir:
+            try:
+                for item in legacy_rec_dir.iterdir():
+                    target_item = rec_dir / item.name
+                    if not target_item.exists():
+                        shutil.move(str(item), str(target_item))
+                if not any(legacy_rec_dir.iterdir()):
+                    legacy_rec_dir.rmdir()
+            except Exception as e:
+                print(f"[Storage] Notice: Legacy recordings migration note: {e}")
 
         # Legacy data migration safeguard:
         legacy_data = (get_user_data_root() / "data").resolve()

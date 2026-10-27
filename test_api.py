@@ -1137,6 +1137,91 @@ class TestAPIEndpoints(unittest.TestCase):
         logger.flush()
         self.assertEqual(buf.getvalue(), "Test log output\n")
 
+    def test_setup_display_settings_and_recordings_path(self):
+        """Verifies multi-monitor display configuration persistence and performance_recordings default path."""
+        import json
+        from config import get_library_dir, get_default_recordings_dir, get_recordings_dir, load_config, HOST_TOKEN
+        from database import get_setting
+        from main import configure_firefox_profile
+
+        # 1. Performance recordings path validation
+        default_recs = get_default_recordings_dir()
+        self.assertEqual(default_recs.name, "performance_recordings")
+        self.assertEqual(default_recs.parent.resolve(), get_library_dir().resolve())
+
+        # 2. Multi-monitor display settings persistence via /api/setup
+        setup_payload = {
+            "bar_name": "Multi-Monitor Lounge",
+            "stage_display": 1,
+            "stage_display_name": "Monitor 1: DP-1 [1920x1080]",
+            "stage_display_x": 1920,
+            "stage_display_y": 0,
+            "stage_display_width": 1920,
+            "stage_display_height": 1080,
+            "kiosk_mode": False,
+            "host_display_enabled": True,
+            "host_display": 0,
+            "host_display_name": "Monitor 0: DP-2 [2560x1440]",
+            "host_display_x": 0,
+            "host_display_y": 0,
+            "host_display_width": 2560,
+            "host_display_height": 1440,
+            "host_kiosk_mode": False
+        }
+        res = self.client.post("/api/setup", json=setup_payload, headers={"X-Host-Token": HOST_TOKEN})
+        self.assertEqual(res.status_code, 200)
+        
+        cfg = load_config()
+        self.assertEqual(cfg.get("stage_display"), 1)
+        self.assertEqual(cfg.get("stage_display_x"), 1920)
+        self.assertEqual(cfg.get("kiosk_mode"), False)
+        self.assertEqual(cfg.get("host_display_enabled"), True)
+        self.assertEqual(cfg.get("host_display"), 0)
+        self.assertEqual(cfg.get("host_display_width"), 2560)
+        self.assertEqual(cfg.get("host_kiosk_mode"), False)
+
+        self.assertEqual(get_setting("stage_display_x"), "1920")
+        self.assertEqual(get_setting("stage_display_width"), "1920")
+        self.assertEqual(get_setting("host_display_enabled"), "true")
+        self.assertEqual(get_setting("host_kiosk_mode"), "false")
+
+        # 3. Firefox profile xulstore.json generation
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            host_prof = Path(tmp_dir) / "firefox_host"
+            configure_firefox_profile(
+                host_prof,
+                screen_x=1920,
+                screen_y=0,
+                width=1920,
+                height=1080,
+                is_fullscreen=False
+            )
+            xul_file = host_prof / "xulstore.json"
+            self.assertTrue(xul_file.exists())
+            with open(xul_file, "r") as f:
+                xul_data = json.load(f)
+            win_data = xul_data["chrome://browser/content/browser.xhtml"]["main-window"]
+            self.assertEqual(win_data["sizemode"], "normal")
+            self.assertEqual(win_data["screenX"], "1920")
+            self.assertEqual(win_data["screenY"], "0")
+            self.assertEqual(win_data["width"], "1920")
+            self.assertEqual(win_data["height"], "1080")
+
+            # Kiosk fullscreen mode test
+            stage_prof = Path(tmp_dir) / "firefox_stage"
+            configure_firefox_profile(
+                stage_prof,
+                screen_x=0,
+                screen_y=0,
+                width=2560,
+                height=1440,
+                is_fullscreen=True
+            )
+            with open(stage_prof / "xulstore.json", "r") as f:
+                stage_xul = json.load(f)
+            stage_win = stage_xul["chrome://browser/content/browser.xhtml"]["main-window"]
+            self.assertEqual(stage_win["sizemode"], "fullscreen")
+
 if __name__ == "__main__":
     unittest.main()
 

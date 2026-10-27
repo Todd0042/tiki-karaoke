@@ -10,6 +10,7 @@ import threading
 import subprocess
 import re
 import tempfile
+import json
 from pathlib import Path
 from typing import Optional, Tuple, Dict, Any, List
 
@@ -41,7 +42,7 @@ if sys.platform == "win32":
 from config import (
     DATA_DIR, HOST_TOKEN, HOST_PIN, PORT, TARGET_LUFS,
     load_config, is_configured, get_bundled_binary_path,
-    find_system_browser
+    find_system_browser, get_available_displays
 )
 from app import LOCAL_IP, PUBLIC_IP, get_base_url, get_public_host, register_shutdown_trigger, register_focus_hub_trigger
 from tray import start_tray, stop_tray
@@ -330,7 +331,14 @@ signal.signal(signal.SIGINT, handle_signal)
 signal.signal(signal.SIGTERM, handle_signal)
 atexit.register(cleanup_all_services)
 
-def configure_firefox_profile(profile_path: Path):
+def configure_firefox_profile(
+    profile_path: Path,
+    screen_x: int = 0,
+    screen_y: int = 0,
+    width: int = 1920,
+    height: int = 1080,
+    is_fullscreen: bool = False
+):
     profile_path.mkdir(parents=True, exist_ok=True)
     user_js = profile_path / "user.js"
     prefs = [
@@ -344,11 +352,32 @@ def configure_firefox_profile(profile_path: Path):
         'user_pref("toolkit.telemetry.enabled", false);',
         'user_pref("dom.allow_scripts_to_close_windows", true);',
         'user_pref("browser.tabs.closeWindowWithLastTab", true);',
+        'user_pref("dom.disable_window_move_resize", false);',
+        'user_pref("dom.disable_window_flip", false);',
     ]
     try:
         user_js.write_text("\n".join(prefs) + "\n")
     except Exception as e:
         print(f"[Launcher] Warning: Could not write Firefox user.js prefs: {e}")
+
+    # Explicitly configure xulstore.json to guarantee window position, size, and sizemode (normal vs fullscreen)
+    xulstore = profile_path / "xulstore.json"
+    sizemode = "fullscreen" if is_fullscreen else "normal"
+    store_data = {
+        "chrome://browser/content/browser.xhtml": {
+            "main-window": {
+                "screenX": str(screen_x),
+                "screenY": str(screen_y),
+                "width": str(width),
+                "height": str(height),
+                "sizemode": sizemode
+            }
+        }
+    }
+    try:
+        xulstore.write_text(json.dumps(store_data, indent=2))
+    except Exception as e:
+        print(f"[Launcher] Warning: Could not write Firefox xulstore.json: {e}")
 
 def open_browser_delayed(stage_url: str, host_url: str = "", delay: float = 1.5):
     time.sleep(delay)
@@ -369,10 +398,27 @@ def open_browser_delayed(stage_url: str, host_url: str = "", delay: float = 1.5)
     stage_disp_name = cfg.get("stage_display_name", "Primary Display")
     stage_disp_x = int(cfg.get("stage_display_x", 0))
     stage_disp_y = int(cfg.get("stage_display_y", 0))
+    stage_disp_w = int(cfg.get("stage_display_width", 1920))
+    stage_disp_h = int(cfg.get("stage_display_height", 1080))
     stage_kiosk = bool(cfg.get("kiosk_mode", False))
 
+    try:
+        available_monitors = get_available_displays()
+        matched_stage = next((d for d in available_monitors if d.get("id") == stage_disp_idx), None)
+        if matched_stage:
+            stage_disp_x = matched_stage.get("x", stage_disp_x)
+            stage_disp_y = matched_stage.get("y", stage_disp_y)
+            stage_disp_w = matched_stage.get("width", stage_disp_w)
+            stage_disp_h = matched_stage.get("height", stage_disp_h)
+            stage_disp_name = matched_stage.get("name", stage_disp_name)
+    except Exception as e:
+        print(f"[Launcher] Notice: could not enrich stage display info: {e}")
+
+    stage_sep = "&" if "?" in stage_url else "?"
+    stage_target_url = f"{stage_url}{stage_sep}disp_x={stage_disp_x}&disp_y={stage_disp_y}&disp_w={stage_disp_w}&disp_h={stage_disp_h}&kiosk={'true' if stage_kiosk else 'false'}"
+
     mode_label = "Fullscreen Kiosk" if stage_kiosk else "Windowed"
-    print(f"[Launcher] Opening Stage Display on Monitor {stage_disp_idx} ({stage_disp_name}, {mode_label}): {stage_url}")
+    print(f"[Launcher] Opening Stage Display on Monitor {stage_disp_idx} ({stage_disp_name}, {mode_label}, {stage_disp_x},{stage_disp_y}): {stage_target_url}")
 
     firefox_bin = find_system_browser("firefox")
     temp_root = Path(tempfile.gettempdir())
@@ -390,7 +436,18 @@ def open_browser_delayed(stage_url: str, host_url: str = "", delay: float = 1.5)
     if firefox_bin:
         try:
             stage_profile = temp_root / f"tiki_stage_firefox_profile_{stage_disp_idx}"
-            configure_firefox_profile(stage_profile)
+            configure_firefox_profile(
+                stage_profile,
+                screen_x=stage_disp_x,
+                screen_y=stage_disp_y,
+                width=stage_disp_w,
+                height=stage_disp_h,
+                is_fullscreen=stage_kiosk
+            )
+            stage_env = env.copy()
+            if not stage_kiosk and sys.platform != "win32":
+                stage_env["GDK_BACKEND"] = "x11"
+                stage_env["MOZ_ENABLE_WAYLAND"] = "0"
             cmd = [
                 firefox_bin,
                 "--no-remote",
@@ -401,8 +458,8 @@ def open_browser_delayed(stage_url: str, host_url: str = "", delay: float = 1.5)
                 cmd.extend(["--kiosk", f"--kiosk-monitor={stage_disp_idx}"])
             else:
                 cmd.append("--new-window")
-            cmd.append(stage_url)
-            proc = subprocess.Popen(cmd, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **get_browser_subprocess_kwargs())
+            cmd.append(stage_target_url)
+            proc = subprocess.Popen(cmd, env=stage_env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **get_browser_subprocess_kwargs())
             launched_browser_procs.append(proc)
             print(f"[Launcher] ✅ Dedicated Stage Window launched via Firefox on monitor {stage_disp_idx} ({stage_disp_name})!")
             stage_launched = True
@@ -417,13 +474,14 @@ def open_browser_delayed(stage_url: str, host_url: str = "", delay: float = 1.5)
                     stage_chrome_data = temp_root / f"tiki_stage_chrome_{stage_disp_idx}"
                     cmd = [
                         c_bin,
-                        f"--app={stage_url}",
+                        f"--app={stage_target_url}",
                         f"--user-data-dir={stage_chrome_data}",
                         "--no-first-run",
                         "--no-default-browser-check",
                         "--autoplay-policy=no-user-gesture-required",
                         "--disable-features=PreloadMediaEngagementData",
-                        f"--window-position={stage_disp_x},{stage_disp_y}"
+                        f"--window-position={stage_disp_x},{stage_disp_y}",
+                        f"--window-size={stage_disp_w},{stage_disp_h}"
                     ]
                     if stage_kiosk:
                         cmd.append("--start-fullscreen")
@@ -437,7 +495,7 @@ def open_browser_delayed(stage_url: str, host_url: str = "", delay: float = 1.5)
 
     if not stage_launched:
         try:
-            webbrowser.open(stage_url)
+            webbrowser.open(stage_target_url)
             print("[Launcher] Default browser launched for Stage Display.")
         except Exception as e:
             print(f"[Launcher] Could not open browser automatically: {e}")
@@ -450,16 +508,44 @@ def open_browser_delayed(stage_url: str, host_url: str = "", delay: float = 1.5)
         host_disp_name = cfg.get("host_display_name", f"Monitor {host_disp_idx}")
         host_disp_x = int(cfg.get("host_display_x", 0))
         host_disp_y = int(cfg.get("host_display_y", 0))
+        host_disp_w = int(cfg.get("host_display_width", 1920))
+        host_disp_h = int(cfg.get("host_display_height", 1080))
         host_kiosk = bool(cfg.get("host_kiosk_mode", False))
-        host_mode_label = "Fullscreen Kiosk" if host_kiosk else "App Window"
 
-        print(f"[Launcher] Opening Host DJ Control on Monitor {host_disp_idx} ({host_disp_name}, {host_mode_label}): {host_url}")
+        try:
+            available_monitors = get_available_displays()
+            matched_host = next((d for d in available_monitors if d.get("id") == host_disp_idx), None)
+            if matched_host:
+                host_disp_x = matched_host.get("x", host_disp_x)
+                host_disp_y = matched_host.get("y", host_disp_y)
+                host_disp_w = matched_host.get("width", host_disp_w)
+                host_disp_h = matched_host.get("height", host_disp_h)
+                host_disp_name = matched_host.get("name", host_disp_name)
+        except Exception as e:
+            print(f"[Launcher] Notice: could not enrich host display info: {e}")
+
+        host_sep = "&" if "?" in host_url else "?"
+        host_target_url = f"{host_url}{host_sep}disp_x={host_disp_x}&disp_y={host_disp_y}&disp_w={host_disp_w}&disp_h={host_disp_h}&kiosk={'true' if host_kiosk else 'false'}"
+
+        host_mode_label = "Fullscreen Kiosk" if host_kiosk else "App Window"
+        print(f"[Launcher] Opening Host DJ Control on Monitor {host_disp_idx} ({host_disp_name}, {host_mode_label}, {host_disp_x},{host_disp_y}): {host_target_url}")
 
         host_launched = False
         if firefox_bin:
             try:
                 host_profile = temp_root / f"tiki_host_firefox_profile_{host_disp_idx}"
-                configure_firefox_profile(host_profile)
+                configure_firefox_profile(
+                    host_profile,
+                    screen_x=host_disp_x,
+                    screen_y=host_disp_y,
+                    width=host_disp_w,
+                    height=host_disp_h,
+                    is_fullscreen=host_kiosk
+                )
+                host_env = os.environ.copy()
+                if not host_kiosk and sys.platform != "win32":
+                    host_env["GDK_BACKEND"] = "x11"
+                    host_env["MOZ_ENABLE_WAYLAND"] = "0"
                 cmd = [
                     firefox_bin,
                     "--no-remote",
@@ -469,9 +555,9 @@ def open_browser_delayed(stage_url: str, host_url: str = "", delay: float = 1.5)
                 if host_kiosk:
                     cmd.extend(["--kiosk", f"--kiosk-monitor={host_disp_idx}"])
                 else:
-                    cmd.extend([f"--kiosk-monitor={host_disp_idx}", "--new-window"])
-                cmd.append(host_url)
-                proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **get_browser_subprocess_kwargs())
+                    cmd.append("--new-window")
+                cmd.append(host_target_url)
+                proc = subprocess.Popen(cmd, env=host_env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **get_browser_subprocess_kwargs())
                 launched_browser_procs.append(proc)
                 print(f"[Launcher] ✅ Dedicated Host DJ Window launched via Firefox on monitor {host_disp_idx} ({host_disp_name})!")
                 host_launched = True
@@ -486,11 +572,12 @@ def open_browser_delayed(stage_url: str, host_url: str = "", delay: float = 1.5)
                         host_chrome_data = temp_root / f"tiki_host_chrome_{host_disp_idx}"
                         cmd = [
                             c_bin,
-                            f"--app={host_url}",
+                            f"--app={host_target_url}",
                             f"--user-data-dir={host_chrome_data}",
                             "--no-first-run",
                             "--no-default-browser-check",
-                            f"--window-position={host_disp_x},{host_disp_y}"
+                            f"--window-position={host_disp_x},{host_disp_y}",
+                            f"--window-size={host_disp_w},{host_disp_h}"
                         ]
                         if host_kiosk:
                             cmd.append("--start-fullscreen")

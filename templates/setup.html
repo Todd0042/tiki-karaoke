@@ -301,7 +301,7 @@
                 <div class="field-group">
                     <label for="libraryDir">Video Media Library Path (Tracks & Playlists)</label>
                     <div style="display: flex; gap: 8px;">
-                        <input type="text" id="libraryDir" name="library_dir" value="{{ config.library_dir or default_library_dir }}" placeholder="Paste or select the directory you wish to use for songs here" onblur="checkStoragePath('libraryDir', 'libDiskInfo')">
+                        <input type="text" id="libraryDir" name="library_dir" value="{{ config.library_dir or default_library_dir }}" placeholder="Paste or select the directory you wish to use for songs here" oninput="onLibraryDirChanged(this.value)" onblur="checkStoragePath('libraryDir', 'libDiskInfo'); onLibraryDirChanged(this.value);">
                         <button type="button" class="btn-ghost" style="white-space: nowrap; padding: 0 16px; border-color: var(--neon-gold); color: var(--neon-gold); border-radius: 10px; cursor: pointer;" onclick="openDirectoryPicker('libraryDir', 'libDiskInfo')">📁 Browse...</button>
                         <button type="button" class="btn-ghost" style="white-space: nowrap; padding: 0 16px; border-color: var(--neon-cyan); color: var(--neon-cyan); border-radius: 10px; cursor: pointer;" onclick="checkStoragePath('libraryDir', 'libDiskInfo')">🔍 Check Drive</button>
                     </div>
@@ -1159,6 +1159,20 @@
         let activePickerInfoId = null;
         let currentBrowserPath = "";
 
+        function onLibraryDirChanged(newPath) {
+            if (!newPath) return;
+            const recInput = document.getElementById('recordingsDir');
+            if (recInput) {
+                const val = recInput.value.trim();
+                if (!val || val.endsWith('/recordings') || val.endsWith('\\recordings') || val.endsWith('/performance_recordings') || val.endsWith('\\performance_recordings')) {
+                    const sep = (newPath.includes('\\') && !newPath.includes('/')) ? '\\' : '/';
+                    const cleanBase = newPath.replace(/[\\/]+$/, '');
+                    recInput.value = cleanBase + sep + 'performance_recordings';
+                    checkStoragePath('recordingsDir', 'recDiskInfo');
+                }
+            }
+        }
+
         async function openDirectoryPicker(inputId, infoId) {
             activePickerInputId = inputId;
             activePickerInfoId = infoId;
@@ -1174,6 +1188,9 @@
                 if (data.status === 'ok' && data.path) {
                     document.getElementById(inputId).value = data.path;
                     checkStoragePath(inputId, infoId);
+                    if (inputId === 'libraryDir') {
+                        onLibraryDirChanged(data.path);
+                    }
                     return;
                 } else if (data.status === 'cancelled') {
                     return;
@@ -1264,6 +1281,9 @@
                 document.getElementById(activePickerInputId).value = currentBrowserPath;
                 if (activePickerInfoId) {
                     checkStoragePath(activePickerInputId, activePickerInfoId);
+                }
+                if (activePickerInputId === 'libraryDir') {
+                    onLibraryDirChanged(currentBrowserPath);
                 }
                 closeDirModal();
             } else if (currentBrowserPath === 'This PC') {

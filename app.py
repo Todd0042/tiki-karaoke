@@ -1079,6 +1079,16 @@ async def api_save_setup(payload: Dict[str, Any], request: Request, response: Re
             set_setting("bgm_enabled", "true" if payload["bgm_enabled"] else "false")
         if "stage_display" in payload:
             set_setting("stage_display", str(payload["stage_display"]))
+        if "stage_display_name" in payload:
+            set_setting("stage_display_name", str(payload["stage_display_name"]))
+        if "stage_display_x" in payload:
+            set_setting("stage_display_x", str(payload["stage_display_x"]))
+        if "stage_display_y" in payload:
+            set_setting("stage_display_y", str(payload["stage_display_y"]))
+        if "stage_display_width" in payload:
+            set_setting("stage_display_width", str(payload["stage_display_width"]))
+        if "stage_display_height" in payload:
+            set_setting("stage_display_height", str(payload["stage_display_height"]))
         if "audio_output_device" in payload:
             set_setting("audio_output_device", str(payload["audio_output_device"]))
         if "kiosk_mode" in payload:
@@ -1089,6 +1099,14 @@ async def api_save_setup(payload: Dict[str, Any], request: Request, response: Re
             set_setting("host_display", str(payload["host_display"]))
         if "host_display_name" in payload:
             set_setting("host_display_name", str(payload["host_display_name"]))
+        if "host_display_x" in payload:
+            set_setting("host_display_x", str(payload["host_display_x"]))
+        if "host_display_y" in payload:
+            set_setting("host_display_y", str(payload["host_display_y"]))
+        if "host_display_width" in payload:
+            set_setting("host_display_width", str(payload["host_display_width"]))
+        if "host_display_height" in payload:
+            set_setting("host_display_height", str(payload["host_display_height"]))
         if "host_kiosk_mode" in payload:
             set_setting("host_kiosk_mode", "true" if payload["host_kiosk_mode"] else "false")
         if "video_quality_profile" in payload:
@@ -1166,7 +1184,11 @@ async def stage_page(request: Request, token: str = ""):
 @app.get("/host")
 async def host_pair_route(request: Request, token: str = ""):
     if (token and token == HOST_TOKEN) or is_host_request(request) or is_local_request(request):
-        response = RedirectResponse(url="/?tab=host")
+        from urllib.parse import urlencode
+        q_params = dict(request.query_params)
+        q_params["tab"] = "host"
+        redirect_url = f"/?{urlencode(q_params)}"
+        response = RedirectResponse(url=redirect_url)
         response.set_cookie("tiki_host", HOST_TOKEN, max_age=86400 * 7, httponly=False)
         return response
     return HTMLResponse("<h3>Invalid Host Token!</h3><p>Scan the Host QR code from the main TV screen or enter the Host PIN on the singer screen.</p>", status_code=403)

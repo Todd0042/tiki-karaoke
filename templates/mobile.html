@@ -1356,6 +1356,26 @@
     </div>
 
     <script>
+        // Multi-monitor coordinate and window positioning secondary enforcement
+        (function() {
+            try {
+                const params = new URLSearchParams(window.location.search);
+                const isKiosk = params.get("kiosk") === "true";
+                const dx = parseInt(params.get("disp_x"), 10);
+                const dy = parseInt(params.get("disp_y"), 10);
+                const dw = parseInt(params.get("disp_w"), 10);
+                const dh = parseInt(params.get("disp_h"), 10);
+                if (!isKiosk && !isNaN(dx) && !isNaN(dy)) {
+                    window.moveTo(dx, dy);
+                    if (!isNaN(dw) && !isNaN(dh) && dw > 200 && dh > 200) {
+                        window.resizeTo(dw, dh);
+                    }
+                }
+            } catch (e) {
+                console.warn("[Display Setup] Window positioning note:", e);
+            }
+        })();
+
         function toggleHostGuideDropdown() {
             var el = document.getElementById('hostGuideDropdown');
             var arrow = document.getElementById('guideArrow');
