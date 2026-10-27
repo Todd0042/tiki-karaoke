@@ -1337,6 +1337,43 @@ class TestAPIEndpoints(unittest.TestCase):
         # Reset to default
         set_setting("marquee_scroll_speed", "85")
 
+    def test_queue_intermission_stability_and_marquee_stacking(self):
+        """Verifies that queuing songs during an active intermission countdown or BGM fade
+        does not clobber/reset the countdown timer or interrupt transitions."""
+        import time
+        import app
+        from config import HOST_TOKEN
+        from database import set_setting
+
+        # Setup: Ensure no song is playing
+        set_setting("intermission_seconds", "15")
+        fake_end = time.time() + 10.0
+        app.current_intermission_end = fake_end
+
+        # Singer A token
+        token_a = "singer_test_intermission_a"
+
+        # Enqueue while intermission is running
+        res = self.client.post("/api/queue", json={
+            "singer_token": token_a,
+            "title": "Intermission Guard Song",
+            "artist": "Test Artist",
+            "video_id": "test_intermission_vid_123",
+            "force": True
+        }, headers={"X-Host-Token": HOST_TOKEN})
+        self.assertEqual(res.status_code, 200)
+
+        # Intermission end must NOT have been overwritten or extended!
+        self.assertEqual(app.current_intermission_end, fake_end)
+
+        # Cleanup
+        app.current_intermission_end = None
+
+        # Verify host.html template contains transition on ticker and QR
+        stage_page = self.client.get("/stage", headers={"X-Host-Token": HOST_TOKEN})
+        self.assertEqual(stage_page.status_code, 200)
+        self.assertIn("transition: bottom 0.25s ease;", stage_page.text)
+
 if __name__ == "__main__":
     unittest.main()
 

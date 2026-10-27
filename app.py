@@ -1640,8 +1640,16 @@ async def api_enqueue_song(req: QueueSongRequest, request: Request):
     # If nothing is currently playing and a stage display is connected, trigger intermission countdown!
     if not current_playing:
         global current_intermission_end, filler_active, filler_transition_state, filler_buffer_task
+
+        # If an intermission countdown is already actively running, do not clobber it or reset the singer's timer!
+        if current_intermission_end and time.time() < current_intermission_end:
+            return {"status": "ok", "queue_id": queue_id}
+
         if filler_active:
-            if filler_transition_state == "buffer_15s":
+            if filler_transition_state in ("fading_out", "finishing"):
+                # Transition is already in progress; let it complete smoothly without interrupting
+                return {"status": "ok", "queue_id": queue_id}
+            elif filler_transition_state == "buffer_15s":
                 if filler_buffer_task and not filler_buffer_task.done():
                     filler_buffer_task.cancel()
                 filler_active = False

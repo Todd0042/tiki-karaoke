@@ -461,15 +461,7 @@ function startTrackPlayback(track) {
         console.warn("[Host Player] Performance recording start error (non-fatal):", recErr);
     }
 
-    try {
-        renderStageMarquee();
-    } catch (marqueeErr) {
-        console.warn("[Host Player] Stage marquee render error (non-fatal):", marqueeErr);
-    }
-
     document.getElementById("nowPlayingBar").style.display = "flex";
-    const joinQR = document.getElementById("joinQROverlay");
-    if (joinQR) joinQR.style.bottom = "105px";
     document.getElementById("intermissionOverlay").style.display = "none";
     const fillerBuffer = document.getElementById("fillerBufferOverlay");
     if (fillerBuffer) fillerBuffer.style.display = "none";
@@ -477,6 +469,13 @@ function startTrackPlayback(track) {
     document.getElementById("nowSinger").innerText = singerText;
     document.getElementById("nowTitle").innerText = `${track.artist} - ${track.title}`;
     updatePitchBadge(track.pitch_shift || 0);
+
+    try {
+        renderStageMarquee();
+    } catch (marqueeErr) {
+        console.warn("[Host Player] Stage marquee render error (non-fatal):", marqueeErr);
+    }
+    updateStageQrPosition();
 
     const seekTime = (track.elapsed_seconds && track.elapsed_seconds > 0) ? track.elapsed_seconds : 0;
     const localVideo = document.getElementById("localVideo");
@@ -568,8 +567,8 @@ function onSongFinished() {
     fetch(`/api/queue/${currentTrack.queue_id}/complete`, { method: "POST" });
     currentTrack = null;
     fadeInBGM();
-    fetchNextTrackForIntermission();
     renderStageMarquee();
+    updateStageQrPosition();
 }
 
 function skipCurrentTrack() {
@@ -595,6 +594,7 @@ function skipCurrentTrack() {
     currentTrack = null;
     fadeInBGM();
     renderStageMarquee();
+    updateStageQrPosition();
 }
 
 function pausePlayback() {
@@ -657,8 +657,8 @@ function triggerIntermission(nextTrack, duration = 20) {
     const countdownCircle = document.getElementById("countdownCircle");
     const subtext = document.getElementById("intermissionSubtext");
     const upNextBadge = document.querySelector("#intermissionOverlay .badge-youtube");
-    const joinQR = document.getElementById("joinQROverlay");
-    if (joinQR) joinQR.style.bottom = "25px";
+    renderStageMarquee();
+    updateStageQrPosition();
 
     if (nextTrack) {
         if (idleQRBox) idleQRBox.style.display = "none";
@@ -717,6 +717,7 @@ function stopCurrentTrack(nextTrack) {
     clearInterval(intermissionTimer);
     intermissionTimer = null;
     renderStageMarquee();
+    updateStageQrPosition();
 
     const overlay = document.getElementById("intermissionOverlay");
     if (overlay) overlay.style.display = "flex";
@@ -739,8 +740,8 @@ function stopCurrentTrack(nextTrack) {
     const countdownCircle = document.getElementById("countdownCircle");
     const subtext = document.getElementById("intermissionSubtext");
     const upNextBadge = document.querySelector("#intermissionOverlay .badge-youtube");
-    const joinQR = document.getElementById("joinQROverlay");
-    if (joinQR) joinQR.style.bottom = "25px";
+    renderStageMarquee();
+    updateStageQrPosition();
 
     if (countdownCircle) countdownCircle.style.display = "none";
 
@@ -1455,12 +1456,15 @@ function resyncPlayhead(targetSeconds, forceResync = false) {
             }
         }
     } else if (ytPlayer && typeof ytPlayer.getCurrentTime === "function" && typeof ytPlayer.seekTo === "function") {
-        const ytTime = ytPlayer.getCurrentTime();
-        const drift = Math.abs(ytTime - targetSeconds);
-        if (forceResync || drift > 1.5) {
-            ytPlayer.seekTo(targetSeconds, true);
-            if (forceResync) {
-                showSyncToast(`🔄 Synced YouTube playhead (${drift.toFixed(2)}s corrected)`);
+        const isYtPaused = typeof ytPlayer.getPlayerState === "function" && ytPlayer.getPlayerState() === (window.YT ? YT.PlayerState.PAUSED : 2);
+        if (!isYtPaused || forceResync) {
+            const ytTime = ytPlayer.getCurrentTime();
+            const drift = Math.abs(ytTime - targetSeconds);
+            if (forceResync || drift > 1.5) {
+                ytPlayer.seekTo(targetSeconds, true);
+                if (forceResync) {
+                    showSyncToast(`🔄 Synced YouTube playhead (${drift.toFixed(2)}s corrected)`);
+                }
             }
         }
     } else if (forceResync) {
@@ -2029,6 +2033,8 @@ function stopFillerPlayback() {
         tickerText.style.fontWeight = "600";
     }
     activeMarqueeText = "";
+    pendingMarqueeText = null;
+    updateStageQrPosition();
 
     const fillerVideo = document.getElementById("fillerVideo");
     if (fillerVideo) {
@@ -2044,8 +2050,38 @@ function stopFillerPlayback() {
 // -------------------------------------------------------------
 let currentMarqueeState = null;
 let activeMarqueeText = "";
+let pendingMarqueeText = null;
 let configuredMarqueeSpeed = 85;
 let lastMarqueeSpeed = 85;
+
+function updateStageQrPosition() {
+    const joinQR = document.getElementById("joinQROverlay");
+    if (!joinQR) return;
+    const tickerBar = document.getElementById("fillerTickerBar");
+    const isTickerVisible = tickerBar && tickerBar.style.display !== "none";
+    const isSinging = Boolean(currentTrack);
+
+    if (isSinging) {
+        joinQR.style.bottom = isTickerVisible ? "136px" : "105px";
+    } else {
+        joinQR.style.bottom = isTickerVisible ? "46px" : "25px";
+    }
+}
+window.updateStageQrPosition = updateStageQrPosition;
+
+function setupMarqueeIterationListener() {
+    const tickerText = document.getElementById("fillerTickerText");
+    if (!tickerText || tickerText._hasIterationListener) return;
+    tickerText._hasIterationListener = true;
+    tickerText.addEventListener("animationiteration", () => {
+        if (pendingMarqueeText && pendingMarqueeText !== activeMarqueeText) {
+            activeMarqueeText = pendingMarqueeText;
+            pendingMarqueeText = null;
+            tickerText.innerHTML = activeMarqueeText;
+            triggerTickerScroll(false);
+        }
+    });
+}
 
 function handleMarqueeUpdate(data) {
     if (data.speed) {
@@ -2066,10 +2102,15 @@ function renderStageMarquee(forceRestart = false) {
     const tickerText = document.getElementById("fillerTickerText");
     if (!tickerBar || !tickerText) return;
 
+    setupMarqueeIterationListener();
+
     const m = currentMarqueeState;
     if (m && m.mode === "off") {
         tickerBar.style.display = "none";
+        tickerBar.style.bottom = "0px";
         activeMarqueeText = "";
+        pendingMarqueeText = null;
+        updateStageQrPosition();
         return;
     }
 
@@ -2087,7 +2128,7 @@ function renderStageMarquee(forceRestart = false) {
     }
 
     const isIntermission = document.getElementById("intermissionOverlay") && document.getElementById("intermissionOverlay").style.display !== "none";
-    const isSinging = currentTrack && document.getElementById("nowPlayingBar") && document.getElementById("nowPlayingBar").style.display !== "none";
+    const isSinging = Boolean(currentTrack);
     
     let shouldShow = false;
     if (m && m.mode === "always") {
@@ -2102,12 +2143,17 @@ function renderStageMarquee(forceRestart = false) {
 
     if (!shouldShow || !textToShow) {
         tickerBar.style.display = "none";
+        tickerBar.style.bottom = "0px";
         activeMarqueeText = "";
+        pendingMarqueeText = null;
+        updateStageQrPosition();
         return;
     }
 
     tickerBar.style.display = "flex";
-    tickerBar.style.background = isSinging ? "rgba(8, 14, 24, 0.85)" : "rgba(8, 14, 24, 0.95)";
+    tickerBar.style.bottom = isSinging ? "90px" : "0px";
+    tickerBar.style.background = isSinging ? "rgba(8, 14, 24, 0.88)" : "rgba(8, 14, 24, 0.95)";
+    updateStageQrPosition();
 
     // If text is already active and displaying, do not restart in-flight marquee!
     if (textToShow === activeMarqueeText && !forceRestart) {
@@ -2118,7 +2164,20 @@ function renderStageMarquee(forceRestart = false) {
         return;
     }
 
+    // If in-flight crawl is already running and this is NOT a forced restart (e.g. background queue ticker changed),
+    // defer applying the updated text until the current loop iteration completes!
+    const isTickerActive = activeMarqueeText && tickerBar.style.display !== "none" && tickerText.style.animation && tickerText.style.animation !== "none";
+    if (isTickerActive && !forceRestart) {
+        pendingMarqueeText = textToShow;
+        if (configuredMarqueeSpeed !== lastMarqueeSpeed) {
+            lastMarqueeSpeed = configuredMarqueeSpeed;
+            triggerTickerScroll(false);
+        }
+        return;
+    }
+
     // New text or explicit restart
+    pendingMarqueeText = null;
     activeMarqueeText = textToShow;
     lastMarqueeSpeed = configuredMarqueeSpeed;
     tickerText.style.textAlign = "left";

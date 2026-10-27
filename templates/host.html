@@ -95,6 +95,7 @@
             border: 1px solid var(--border-neon);
             box-shadow: 0 0 20px rgba(0, 240, 255, 0.25);
             overflow: visible;
+            transition: bottom 0.25s ease;
         }
 
         @media (max-width: 768px) {
@@ -355,7 +356,7 @@
         </div>
 
         <!-- BGM Filler Bottom Scrolling Ticker -->
-        <div id="fillerTickerBar" style="display: none; position: absolute; bottom: 0; left: 0; right: 0; height: 38px; z-index: 18; background: rgba(8, 14, 24, 0.95); border-top: 1px solid rgba(0, 240, 255, 0.3); overflow: hidden; align-items: center;">
+        <div id="fillerTickerBar" style="display: none; position: absolute; bottom: 0; left: 0; right: 0; height: 38px; z-index: 18; background: rgba(8, 14, 24, 0.95); border-top: 1px solid rgba(0, 240, 255, 0.3); overflow: hidden; align-items: center; transition: bottom 0.25s ease;">
             <div id="fillerTickerText" style="white-space: nowrap; font-size: 0.95rem; font-weight: 600; color: var(--neon-cyan); will-change: transform; display: inline-block;">
                 🌴 DJ LOUNGE MUSIC • 🌺 OPEN MIC: Scan the QR code to queue your favorite song!
             </div>
