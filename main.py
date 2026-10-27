@@ -221,6 +221,96 @@ def init_windows_dpi_awareness():
             except Exception:
                 pass
 
+_windows_job_handle = None
+_windows_ctrl_handler_ref = None
+
+def setup_windows_job_object():
+    """Binds the current process and all child processes to a Windows Job Object configured to KILL_ON_JOB_CLOSE."""
+    global _windows_job_handle
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.windll.kernel32
+        h_job = kernel32.CreateJobObjectW(None, None)
+        if not h_job:
+            return
+
+        class IO_COUNTERS(ctypes.Structure):
+            _fields_ = [
+                ("ReadOperationCount", ctypes.c_uint64),
+                ("WriteOperationCount", ctypes.c_uint64),
+                ("OtherOperationCount", ctypes.c_uint64),
+                ("ReadTransferCount", ctypes.c_uint64),
+                ("WriteTransferCount", ctypes.c_uint64),
+                ("OtherTransferCount", ctypes.c_uint64),
+            ]
+
+        class JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
+            _fields_ = [
+                ("PerProcessUserTimeLimit", ctypes.c_int64),
+                ("PerJobUserTimeLimit", ctypes.c_int64),
+                ("LimitFlags", wintypes.DWORD),
+                ("MinimumWorkingSetSize", ctypes.c_size_t),
+                ("MaximumWorkingSetSize", ctypes.c_size_t),
+                ("ActiveProcessLimit", wintypes.DWORD),
+                ("Affinity", ctypes.c_size_t),
+                ("PriorityClass", wintypes.DWORD),
+                ("SchedulingClass", wintypes.DWORD),
+            ]
+
+        class JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
+            _fields_ = [
+                ("BasicLimitInformation", JOBOBJECT_BASIC_LIMIT_INFORMATION),
+                ("IoInfo", IO_COUNTERS),
+                ("ProcessMemoryLimit", ctypes.c_size_t),
+                ("JobMemoryLimit", ctypes.c_size_t),
+                ("PeakProcessMemoryLimit", ctypes.c_size_t),
+                ("PeakJobMemoryLimit", ctypes.c_size_t),
+            ]
+
+        info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+
+        JobObjectExtendedLimitInformation = 9
+        res = kernel32.SetInformationJobObject(
+            h_job,
+            JobObjectExtendedLimitInformation,
+            ctypes.byref(info),
+            ctypes.sizeof(info)
+        )
+        if not res:
+            return
+
+        h_process = kernel32.GetCurrentProcess()
+        if kernel32.AssignProcessToJobObject(h_job, h_process):
+            _windows_job_handle = h_job
+    except Exception:
+        pass
+
+def setup_windows_ctrl_handler():
+    """Catches Windows console close / logoff / shutdown events and executes graceful service cleanup."""
+    global _windows_ctrl_handler_ref
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        HandlerRoutine = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.DWORD)
+
+        def _ctrl_handler(ctrl_type):
+            cleanup_all_services()
+            return False
+
+        _windows_ctrl_handler_ref = HandlerRoutine(_ctrl_handler)
+        ctypes.windll.kernel32.SetConsoleCtrlHandler(_windows_ctrl_handler_ref, True)
+    except Exception:
+        pass
+
 def kill_process_tree(proc: Optional[subprocess.Popen], timeout: float = 2.0):
     """Gracefully terminates proc and its child processes across Unix and Windows."""
     if not proc or proc.poll() is not None:
@@ -306,6 +396,21 @@ def cleanup_all_services():
         print("[Shutdown] Stopping remote tunnel process...")
         kill_process_tree(active_tunnel_proc)
         active_tunnel_proc = None
+
+    # Forcefully terminate any leftover or orphaned background helper processes
+    if sys.platform == "win32":
+        try:
+            subprocess.run(["taskkill", "/F", "/IM", "cloudflared.exe", "/T"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2.0, check=False, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            subprocess.run(["taskkill", "/F", "/IM", "bore.exe", "/T"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2.0, check=False, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            subprocess.run(["taskkill", "/F", "/IM", "tiki-mic-router.exe", "/T"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2.0, check=False, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        except Exception:
+            pass
+    else:
+        try:
+            subprocess.run(["pkill", "-9", "-f", "cloudflared tunnel"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2.0, check=False)
+            subprocess.run(["pkill", "-9", "-f", "bore local"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2.0, check=False)
+        except Exception:
+            pass
 
     if PID_FILE.exists():
         try:
@@ -595,6 +700,15 @@ def start_cloudflare_quick_tunnel(port: int):
         print("[Tunnel] ⚠️ cloudflared binary not found. Remote tunnel unavailable.")
         return None, None
 
+    # Terminate any stale cloudflared processes from prior runs or crashes
+    try:
+        if sys.platform == "win32":
+            subprocess.run(["taskkill", "/F", "/IM", "cloudflared.exe", "/T"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2.0, check=False, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        else:
+            subprocess.run(["pkill", "-9", "-f", "cloudflared tunnel"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2.0, check=False)
+    except Exception:
+        pass
+
     print("[Tunnel] 🔒 Establishing secure Cloudflare Quick Tunnel (Trusted HTTPS)...")
     try:
         proc = subprocess.Popen(
@@ -637,6 +751,15 @@ def start_cloudflare_named_tunnel(token: str, custom_domain: str):
     if not token:
         print("[Tunnel] ⚠️ Cloudflare Named Tunnel selected but no tunnel token configured.")
         return None, None
+
+    # Terminate any stale cloudflared processes from prior runs or crashes
+    try:
+        if sys.platform == "win32":
+            subprocess.run(["taskkill", "/F", "/IM", "cloudflared.exe", "/T"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2.0, check=False, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        else:
+            subprocess.run(["pkill", "-9", "-f", "cloudflared tunnel"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2.0, check=False)
+    except Exception:
+        pass
 
     print(f"[Tunnel] 🔒 Launching Cloudflare Named Tunnel ({custom_domain or 'Branded Domain'})...")
     try:
@@ -847,8 +970,10 @@ def main():
         debug_tray_status()
         sys.exit(0)
 
-    # Initialize high-DPI scaling on Windows (crisp UI on 4K TVs and high-res screens)
+    # Initialize high-DPI scaling, Windows Job Object (kills child processes on exit), and Ctrl handler
     init_windows_dpi_awareness()
+    setup_windows_job_object()
+    setup_windows_ctrl_handler()
 
     # Enforce single instance across the system
     if not check_single_instance():

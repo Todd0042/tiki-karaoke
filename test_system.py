@@ -566,6 +566,28 @@ class TestTikiKaraoke(unittest.TestCase):
         self.assertEqual(res_page1["page"], 1)
         self.assertTrue(res_page1["has_more"])
 
+    def test_lifecycle_and_shutdown_routines(self):
+        """Verifies Windows lifecycle handlers and cleanup_all_services execute cleanly without exceptions."""
+        import main
+        self.assertTrue(hasattr(main, "setup_windows_job_object"))
+        self.assertTrue(hasattr(main, "setup_windows_ctrl_handler"))
+        self.assertTrue(hasattr(main, "cleanup_all_services"))
+
+        # 1. Job object setup routine executes safely
+        main.setup_windows_job_object()
+
+        # 2. Console ctrl handler routine executes safely
+        main.setup_windows_ctrl_handler()
+
+        # 3. Cleanup all services executes without error
+        orig_shutting_down = main.is_shutting_down
+        try:
+            main.is_shutting_down = False
+            main.cleanup_all_services()
+            self.assertTrue(main.is_shutting_down)
+        finally:
+            main.is_shutting_down = orig_shutting_down
+
 if __name__ == "__main__":
     unittest.main()
 
