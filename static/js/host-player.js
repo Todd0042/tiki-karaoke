@@ -446,19 +446,33 @@ function startTrackPlayback(track) {
     stopIntermission();
     stopFillerPlayback();
     fadeOutBGM();
-    if (audioDSP) audioDSP.setBetweenSongs(false);
+    if (audioDSP) {
+        audioDSP.setBetweenSongs(false);
+        audioDSP.resume();
+    }
     onDeckAlertFiredForQueueId = null;
 
-    // Start live performance audio recording for this singer
-    if (audioDSP && track.singer_id) {
-        audioDSP.startPerformanceRecording(track.queue_id, track.singer_id, track.track_id);
+    // Start live performance audio recording for this singer (safely guarded)
+    try {
+        if (audioDSP && track.singer_id) {
+            audioDSP.startPerformanceRecording(track.queue_id, track.singer_id, track.track_id);
+        }
+    } catch (recErr) {
+        console.warn("[Host Player] Performance recording start error (non-fatal):", recErr);
     }
-    renderStageMarquee();
+
+    try {
+        renderStageMarquee();
+    } catch (marqueeErr) {
+        console.warn("[Host Player] Stage marquee render error (non-fatal):", marqueeErr);
+    }
 
     document.getElementById("nowPlayingBar").style.display = "flex";
     const joinQR = document.getElementById("joinQROverlay");
     if (joinQR) joinQR.style.bottom = "105px";
     document.getElementById("intermissionOverlay").style.display = "none";
+    const fillerBuffer = document.getElementById("fillerBufferOverlay");
+    if (fillerBuffer) fillerBuffer.style.display = "none";
     const singerText = track.duet_partner ? `${track.singer_name} & ${track.duet_partner}` : track.singer_name;
     document.getElementById("nowSinger").innerText = singerText;
     document.getElementById("nowTitle").innerText = `${track.artist} - ${track.title}`;
@@ -499,6 +513,7 @@ function startTrackPlayback(track) {
             localVideo.muted = true;
         } else if (audioDSP) {
             audioDSP.init(localVideo);
+            audioDSP.resume();
             audioDSP.setPitch(track.pitch_shift || 0);
         }
 
@@ -510,8 +525,7 @@ function startTrackPlayback(track) {
             .catch(e => {
                 if (e.name === "AbortError") return;
                 console.log("Local video autoplay blocked by browser policy:", e);
-                const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-                if (isMobile && unmuteOverlay && localVideo.paused) {
+                if (unmuteOverlay && localVideo.paused) {
                     unmuteOverlay.style.display = "flex";
                 }
             });
@@ -1210,13 +1224,13 @@ function triggerCrowdHypeComboBanner(streak) {
     banner.style.display = "block";
     requestAnimationFrame(() => {
         banner.style.opacity = "1";
-        banner.style.transform = "translate(-50%, -50%) scale(1.0)";
+        banner.style.transform = "scale(1.0)";
     });
 
     clearTimeout(crowdHypeBannerTimer);
     crowdHypeBannerTimer = setTimeout(() => {
         banner.style.opacity = "0";
-        banner.style.transform = "translate(-50%, -50%) scale(0.6)";
+        banner.style.transform = "scale(0.7)";
         setTimeout(() => {
             if (banner.style.opacity === "0") {
                 banner.style.display = "none";
@@ -2021,7 +2035,7 @@ function renderStageMarquee() {
 
     const m = currentMarqueeState;
     if (m && m.mode === "off") {
-        if (!fillerActive) tickerBar.style.display = "none";
+        if (!isFillerPlaying) tickerBar.style.display = "none";
         return;
     }
 
@@ -2032,14 +2046,14 @@ function renderStageMarquee() {
         textToShow = `💌 <strong>DEDICATED TO:</strong> ${escapeHtml(currentTrack.dedication)} • 🎤 ${escapeHtml(currentTrack.singer_name)} singing "${escapeHtml(currentTrack.title)}" • 🌺 `;
     } else if (m && m.queue_ticker) {
         textToShow = `🌴 ${escapeHtml(m.queue_ticker)} • 🌺 OPEN MIC: Scan QR to Sing! • `;
-    } else if (fillerActive && currentFillerTrack) {
+    } else if (isFillerPlaying && currentFillerTrack) {
         textToShow = currentFillerTrack.is_sing_along 
             ? `🎤 SING-ALONG INTERMISSION: ${escapeHtml(currentFillerTrack.artist)} - ${escapeHtml(currentFillerTrack.title)} • 🌺 Sing along with the stage or scan to queue next!`
             : `🌴 DJ LOUNGE MUSIC: ${escapeHtml(currentFillerTrack.artist)} - ${escapeHtml(currentFillerTrack.title)} • 🌺 OPEN MIC: Scan the QR code to queue your favorite song!`;
     }
 
     if (!textToShow) {
-        if (!fillerActive) tickerBar.style.display = "none";
+        if (!isFillerPlaying) tickerBar.style.display = "none";
         return;
     }
 
@@ -2053,7 +2067,7 @@ function renderStageMarquee() {
         shouldShow = true;
     } else if (isSinging && currentTrack && currentTrack.dedication) {
         shouldShow = true;
-    } else if (isIntermission || fillerActive) {
+    } else if (isIntermission || isFillerPlaying) {
         shouldShow = true;
     }
 

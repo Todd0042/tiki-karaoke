@@ -521,24 +521,25 @@ class AudioDSPPipeline {
     }
 
     startPerformanceRecording(queueId, singerId, trackId) {
-        if (!this.ctx || !this.masterSumNode) return false;
-        if (!this.recDestination) {
-            this.recDestination = this.ctx.createMediaStreamDestination();
-            this.masterSumNode.connect(this.recDestination);
-        }
-        this.recordedChunks = [];
-        this.recMetadata = { queueId, singerId, trackId, startTime: Date.now() };
-
-        let options = { mimeType: 'audio/webm;codecs=opus' };
-        if (typeof MediaRecorder === "undefined") return false;
-        if (!MediaRecorder.isTypeSupported(options.mimeType)) {
-            options = { mimeType: 'audio/webm' };
-            if (!MediaRecorder.isTypeSupported(options.mimeType)) {
-                options = {};
-            }
-        }
-
         try {
+            this.ensureContext();
+            if (!this.ctx || !this.masterSumNode) return false;
+            if (!this.recDestination) {
+                this.recDestination = this.ctx.createMediaStreamDestination();
+                this.masterSumNode.connect(this.recDestination);
+            }
+            this.recordedChunks = [];
+            this.recMetadata = { queueId, singerId, trackId, startTime: Date.now() };
+
+            if (typeof MediaRecorder === "undefined") return false;
+            let options = { mimeType: 'audio/webm;codecs=opus' };
+            if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+                options = { mimeType: 'audio/webm' };
+                if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+                    options = {};
+                }
+            }
+
             this.mediaRecorder = new MediaRecorder(this.recDestination.stream, options);
             this.mediaRecorder.ondataavailable = (e) => {
                 if (e.data && e.data.size > 0) {
