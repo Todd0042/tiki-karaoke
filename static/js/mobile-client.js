@@ -2134,6 +2134,9 @@ function loadHostSettings() {
             if (speedSelect && settings.marquee_scroll_speed) {
                 speedSelect.value = settings.marquee_scroll_speed;
             }
+            if (settings.intermission_vibe_mode) {
+                updateVibeModeUI(settings.intermission_vibe_mode);
+            }
         });
 }
 
@@ -3443,39 +3446,63 @@ function loadFillerSettings(settings) {
 }
 
 function updateVibeModeUI(mode) {
+    const cleanMode = (mode || "sing_along").trim().toLowerCase();
+
+    // BGM Crate Tab buttons & description
     const fillerBtn = document.getElementById("vibeModeFillerBtn");
     const singAlongBtn = document.getElementById("vibeModeSingAlongBtn");
     const mashupBtn = document.getElementById("vibeModeMashupBtn");
     const desc = document.getElementById("vibeModeDesc");
 
-    if (fillerBtn) fillerBtn.classList.toggle("active", mode === "pure_filler");
-    if (singAlongBtn) singAlongBtn.classList.toggle("active", mode === "sing_along");
-    if (mashupBtn) mashupBtn.classList.toggle("active", mode === "intelligent_mashup");
+    // Main Host Desk buttons, badge & description
+    const hostFillerBtn = document.getElementById("hostVibeModeFillerBtn");
+    const hostSingAlongBtn = document.getElementById("hostVibeModeSingAlongBtn");
+    const hostMashupBtn = document.getElementById("hostVibeModeMashupBtn");
+    const hostDesc = document.getElementById("hostVibeModeDesc");
+    const hostBadge = document.getElementById("hostVibeActiveBadge");
 
-    if (desc) {
-        if (mode === "pure_filler") {
-            desc.innerText = "Pure filler music videos only. Great for a classic party lounge vibe.";
-        } else if (mode === "sing_along") {
-            desc.innerText = "True Karaoke: Sing-along tracks with vocals & lyrics to get the room singing!";
-        } else {
-            desc.innerText = "Intelligent mashup: Sing-alongs when queue empty, music videos when show paused.";
-        }
+    if (fillerBtn) fillerBtn.classList.toggle("active", cleanMode === "pure_filler");
+    if (singAlongBtn) singAlongBtn.classList.toggle("active", cleanMode === "sing_along");
+    if (mashupBtn) mashupBtn.classList.toggle("active", cleanMode === "intelligent_mashup");
+
+    if (hostFillerBtn) hostFillerBtn.classList.toggle("active", cleanMode === "pure_filler");
+    if (hostSingAlongBtn) hostSingAlongBtn.classList.toggle("active", cleanMode === "sing_along");
+    if (hostMashupBtn) hostMashupBtn.classList.toggle("active", cleanMode === "intelligent_mashup");
+
+    let textDesc = "";
+    let badgeText = "";
+    if (cleanMode === "pure_filler") {
+        textDesc = "Pure filler music videos only. Great for a classic party lounge vibe.";
+        badgeText = "📼 Music Videos";
+    } else if (cleanMode === "sing_along") {
+        textDesc = "True Karaoke: Crowd sing-along tracks with guide vocals & lyrics between songs.";
+        badgeText = "🎤 Sing-Alongs";
+    } else {
+        textDesc = "Intelligent mashup: Sing-alongs when queue is empty, music videos when show is stopped.";
+        badgeText = "🧠 Smart Mashup";
     }
+
+    if (desc) desc.innerText = textDesc;
+    if (hostDesc) hostDesc.innerText = textDesc;
+    if (hostBadge) hostBadge.innerText = badgeText;
 }
 
 function setIntermissionVibeMode(mode) {
     updateVibeModeUI(mode);
     fetch("/api/host/filler-settings", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+            "Content-Type": "application/json",
+            "X-Host-Token": typeof HOST_TOKEN !== "undefined" ? HOST_TOKEN : ""
+        },
         body: JSON.stringify({ intermission_vibe_mode: mode })
     })
     .then(res => res.json())
     .then(() => {
         const labels = {
-            pure_filler: "📼 Pure Filler",
-            sing_along: "🎤 True Karaoke",
-            intelligent_mashup: "🧠 Smart Mashup"
+            pure_filler: "📼 Music Videos Only",
+            sing_along: "🎤 Sing-Alongs Only",
+            intelligent_mashup: "🧠 Intelligent Mashup"
         };
         showCustomToast(`🌴 Intermission mode: ${labels[mode] || mode}`);
     })

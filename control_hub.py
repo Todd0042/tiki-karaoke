@@ -220,10 +220,10 @@ class TikiControlHub:
         btn_frame.pack(fill="x", padx=20, pady=6)
 
         # Primary buttons grid
-        # 1. Open Host DJ Desk
+        # 1. Open Host Desk
         host_btn = tk.Button(
             btn_frame,
-            text="👑 Open Host DJ Desk (Laptop Controls)",
+            text="👑 Open Host Desk (Laptop Controls)",
             font=("Helvetica", 10, "bold"),
             bg="#2a1435",
             fg="#ff2a85",

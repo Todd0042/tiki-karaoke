@@ -453,16 +453,16 @@
                 <div style="margin-bottom: 10px;">
                     <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 1rem; font-weight: 600; color: var(--neon-gold);">
                         <input type="checkbox" id="hostDisplayEnabledCheck" name="host_display_enabled" value="true" onchange="toggleHostDisplayControls()" {% if config.host_display_enabled %}checked{% endif %}>
-                        <span>👑 Automatically open Host DJ Remote Window on startup (Multi-Monitor)</span>
+                        <span>👑 Automatically open Host Desk Window on startup (Multi-Monitor)</span>
                     </label>
                     <div class="field-desc" style="margin-left: 26px; margin-top: 4px;">
-                        Opens the Master DJ Remote pre-authenticated on a second screen (e.g. your desk monitor) while the stage window plays on your TV.
+                        Opens the Host Desk pre-authenticated on a second screen (e.g. your desk monitor) while the stage window plays on your TV.
                     </div>
                 </div>
 
                 <div id="hostDisplayFields" style="{% if not config.host_display_enabled %}display: none;{% endif %} margin-top: 14px; padding-left: 26px;">
                     <div class="field-group">
-                        <label for="hostDisplaySelect">Target Monitor for Host DJ Remote</label>
+                        <label for="hostDisplaySelect">Target Monitor for Host Desk</label>
                         <div style="display: flex; gap: 8px;">
                             <select id="hostDisplaySelect" name="host_display" onchange="onHostDisplaySelected()" style="flex: 1;">
                                 <option value="1">Detecting displays...</option>

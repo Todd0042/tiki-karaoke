@@ -32,7 +32,7 @@ Getting live vocal audio from a microphone back out to speakers without disorien
 - **The Fix**: Overhauled `populateHostMicDevices()` to strictly preserve native OS hardware IDs while mapping descriptive browser labels cleanly. The host interface now accurately reflects your physical hardware inputs every time.
 
 ### 📊 Real-Time Native Router Telemetry & Visual Gating
-- The **Host DJ Desk** and **Mobile Host Remote** now dynamically report the active audio routing mode:
+- The **Host Desk** and **Mobile Host Remote** now dynamically report the active audio routing mode:
   - 🟢 **Native Router Active**: Sub-20ms hardware monitoring in effect.
   - 🟡 **Browser Web Audio Fallback**: Displayed when running across unaccelerated setups, complete with latency advisory tooltips (warning against high-latency Bluetooth headsets or TV HDMI audio processing delay).
   - 🎛️ **Live Hardware VU & Master Mic Controls**: Gain, volume sliders, warm room reverb, and automatic between-song vocal ducking are synchronized instantly across desktop and mobile screens.

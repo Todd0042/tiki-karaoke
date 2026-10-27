@@ -328,8 +328,8 @@
         <section id="hostTab" class="tab-view" style="display: none;">
             <div class="tiki-card-pink" style="padding: 16px; margin-bottom: 16px;">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-                    <h2 class="font-tiki neon-pink" style="font-size: 1.3rem; margin: 0;">👑 Master Host DJ Controls</h2>
-                    <span class="badge-local" style="font-size: 0.75rem;">DJ Desk</span>
+                    <h2 class="font-tiki neon-pink" style="font-size: 1.3rem; margin: 0;">👑 Master Host Desk</h2>
+                    <span class="badge-local" style="font-size: 0.75rem;">Host Desk</span>
                 </div>
 
                 <!-- First-Run Quickstart Guide Banner (Dismissible) -->
@@ -386,6 +386,32 @@
                         <button onclick="hostAdd15s()" class="btn-ghost" style="padding: 12px; font-weight: 700; font-size: 0.95rem;">+15s Timer</button>
                         <button onclick="hostStop()" class="btn-ghost" style="color: #ffaa00; border-color: rgba(255,170,0,0.4); padding: 10px;">⏹️ Stop Stage</button>
                         <button onclick="hostRefreshStage()" class="btn-ghost" style="color: var(--neon-cyan); border-color: rgba(0,240,255,0.4); padding: 10px;">🔄 Refresh Stage</button>
+                    </div>
+                </div>
+
+                <!-- Between-Song Intermission Vibe Mode Card -->
+                <div class="tiki-card" style="padding: 12px 14px; margin-bottom: 18px; border-left: 4px solid var(--neon-gold); background: rgba(255, 183, 3, 0.05);">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                        <span style="font-size: 0.82rem; font-weight: 700; color: var(--neon-gold); letter-spacing: 0.5px;">
+                            🌴 BETWEEN-SONG INTERMISSION VIBE:
+                        </span>
+                        <span id="hostVibeActiveBadge" style="font-size: 0.72rem; font-weight: 700; padding: 2px 8px; border-radius: 6px; background: rgba(0,240,255,0.15); color: var(--neon-cyan);">
+                            🎤 Sing-Alongs
+                        </span>
+                    </div>
+                    <div style="display: flex; gap: 6px; margin-bottom: 6px;">
+                        <button type="button" id="hostVibeModeFillerBtn" onclick="setIntermissionVibeMode('pure_filler')" class="lib-sort-btn" style="flex: 1; font-size: 0.76rem; padding: 8px 4px; border-radius: 8px;">
+                            📼 Music Videos
+                        </button>
+                        <button type="button" id="hostVibeModeSingAlongBtn" onclick="setIntermissionVibeMode('sing_along')" class="lib-sort-btn active" style="flex: 1; font-size: 0.76rem; padding: 8px 4px; border-radius: 8px;">
+                            🎤 Sing-Alongs
+                        </button>
+                        <button type="button" id="hostVibeModeMashupBtn" onclick="setIntermissionVibeMode('intelligent_mashup')" class="lib-sort-btn" style="flex: 1; font-size: 0.76rem; padding: 8px 4px; border-radius: 8px;">
+                            🧠 Smart Mashup
+                        </button>
+                    </div>
+                    <div id="hostVibeModeDesc" style="font-size: 0.73rem; color: #cbd5e1; line-height: 1.35; font-style: italic;">
+                        True Karaoke: Crowd sing-along tracks with guide vocals & lyrics between songs.
                     </div>
                 </div>
 
