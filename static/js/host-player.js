@@ -1801,6 +1801,20 @@ function triggerFillerBuffer(durationSeconds) {
     fadeInBGM();
 }
 
+function triggerTickerScroll() {
+    const tickerText = document.getElementById("fillerTickerText");
+    if (!tickerText) return;
+    tickerText.style.animation = "none";
+    tickerText.style.paddingLeft = "0";
+    tickerText.style.display = "inline-block";
+    tickerText.style.whiteSpace = "nowrap";
+    tickerText.offsetHeight; // trigger reflow to reset translation off-screen right (100vw)
+    const textWidth = tickerText.scrollWidth || 600;
+    const screenWidth = window.innerWidth || 1920;
+    const duration = Math.max(18, Math.round((screenWidth + textWidth) / 90));
+    tickerText.style.animation = `tickerMarquee ${duration}s linear infinite`;
+}
+
 function startFillerPlayback(track) {
     if (!track) return;
     currentFillerTrack = track;
@@ -1838,10 +1852,9 @@ function startFillerPlayback(track) {
 
     const tickerText = document.getElementById("fillerTickerText");
     if (tickerText) {
-        tickerText.style.animation = "none";
         tickerText.style.textAlign = "left";
         tickerText.style.width = "auto";
-        tickerText.style.paddingLeft = "20px";
+        tickerText.style.paddingLeft = "0";
         tickerText.style.color = "var(--neon-cyan)";
         tickerText.style.fontSize = "0.95rem";
         tickerText.style.fontWeight = "600";
@@ -1850,8 +1863,7 @@ function startFillerPlayback(track) {
         } else {
             tickerText.innerText = `🌴 DJ LOUNGE MUSIC: ${track.artist} - ${track.title} • 🌺 OPEN MIC: Scan the QR code to queue your favorite song!`;
         }
-        tickerText.offsetHeight; /* trigger reflow to reset animation from right */
-        tickerText.style.animation = "tickerMarquee 25s linear infinite";
+        triggerTickerScroll();
     }
 
     const fillerVideo = document.getElementById("fillerVideo");
@@ -1963,11 +1975,9 @@ function handleFillerTransitionFinish(data) {
             if (isFillerPlaying && tickerText) {
                 tickerText.style.textAlign = "left";
                 tickerText.style.width = "auto";
-                tickerText.style.paddingLeft = "20px";
+                tickerText.style.paddingLeft = "0";
                 tickerText.innerText = `🎤 UP NEXT: ${data.next_singer} with "${data.next_title}" by ${data.next_artist} right after this video! • 🌺 Scan QR to join the queue!`;
-                tickerText.style.animation = "none";
-                tickerText.offsetHeight; /* trigger reflow */
-                tickerText.style.animation = "tickerMarquee 25s linear infinite";
+                triggerTickerScroll();
             }
         }, 4000);
     }
@@ -2079,9 +2089,7 @@ function renderStageMarquee() {
     tickerBar.style.display = "flex";
     tickerBar.style.background = isSinging ? "rgba(8, 14, 24, 0.85)" : "rgba(8, 14, 24, 0.95)";
     tickerText.innerHTML = textToShow;
-    tickerText.style.animation = "none";
-    tickerText.offsetHeight; // trigger reflow to restart smoothly from off-screen right
-    tickerText.style.animation = "tickerMarquee 25s linear infinite";
+    triggerTickerScroll();
 }
 
 // -------------------------------------------------------------
@@ -2572,6 +2580,16 @@ async function fetchHostNetworkStatus() {
 function updateStageNetworkUI(data) {
     if (!data) return;
 
+    const showWifi = !!(data.show_wifi_card || (data.remote_mode === "local" && data.hotspot_enabled && data.hotspot_ssid));
+    const wifiCard = document.getElementById("idleWifiQRCard");
+    const appTitle = document.getElementById("idleAppQRTitle");
+    if (wifiCard) {
+        wifiCard.style.display = showWifi ? "block" : "none";
+    }
+    if (appTitle) {
+        appTitle.innerText = showWifi ? "📱 Step 2: Request Songs" : "📱 Scan to Request Songs";
+    }
+
     const wifiSsid = document.getElementById("stageWifiSsid");
     const wifiPass = document.getElementById("stageWifiPass");
     const joinUrlText = document.getElementById("stageJoinUrlText");
@@ -2593,7 +2611,7 @@ function updateStageNetworkUI(data) {
     }
 
     const t = Date.now();
-    if (wifiQrImg) wifiQrImg.src = `/qr/wifi?t=${t}`;
+    if (wifiQrImg && showWifi) wifiQrImg.src = `/qr/wifi?t=${t}`;
     if (publicQrImg) publicQrImg.src = `/qr/public?t=${t}`;
     if (fillerQrImg) fillerQrImg.src = `/qr/public?t=${t}`;
     if (joinQrImg) joinQrImg.src = `/qr/public?t=${t}`;

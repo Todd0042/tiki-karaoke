@@ -1069,6 +1069,14 @@ async def api_save_setup(payload: Dict[str, Any], request: Request, response: Re
         cfg = save_config(payload)
         init_db()
 
+        if "remote_mode" in payload:
+            set_setting("remote_mode", str(payload["remote_mode"]))
+        if "hotspot_enabled" in payload:
+            set_setting("hotspot_enabled", "true" if payload["hotspot_enabled"] else "false")
+        if "hotspot_ssid" in payload:
+            set_setting("hotspot_ssid", str(payload["hotspot_ssid"]).strip())
+        if "hotspot_password" in payload:
+            set_setting("hotspot_password", str(payload["hotspot_password"]).strip())
         if "bar_name" in payload:
             set_setting("bar_name", str(payload["bar_name"]))
         if "intermission_seconds" in payload:
@@ -1167,6 +1175,10 @@ async def stage_page(request: Request, token: str = ""):
     pub_h = get_public_host()
     cfg = load_config()
     pin = str(cfg.get("host_pin", HOST_PIN))
+    import network_helper
+    show_wifi_card = network_helper.is_hotspot_enabled()
+    hotspot_ssid = network_helper.get_hotspot_ssid()
+    hotspot_password = network_helper.get_hotspot_password()
     response = templates.TemplateResponse(request=request, name="host.html", context={
         "bar_name": get_setting("bar_name", "The Tiki Hut Karaoke Lounge"),
         "local_ip": LOCAL_IP,
@@ -1174,7 +1186,10 @@ async def stage_page(request: Request, token: str = ""):
         "base_url": get_base_url(),
         "display_ip": pub_h if pub_h else f"{PUBLIC_IP}:{PORT}",
         "port": PORT,
-        "host_pin": pin
+        "host_pin": pin,
+        "show_wifi_card": show_wifi_card,
+        "hotspot_ssid": hotspot_ssid,
+        "hotspot_password": hotspot_password
     })
     response.set_cookie("tiki_stage", STAGE_TOKEN, max_age=86400 * 30, httponly=False)
     if (token and token == HOST_TOKEN) or is_host_request(request) or is_local_request(request):
@@ -3200,8 +3215,9 @@ async def host_set_av_sync(payload: AVSyncPayload, request: Request):
     return {"status": "ok", "offset_ms": offset_ms}
 
 class HotspotConfigPayload(BaseModel):
-    ssid: str
-    password: str
+    ssid: str = ""
+    password: str = ""
+    enabled: bool = True
 
 @app.get("/api/host/network")
 async def host_get_network_status(request: Request):
@@ -3215,6 +3231,7 @@ async def host_get_network_status(request: Request):
     is_net = network_helper.is_internet_available()
     ssid = network_helper.get_hotspot_ssid()
     password = network_helper.get_hotspot_password()
+    show_wifi_card = network_helper.is_hotspot_enabled()
     base_url = get_base_url()
     join_url = f"{base_url}/join"
     return {
@@ -3225,8 +3242,10 @@ async def host_get_network_status(request: Request):
         "join_url": join_url,
         "is_internet_connected": is_net,
         "is_hotspot": is_hotspot,
+        "hotspot_enabled": get_setting("hotspot_enabled", "false") == "true",
         "hotspot_ssid": ssid,
-        "hotspot_password": password
+        "hotspot_password": password,
+        "show_wifi_card": show_wifi_card
     }
 
 @app.post("/api/host/network/hotspot-config")
@@ -3236,10 +3255,11 @@ async def host_update_hotspot_config(payload: HotspotConfigPayload, request: Req
     import network_helper
     from config import PORT
     effective_port = int(os.getenv("TIKI_PORT", str(PORT)))
-    network_helper.save_hotspot_config(payload.ssid, payload.password)
+    network_helper.save_hotspot_config(payload.ssid, payload.password, payload.enabled)
     ip = network_helper.get_best_local_ip()
     is_hotspot = network_helper.is_hotspot_ip(ip)
     is_net = network_helper.is_internet_available()
+    show_wifi_card = network_helper.is_hotspot_enabled()
     base_url = get_base_url()
     join_url = f"{base_url}/join"
     
@@ -3251,8 +3271,10 @@ async def host_update_hotspot_config(payload: HotspotConfigPayload, request: Req
         "join_url": join_url,
         "is_internet_connected": is_net,
         "is_hotspot": is_hotspot,
-        "hotspot_ssid": payload.ssid,
-        "hotspot_password": payload.password
+        "hotspot_enabled": payload.enabled,
+        "hotspot_ssid": payload.ssid.strip(),
+        "hotspot_password": payload.password.strip(),
+        "show_wifi_card": show_wifi_card
     })
     
     return {
@@ -3263,8 +3285,10 @@ async def host_update_hotspot_config(payload: HotspotConfigPayload, request: Req
         "join_url": join_url,
         "is_internet_connected": is_net,
         "is_hotspot": is_hotspot,
-        "hotspot_ssid": payload.ssid,
-        "hotspot_password": payload.password
+        "hotspot_enabled": payload.enabled,
+        "hotspot_ssid": payload.ssid.strip(),
+        "hotspot_password": payload.password.strip(),
+        "show_wifi_card": show_wifi_card
     }
 
 # -------------------------------------------------------------

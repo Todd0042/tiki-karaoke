@@ -289,6 +289,35 @@
                         <input type="number" id="borePort" name="remote_port" value="{{ config.remote_port or 38480 }}" placeholder="38480">
                     </div>
                 </div>
+
+                <!-- Sub-panel: Local Wi-Fi & Hotspot Configuration -->
+                <div id="localWifiFields" class="tiki-card" style="display: none; margin-top: 14px; padding: 16px; border-left: 3px solid var(--neon-cyan); background: rgba(16, 28, 45, 0.95);">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                        <div style="font-weight: 700; color: var(--neon-cyan); font-size: 1rem;">📶 Local Access Point / Hotspot Credentials</div>
+                        <span style="font-size: 0.75rem; color: var(--neon-gold); font-weight: 600;">Optional</span>
+                    </div>
+                    <div class="field-desc" style="margin-bottom: 12px; line-height: 1.4;">
+                        If you are hosting via your device's local Wi-Fi hotspot (e.g. at an outdoor party, tailgate, or off-grid cabin), enable this to display a "Join Wi-Fi" QR code on the TV stage screen so guests can connect directly. If guests are already on your home/venue Wi-Fi network, keep this disabled.
+                    </div>
+
+                    <div style="margin-bottom: 12px;">
+                        <label style="display: flex; align-items: center; gap: 10px; cursor: pointer; user-select: none;">
+                            <input type="checkbox" id="hotspotEnabledCheck" name="hotspot_enabled" value="true" {% if config.hotspot_enabled %}checked{% endif %} onchange="toggleHotspotInputs(this.checked)" style="width: 18px; height: 18px; accent-color: var(--neon-cyan); cursor: pointer;">
+                            <span style="font-weight: 700; color: #fff; font-size: 0.9rem;">Show "Join Wi-Fi Hotspot" QR Code on TV Stage Screen</span>
+                        </label>
+                    </div>
+
+                    <div id="hotspotInputsContainer" style="display: {% if config.hotspot_enabled %}flex{% else %}none{% endif %}; gap: 12px; flex-wrap: wrap;">
+                        <div class="field-group" style="flex: 1; min-width: 220px; margin-bottom: 0;">
+                            <label for="hotspotSsid">Wi-Fi Hotspot SSID (Access Point Name)</label>
+                            <input type="text" id="hotspotSsid" name="hotspot_ssid" placeholder="e.g. Tiki Karaoke Hotspot" value="{{ config.hotspot_ssid or '' }}">
+                        </div>
+                        <div class="field-group" style="flex: 1; min-width: 220px; margin-bottom: 0;">
+                            <label for="hotspotPassword">Wi-Fi Password (WPA2/WPA3)</label>
+                            <input type="text" id="hotspotPassword" name="hotspot_password" placeholder="e.g. singalong123" value="{{ config.hotspot_password or '' }}">
+                        </div>
+                    </div>
+                </div>
             </div>
 
             <!-- Section 3: Storage & Media Library -->
@@ -577,11 +606,18 @@
             const tsFields = document.getElementById('tailscaleFields');
             const duckFields = document.getElementById('duckdnsFields');
             const boreFields = document.getElementById('boreFields');
+            const localFields = document.getElementById('localWifiFields');
 
             if (cfNamed) cfNamed.style.display = (mode === 'cloudflare_named') ? 'block' : 'none';
             if (tsFields) tsFields.style.display = (mode === 'tailscale') ? 'block' : 'none';
             if (duckFields) duckFields.style.display = (mode === 'duckdns') ? 'block' : 'none';
             if (boreFields) boreFields.style.display = (mode === 'bore') ? 'block' : 'none';
+            if (localFields) localFields.style.display = (mode === 'local') ? 'block' : 'none';
+        }
+
+        function toggleHotspotInputs(checked) {
+            const container = document.getElementById('hotspotInputsContainer');
+            if (container) container.style.display = checked ? 'flex' : 'none';
         }
 
         function selectQualityProfile(profile) {
@@ -1072,6 +1108,8 @@
                 }
                 onMonitoringModeChanged(modeSel.value);
             }
+            const savedRemoteMode = '{{ config.remote_mode or "cloudflare_quick" }}';
+            selectRemoteMode(savedRemoteMode);
         });
 
         async function handleSetupSubmit(e) {
@@ -1086,7 +1124,10 @@
                 bar_name: formData.get('bar_name'),
                 host_pin: formData.get('host_pin'),
                 port: parseInt(formData.get('port') || "8000"),
-                remote_mode: formData.get('remote_mode'),
+                remote_mode: formData.get('remote_mode') || "cloudflare_quick",
+                hotspot_enabled: formData.get('remote_mode') === 'local' && formData.get('hotspot_enabled') === 'true',
+                hotspot_ssid: (formData.get('hotspot_ssid') || "").trim(),
+                hotspot_password: (formData.get('hotspot_password') || "").trim(),
                 public_host: formData.get('public_host') || "",
                 cloudflare_token: formData.get('cloudflare_token') || "",
                 custom_domain: formData.get('custom_domain') || "",

@@ -186,18 +186,48 @@ def get_best_local_ip() -> str:
 
 def get_hotspot_ssid() -> str:
     """Returns persisted or default Hotspot SSID name."""
-    return get_setting("hotspot_ssid", "Tiki Karaoke")
+    val = get_setting("hotspot_ssid", None)
+    if val is not None:
+        return val.strip()
+    from config import load_config
+    cfg = load_config()
+    return str(cfg.get("hotspot_ssid", "")).strip()
 
 def get_hotspot_password() -> str:
     """Returns persisted or default Hotspot WPA2/WPA3 password."""
-    return get_setting("hotspot_password", "singalong")
+    val = get_setting("hotspot_password", None)
+    if val is not None:
+        return val.strip()
+    from config import load_config
+    cfg = load_config()
+    return str(cfg.get("hotspot_password", "")).strip()
 
-def save_hotspot_config(ssid: str, password: str):
-    """Saves customized Hotspot credentials."""
-    clean_ssid = ssid.strip() or "Tiki Karaoke"
-    clean_pass = password.strip() or "singalong"
+def is_hotspot_enabled() -> bool:
+    """Returns True only if local Wi-Fi mode is active AND hotspot broadcast is explicitly enabled with a non-empty SSID."""
+    from config import load_config
+    cfg = load_config()
+    remote_mode = get_setting("remote_mode", cfg.get("remote_mode", "cloudflare_quick"))
+    if remote_mode != "local":
+        return False
+    enabled = get_setting("hotspot_enabled", "true" if cfg.get("hotspot_enabled") else "false")
+    if enabled != "true":
+        return False
+    ssid = get_hotspot_ssid()
+    return bool(ssid)
+
+def save_hotspot_config(ssid: str, password: str, enabled: bool = True):
+    """Saves customized Hotspot credentials and enabled state."""
+    from config import save_config
+    clean_ssid = ssid.strip()
+    clean_pass = password.strip()
     set_setting("hotspot_ssid", clean_ssid)
     set_setting("hotspot_password", clean_pass)
+    set_setting("hotspot_enabled", "true" if enabled else "false")
+    save_config({
+        "hotspot_ssid": clean_ssid,
+        "hotspot_password": clean_pass,
+        "hotspot_enabled": enabled
+    })
 
 def format_wifi_qr_string(ssid: str, password: str) -> str:
     """

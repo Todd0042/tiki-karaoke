@@ -157,6 +157,9 @@ def init_db():
         INSERT OR IGNORE INTO settings (key, value) VALUES ('host_display', '1');
         INSERT OR IGNORE INTO settings (key, value) VALUES ('intermission_vibe_mode', 'sing_along');
         INSERT OR IGNORE INTO settings (key, value) VALUES ('strict_byom_only', 'false');
+        INSERT OR IGNORE INTO settings (key, value) VALUES ('hotspot_enabled', 'false');
+        INSERT OR IGNORE INTO settings (key, value) VALUES ('hotspot_ssid', '');
+        INSERT OR IGNORE INTO settings (key, value) VALUES ('hotspot_password', '');
         """)
 
         # Migration: Ensure strict_byom_only defaults to 'false' (online search ON by default)

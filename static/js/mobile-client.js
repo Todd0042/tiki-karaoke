@@ -4479,14 +4479,28 @@ function updateHostNetworkUI(data) {
         currentUrl.innerText = data.join_url;
     }
 
-    if (ssidInput && data.hotspot_ssid && !ssidInput.matches(":focus")) {
+    const toggle = document.getElementById("hotspotEnabledToggle");
+    if (toggle && data.hotspot_enabled !== undefined) {
+        toggle.checked = !!data.hotspot_enabled;
+    }
+
+    if (ssidInput && data.hotspot_ssid !== undefined && !ssidInput.matches(":focus")) {
         ssidInput.value = data.hotspot_ssid;
     }
-    if (passInput && data.hotspot_password && !passInput.matches(":focus")) {
+    if (passInput && data.hotspot_password !== undefined && !passInput.matches(":focus")) {
         passInput.value = data.hotspot_password;
     }
 
+    const showWifi = !!data.show_wifi_card;
+    const openBtn = document.getElementById("openWifiQrBtn");
+    if (openBtn) {
+        openBtn.innerText = showWifi ? "📱 Show Dual Wi-Fi & Songbook QR" : "📱 Show Songbook QR Code";
+    }
+
     // Modal elements
+    const modalWifiSection = document.getElementById("modalWifiQrSection");
+    const modalWifiDetail = document.getElementById("modalWifiDetailBox");
+    const modalAppTitle = document.getElementById("modalAppTitleText");
     const modalWifiQr = document.getElementById("modalWifiQrImg");
     const modalAppQr = document.getElementById("modalAppQrImg");
     const modalWifiSsidText = document.getElementById("modalWifiSsidText");
@@ -4494,24 +4508,29 @@ function updateHostNetworkUI(data) {
     const modalWifiSsidDetail = document.getElementById("modalWifiSsidDetail");
     const modalWifiPassDetail = document.getElementById("modalWifiPassDetail");
 
+    if (modalWifiSection) modalWifiSection.style.display = showWifi ? "block" : "none";
+    if (modalWifiDetail) modalWifiDetail.style.display = showWifi ? "block" : "none";
+    if (modalAppTitle) modalAppTitle.innerText = showWifi ? "2. OPEN SONGBOOK" : "📱 SCAN TO OPEN SONGBOOK";
+
     const t = Date.now();
-    if (modalWifiQr) modalWifiQr.src = `/qr/wifi?t=${t}`;
+    if (modalWifiQr && showWifi) modalWifiQr.src = `/qr/wifi?t=${t}`;
     if (modalAppQr) modalAppQr.src = `/qr/public?t=${t}`;
-    if (modalWifiSsidText) modalWifiSsidText.innerText = data.hotspot_ssid || "Tiki Karaoke";
+    if (modalWifiSsidText) modalWifiSsidText.innerText = data.hotspot_ssid || "";
     if (modalAppUrlText) modalAppUrlText.innerText = data.join_url ? new URL(data.join_url).pathname : "/join";
-    if (modalWifiSsidDetail) modalWifiSsidDetail.innerText = data.hotspot_ssid || "Tiki Karaoke";
-    if (modalWifiPassDetail) modalWifiPassDetail.innerText = data.hotspot_password || "singalong";
+    if (modalWifiSsidDetail) modalWifiSsidDetail.innerText = data.hotspot_ssid || "";
+    if (modalWifiPassDetail) modalWifiPassDetail.innerText = data.hotspot_password || "";
 }
 
 async function saveHotspotConfig() {
-    const ssid = document.getElementById("hotspotSsidInput")?.value?.trim() || "Tiki Karaoke";
-    const password = document.getElementById("hotspotPassInput")?.value?.trim() || "singalong";
+    const ssid = document.getElementById("hotspotSsidInput")?.value?.trim() || "";
+    const password = document.getElementById("hotspotPassInput")?.value?.trim() || "";
+    const enabled = document.getElementById("hotspotEnabledToggle") ? document.getElementById("hotspotEnabledToggle").checked : false;
 
     try {
         const res = await fetch("/api/host/network/hotspot-config", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ ssid, password })
+            body: JSON.stringify({ ssid, password, enabled })
         });
         if (res.ok) {
             const data = await res.json();

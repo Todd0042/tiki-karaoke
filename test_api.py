@@ -1222,6 +1222,63 @@ class TestAPIEndpoints(unittest.TestCase):
             stage_win = stage_xul["chrome://browser/content/browser.xhtml"]["main-window"]
             self.assertEqual(stage_win["sizemode"], "fullscreen")
 
+    def test_hotspot_wifi_card_conditional_display(self):
+        """Verifies that the Wi-Fi QR card only appears when local hotspot is enabled with configured credentials."""
+        import network_helper
+        from database import set_setting
+        from config import HOST_TOKEN
+
+        # Case 1: remote_mode is cloudflare_quick -> show_wifi_card MUST be False
+        set_setting("remote_mode", "cloudflare_quick")
+        set_setting("hotspot_enabled", "true")
+        set_setting("hotspot_ssid", "MyHotspot")
+        set_setting("hotspot_password", "password123")
+        self.assertFalse(network_helper.is_hotspot_enabled())
+
+        res = self.client.get("/api/host/network", headers={"X-Host-Token": HOST_TOKEN})
+        self.assertEqual(res.status_code, 200)
+        self.assertFalse(res.json()["show_wifi_card"])
+
+        stage_res = self.client.get("/stage", headers={"X-Host-Token": HOST_TOKEN})
+        self.assertEqual(stage_res.status_code, 200)
+        self.assertIn('id="idleWifiQRCard" style="display: none;', stage_res.text)
+
+        # Case 2: remote_mode is local, but hotspot_enabled is false -> show_wifi_card MUST be False
+        set_setting("remote_mode", "local")
+        set_setting("hotspot_enabled", "false")
+        self.assertFalse(network_helper.is_hotspot_enabled())
+        res = self.client.get("/api/host/network", headers={"X-Host-Token": HOST_TOKEN})
+        self.assertFalse(res.json()["show_wifi_card"])
+
+        # Case 3: remote_mode is local, hotspot_enabled is true, but SSID is blank -> show_wifi_card MUST be False
+        set_setting("hotspot_enabled", "true")
+        set_setting("hotspot_ssid", "   ")
+        self.assertFalse(network_helper.is_hotspot_enabled())
+        res = self.client.get("/api/host/network", headers={"X-Host-Token": HOST_TOKEN})
+        self.assertFalse(res.json()["show_wifi_card"])
+
+        # Case 4: remote_mode is local, hotspot_enabled is true, and SSID is configured -> show_wifi_card MUST be True
+        update_res = self.client.post("/api/host/network/hotspot-config", json={
+            "ssid": "BeachLounge_5G",
+            "password": "tikitrailpass",
+            "enabled": True
+        }, headers={"X-Host-Token": HOST_TOKEN})
+        self.assertEqual(update_res.status_code, 200)
+        data = update_res.json()
+        self.assertTrue(data["show_wifi_card"])
+        self.assertEqual(data["hotspot_ssid"], "BeachLounge_5G")
+        self.assertEqual(data["hotspot_password"], "tikitrailpass")
+        self.assertTrue(network_helper.is_hotspot_enabled())
+
+        stage_res_active = self.client.get("/stage", headers={"X-Host-Token": HOST_TOKEN})
+        self.assertEqual(stage_res_active.status_code, 200)
+        self.assertIn('id="idleWifiQRCard" style="display: block;', stage_res_active.text)
+        self.assertIn('BeachLounge_5G', stage_res_active.text)
+
+        # Teardown / restore remote_mode
+        set_setting("remote_mode", "cloudflare_quick")
+        set_setting("hotspot_enabled", "false")
+
 if __name__ == "__main__":
     unittest.main()
 
