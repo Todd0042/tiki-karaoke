@@ -42,7 +42,8 @@ if sys.platform == "win32":
 from config import (
     DATA_DIR, HOST_TOKEN, HOST_PIN, PORT, TARGET_LUFS,
     load_config, is_configured, get_bundled_binary_path,
-    find_system_browser, get_available_displays
+    find_system_browser, get_available_displays,
+    open_url_in_preferred_browser, get_available_browsers
 )
 from app import LOCAL_IP, PUBLIC_IP, get_base_url, get_public_host, register_shutdown_trigger, register_focus_hub_trigger
 from tray import start_tray, stop_tray
@@ -484,19 +485,155 @@ def configure_firefox_profile(
     except Exception as e:
         print(f"[Launcher] Warning: Could not write Firefox xulstore.json: {e}")
 
+def launch_display_window(
+    target_url: str,
+    window_name: str,
+    disp_idx: int,
+    disp_x: int,
+    disp_y: int,
+    disp_w: int,
+    disp_h: int,
+    is_kiosk: bool,
+    pref_browser: str = "auto",
+    custom_env: Optional[Dict[str, str]] = None
+) -> bool:
+    """
+    Launches a dedicated window for Stage or Host displays in the user's preferred browser,
+    prioritizing zero-click autoplay with Firefox or Chromium app-mode.
+    """
+    temp_root = Path(tempfile.gettempdir())
+    pref = pref_browser.lower().strip()
+    
+    if os.environ.get("TIKI_TESTING") or os.environ.get("TIKI_DATA_DIR"):
+        return True
+    
+    # If explicitly set to default OS browser, open directly via webbrowser
+    if pref in ("default", "os", "webbrowser"):
+        try:
+            webbrowser.open(target_url)
+            print(f"[Launcher] Default browser launched for {window_name}.")
+            return True
+        except Exception as e:
+            print(f"[Launcher] Error opening default browser: {e}")
+            return False
+
+    env = custom_env if custom_env is not None else os.environ.copy()
+
+    def try_firefox() -> bool:
+        ff_bin = find_system_browser("firefox")
+        if not ff_bin:
+            return False
+        try:
+            profile_dir = temp_root / f"tiki_{window_name.lower().replace(' ', '_')}_firefox_profile_{disp_idx}"
+            configure_firefox_profile(
+                profile_dir,
+                screen_x=disp_x,
+                screen_y=disp_y,
+                width=disp_w,
+                height=disp_h,
+                is_fullscreen=is_kiosk
+            )
+            ff_env = env.copy()
+            if not is_kiosk and sys.platform != "win32":
+                ff_env["GDK_BACKEND"] = "x11"
+                ff_env["MOZ_ENABLE_WAYLAND"] = "0"
+            cmd = [
+                ff_bin,
+                "--no-remote",
+                "--profile", str(profile_dir),
+                "--new-instance"
+            ]
+            if is_kiosk:
+                cmd.extend(["--kiosk", f"--kiosk-monitor={disp_idx}"])
+            else:
+                cmd.append("--new-window")
+            cmd.append(target_url)
+            proc = subprocess.Popen(cmd, env=ff_env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **get_browser_subprocess_kwargs())
+            launched_browser_procs.append(proc)
+            print(f"[Launcher] ✅ Dedicated {window_name} launched via Firefox on monitor {disp_idx}!")
+            return True
+        except Exception as e:
+            print(f"[Launcher] Firefox launch error for {window_name}: {e}")
+            return False
+
+    def try_chromium(candidate_name: str) -> bool:
+        c_bin = find_system_browser(candidate_name)
+        if not c_bin:
+            return False
+        try:
+            chrome_data = temp_root / f"tiki_{window_name.lower().replace(' ', '_')}_chrome_{disp_idx}"
+            cmd = [
+                c_bin,
+                f"--app={target_url}",
+                f"--user-data-dir={chrome_data}",
+                "--no-first-run",
+                "--no-default-browser-check",
+                "--autoplay-policy=no-user-gesture-required",
+                "--disable-features=PreloadMediaEngagementData",
+                f"--window-position={disp_x},{disp_y}",
+                f"--window-size={disp_w},{disp_h}"
+            ]
+            if is_kiosk:
+                cmd.append("--start-fullscreen")
+            proc = subprocess.Popen(cmd, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **get_browser_subprocess_kwargs())
+            launched_browser_procs.append(proc)
+            print(f"[Launcher] ✅ Dedicated {window_name} launched via {candidate_name} on monitor {disp_idx}!")
+            return True
+        except Exception as e:
+            print(f"[Launcher] {candidate_name} launch error for {window_name}: {e}")
+            return False
+
+    # 1. User preferred specific browser
+    if pref == "firefox":
+        if try_firefox():
+            return True
+    elif pref in ("chrome", "google-chrome"):
+        for c in ["google-chrome", "google-chrome-stable", "chrome"]:
+            if try_chromium(c):
+                return True
+    elif pref in ("edge", "microsoft-edge", "msedge"):
+        for c in ["microsoft-edge", "microsoft-edge-stable", "msedge"]:
+            if try_chromium(c):
+                return True
+    elif pref in ("brave", "brave-browser"):
+        for c in ["brave-browser", "brave"]:
+            if try_chromium(c):
+                return True
+    elif pref == "chromium":
+        for c in ["chromium", "chromium-browser"]:
+            if try_chromium(c):
+                return True
+
+    # 2. Auto mode or preferred browser wasn't found: Top pick is Firefox (zero-gesture autoplay)
+    if try_firefox():
+        return True
+
+    # 3. Fallback to Chromium browsers
+    for c in ["microsoft-edge", "google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "brave-browser"]:
+        if try_chromium(c):
+            return True
+
+    # 4. Final fallback: OS default browser
+    try:
+        webbrowser.open(target_url)
+        print(f"[Launcher] Default browser launched for {window_name}.")
+        return True
+    except Exception as e:
+        print(f"[Launcher] Could not open browser automatically: {e}")
+        return False
+
+
 def open_browser_delayed(stage_url: str, host_url: str = "", delay: float = 1.5):
     time.sleep(delay)
     if not is_configured():
         base_origin = stage_url.split("/stage")[0] if "/stage" in stage_url else "http://127.0.0.1:8000"
         setup_url = f"{base_origin}/setup"
         print(f"[Launcher] Fresh installation detected. Opening single Setup Wizard window: {setup_url}")
-        try:
-            webbrowser.open(setup_url)
-        except Exception as e:
-            print(f"[Launcher] Error opening setup browser: {e}")
+        open_url_in_preferred_browser(setup_url)
         return
 
     cfg = load_config()
+    pref_browser = str(cfg.get("preferred_browser", "auto"))
 
     # 1. Main Stage Display Window
     stage_disp_idx = int(cfg.get("stage_display", 0))
@@ -523,87 +660,30 @@ def open_browser_delayed(stage_url: str, host_url: str = "", delay: float = 1.5)
     stage_target_url = f"{stage_url}{stage_sep}disp_x={stage_disp_x}&disp_y={stage_disp_y}&disp_w={stage_disp_w}&disp_h={stage_disp_h}&kiosk={'true' if stage_kiosk else 'false'}"
 
     mode_label = "Fullscreen Kiosk" if stage_kiosk else "Windowed"
-    print(f"[Launcher] Opening Stage Display on Monitor {stage_disp_idx} ({stage_disp_name}, {mode_label}, {stage_disp_x},{stage_disp_y}): {stage_target_url}")
+    print(f"[Launcher] Opening Stage Display on Monitor {stage_disp_idx} ({stage_disp_name}, {mode_label}, {stage_disp_x},{stage_disp_y}) [Browser: {pref_browser}]: {stage_target_url}")
 
-    firefox_bin = find_system_browser("firefox")
-    temp_root = Path(tempfile.gettempdir())
     audio_device = cfg.get("audio_output_device", "default")
     audio_input = cfg.get("audio_input_device", "default")
-    env = os.environ.copy()
+    stage_env = os.environ.copy()
     if audio_device and audio_device != "default":
-        env["PULSE_SINK"] = audio_device
+        stage_env["PULSE_SINK"] = audio_device
         print(f"[Launcher] 🔊 Routing Stage Audio directly to sink: {audio_device}")
     if audio_input and audio_input != "default":
-        env["PULSE_SOURCE"] = audio_input
+        stage_env["PULSE_SOURCE"] = audio_input
         print(f"[Launcher] 🎤 Routing Stage Microphone directly to source: {audio_input}")
 
-    stage_launched = False
-    if firefox_bin:
-        try:
-            stage_profile = temp_root / f"tiki_stage_firefox_profile_{stage_disp_idx}"
-            configure_firefox_profile(
-                stage_profile,
-                screen_x=stage_disp_x,
-                screen_y=stage_disp_y,
-                width=stage_disp_w,
-                height=stage_disp_h,
-                is_fullscreen=stage_kiosk
-            )
-            stage_env = env.copy()
-            if not stage_kiosk and sys.platform != "win32":
-                stage_env["GDK_BACKEND"] = "x11"
-                stage_env["MOZ_ENABLE_WAYLAND"] = "0"
-            cmd = [
-                firefox_bin,
-                "--no-remote",
-                "--profile", str(stage_profile),
-                "--new-instance"
-            ]
-            if stage_kiosk:
-                cmd.extend(["--kiosk", f"--kiosk-monitor={stage_disp_idx}"])
-            else:
-                cmd.append("--new-window")
-            cmd.append(stage_target_url)
-            proc = subprocess.Popen(cmd, env=stage_env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **get_browser_subprocess_kwargs())
-            launched_browser_procs.append(proc)
-            print(f"[Launcher] ✅ Dedicated Stage Window launched via Firefox on monitor {stage_disp_idx} ({stage_disp_name})!")
-            stage_launched = True
-        except Exception as e:
-            print(f"[Launcher] Firefox launch error: {e}")
-
-    if not stage_launched:
-        for b_name in ["microsoft-edge", "google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "brave-browser"]:
-            c_bin = find_system_browser(b_name)
-            if c_bin:
-                try:
-                    stage_chrome_data = temp_root / f"tiki_stage_chrome_{stage_disp_idx}"
-                    cmd = [
-                        c_bin,
-                        f"--app={stage_target_url}",
-                        f"--user-data-dir={stage_chrome_data}",
-                        "--no-first-run",
-                        "--no-default-browser-check",
-                        "--autoplay-policy=no-user-gesture-required",
-                        "--disable-features=PreloadMediaEngagementData",
-                        f"--window-position={stage_disp_x},{stage_disp_y}",
-                        f"--window-size={stage_disp_w},{stage_disp_h}"
-                    ]
-                    if stage_kiosk:
-                        cmd.append("--start-fullscreen")
-                    proc = subprocess.Popen(cmd, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **get_browser_subprocess_kwargs())
-                    launched_browser_procs.append(proc)
-                    print(f"[Launcher] ✅ Dedicated Stage Window launched via {b_name} on monitor {stage_disp_idx} ({stage_disp_x},{stage_disp_y})!")
-                    stage_launched = True
-                    break
-                except Exception as e:
-                    print(f"[Launcher] {b_name} launch error: {e}")
-
-    if not stage_launched:
-        try:
-            webbrowser.open(stage_target_url)
-            print("[Launcher] Default browser launched for Stage Display.")
-        except Exception as e:
-            print(f"[Launcher] Could not open browser automatically: {e}")
+    launch_display_window(
+        target_url=stage_target_url,
+        window_name="Stage Display",
+        disp_idx=stage_disp_idx,
+        disp_x=stage_disp_x,
+        disp_y=stage_disp_y,
+        disp_w=stage_disp_w,
+        disp_h=stage_disp_h,
+        is_kiosk=stage_kiosk,
+        pref_browser=pref_browser,
+        custom_env=stage_env
+    )
 
     # 2. Host DJ Control Window (for multi-display setups)
     host_disp_enabled = bool(cfg.get("host_display_enabled", False))
@@ -633,66 +713,19 @@ def open_browser_delayed(stage_url: str, host_url: str = "", delay: float = 1.5)
         host_target_url = f"{host_url}{host_sep}disp_x={host_disp_x}&disp_y={host_disp_y}&disp_w={host_disp_w}&disp_h={host_disp_h}&kiosk={'true' if host_kiosk else 'false'}"
 
         host_mode_label = "Fullscreen Kiosk" if host_kiosk else "App Window"
-        print(f"[Launcher] Opening Host DJ Control on Monitor {host_disp_idx} ({host_disp_name}, {host_mode_label}, {host_disp_x},{host_disp_y}): {host_target_url}")
+        print(f"[Launcher] Opening Host DJ Control on Monitor {host_disp_idx} ({host_disp_name}, {host_mode_label}, {host_disp_x},{host_disp_y}) [Browser: {pref_browser}]: {host_target_url}")
 
-        host_launched = False
-        if firefox_bin:
-            try:
-                host_profile = temp_root / f"tiki_host_firefox_profile_{host_disp_idx}"
-                configure_firefox_profile(
-                    host_profile,
-                    screen_x=host_disp_x,
-                    screen_y=host_disp_y,
-                    width=host_disp_w,
-                    height=host_disp_h,
-                    is_fullscreen=host_kiosk
-                )
-                host_env = os.environ.copy()
-                if not host_kiosk and sys.platform != "win32":
-                    host_env["GDK_BACKEND"] = "x11"
-                    host_env["MOZ_ENABLE_WAYLAND"] = "0"
-                cmd = [
-                    firefox_bin,
-                    "--no-remote",
-                    "--profile", str(host_profile),
-                    "--new-instance"
-                ]
-                if host_kiosk:
-                    cmd.extend(["--kiosk", f"--kiosk-monitor={host_disp_idx}"])
-                else:
-                    cmd.append("--new-window")
-                cmd.append(host_target_url)
-                proc = subprocess.Popen(cmd, env=host_env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **get_browser_subprocess_kwargs())
-                launched_browser_procs.append(proc)
-                print(f"[Launcher] ✅ Dedicated Host DJ Window launched via Firefox on monitor {host_disp_idx} ({host_disp_name})!")
-                host_launched = True
-            except Exception as e:
-                print(f"[Launcher] Firefox host launch error: {e}")
-
-        if not host_launched:
-            for b_name in ["microsoft-edge", "google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "brave-browser"]:
-                c_bin = find_system_browser(b_name)
-                if c_bin:
-                    try:
-                        host_chrome_data = temp_root / f"tiki_host_chrome_{host_disp_idx}"
-                        cmd = [
-                            c_bin,
-                            f"--app={host_target_url}",
-                            f"--user-data-dir={host_chrome_data}",
-                            "--no-first-run",
-                            "--no-default-browser-check",
-                            f"--window-position={host_disp_x},{host_disp_y}",
-                            f"--window-size={host_disp_w},{host_disp_h}"
-                        ]
-                        if host_kiosk:
-                            cmd.append("--start-fullscreen")
-                        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **get_browser_subprocess_kwargs())
-                        launched_browser_procs.append(proc)
-                        print(f"[Launcher] ✅ Dedicated Host DJ Window launched via {b_name} on monitor {host_disp_idx} ({host_disp_x},{host_disp_y})!")
-                        host_launched = True
-                        break
-                    except Exception as e:
-                        print(f"[Launcher] {b_name} host launch error: {e}")
+        launch_display_window(
+            target_url=host_target_url,
+            window_name="Host DJ Control",
+            disp_idx=host_disp_idx,
+            disp_x=host_disp_x,
+            disp_y=host_disp_y,
+            disp_w=host_disp_w,
+            disp_h=host_disp_h,
+            is_kiosk=host_kiosk,
+            pref_browser=pref_browser
+        )
 
 def start_cloudflare_quick_tunnel(port: int):
     bin_path = get_bundled_binary_path("cloudflared")

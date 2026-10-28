@@ -1574,6 +1574,53 @@ class TestAPIEndpoints(unittest.TestCase):
         if mv_file.exists():
             mv_file.unlink()
 
+    def test_browser_detection_and_discovery_api(self):
+        """Verifies browser detection API, recommendation flags, and preferred_browser persistence."""
+        from config import get_available_browsers, open_url_in_preferred_browser, HOST_TOKEN, load_config
+        from database import get_setting
+
+        # 1. Direct config helper detection
+        browsers = get_available_browsers()
+        self.assertIsInstance(browsers, list)
+        self.assertGreaterEqual(len(browsers), 2)
+
+        browser_ids = [b["id"] for b in browsers]
+        self.assertIn("firefox", browser_ids)
+        self.assertIn("chrome", browser_ids)
+        self.assertIn("default", browser_ids)
+
+        ff = next(b for b in browsers if b["id"] == "firefox")
+        self.assertIn("Top Pick", ff["badge"])
+        if ff["available"]:
+            self.assertTrue(ff["recommended"])
+
+        default_b = next(b for b in browsers if b["id"] == "default")
+        self.assertTrue(default_b["available"])
+
+        # 2. Endpoint authentication check
+        r_unauth = self.client.get("/api/setup/browsers")
+        self.assertEqual(r_unauth.status_code, 403)
+
+        r_auth = self.client.get("/api/setup/browsers", headers={"X-Host-Token": HOST_TOKEN})
+        self.assertEqual(r_auth.status_code, 200)
+        api_browsers = r_auth.json()
+        self.assertEqual(len(api_browsers), len(browsers))
+
+        # 3. Setup persistence with preferred_browser
+        res = self.client.post("/api/setup", json={
+            "bar_name": "Browser Selection Lounge",
+            "preferred_browser": "firefox"
+        }, headers={"X-Host-Token": HOST_TOKEN})
+        self.assertEqual(res.status_code, 200)
+
+        cfg = load_config()
+        self.assertEqual(cfg.get("preferred_browser"), "firefox")
+        self.assertEqual(get_setting("preferred_browser"), "firefox")
+
+        # 4. Safe URL opener invocation
+        res_open = open_url_in_preferred_browser("http://127.0.0.1:8000/setup")
+        self.assertTrue(res_open)
+
 if __name__ == "__main__":
     unittest.main()
 

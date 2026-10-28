@@ -17,7 +17,7 @@ from config import (
     CONFIG_FILE, load_config, save_config, is_configured, DEFAULT_CONFIG,
     get_library_dir, get_tracks_dir, get_playlists_dir, get_data_dir, get_db_path,
     get_path_info, ensure_storage_dirs, get_available_displays, get_available_audio_sinks,
-    get_available_audio_sources
+    get_available_audio_sources, get_available_browsers
 )
 from database import init_db, set_setting, migrate_storage_paths
 
@@ -295,6 +295,20 @@ def run_setup():
         chosen_source = audio_sources[0]
     print(f"  ✅ Selected Audio Input: {chosen_source['description']}")
 
+    # 8. Web Browser Chooser
+    print("\n🌐 8. PREFERRED WEB BROWSER")
+    print("Detected Available Browsers:")
+    browsers = get_available_browsers()
+    for idx, b in enumerate(browsers):
+        avail_mark = " (Available)" if b.get("available") else " (Not Installed)"
+        rec_mark = " ★ Top Recommendation" if b.get("recommended") else ""
+        print(f"  [{idx}] {b['name']} ({b['id']}) - {b['badge']}{avail_mark}{rec_mark}")
+
+    current_pref = current.get("preferred_browser", "auto")
+    browser_input = prompt(f"Select Preferred Browser [auto, firefox, chrome, edge, brave, chromium, default]", str(current_pref))
+    chosen_browser = browser_input.strip().lower() if browser_input else "auto"
+    print(f"  ✅ Selected Browser: {chosen_browser}")
+
     # Build updated config
     config_data = {
         "configured": True,
@@ -325,6 +339,7 @@ def run_setup():
         "stage_display_width": chosen_disp["width"],
         "stage_display_height": chosen_disp["height"],
         "kiosk_mode": kiosk_mode,
+        "preferred_browser": chosen_browser,
         "host_display_enabled": host_disp_enabled,
         "host_display": chosen_host_disp["id"],
         "host_display_name": chosen_host_disp["name"],

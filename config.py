@@ -94,11 +94,70 @@ def get_bundled_binary_path(binary_name: str) -> Path:
 
 
 def find_system_browser(name: str) -> Optional[str]:
-    """Finds browser executable across Linux and Windows systems."""
-    sys_path = shutil.which(name)
-    if sys_path:
-        return sys_path
+    """Finds browser executable across Linux (native, snap, flatpak) and Windows systems."""
+    name_clean = name.lower().strip()
 
+    # 1. Direct which search
+    direct_candidates = [name_clean]
+    alias_map = {
+        "firefox": ["firefox", "firefox-esr", "firefox-bin"],
+        "chrome": ["google-chrome", "google-chrome-stable", "chrome", "chromium", "chromium-browser"],
+        "google-chrome": ["google-chrome", "google-chrome-stable", "chrome"],
+        "google-chrome-stable": ["google-chrome-stable", "google-chrome", "chrome"],
+        "edge": ["microsoft-edge", "microsoft-edge-stable", "msedge"],
+        "microsoft-edge": ["microsoft-edge", "microsoft-edge-stable", "msedge"],
+        "microsoft-edge-stable": ["microsoft-edge-stable", "microsoft-edge", "msedge"],
+        "msedge": ["msedge", "microsoft-edge", "microsoft-edge-stable"],
+        "brave": ["brave-browser", "brave"],
+        "brave-browser": ["brave-browser", "brave"],
+        "chromium": ["chromium", "chromium-browser"],
+        "chromium-browser": ["chromium-browser", "chromium"]
+    }
+    for alias in alias_map.get(name_clean, [name_clean]):
+        sys_path = shutil.which(alias)
+        if sys_path:
+            return sys_path
+
+    # 2. Linux Snap & Flatpak checks
+    if sys.platform != "win32":
+        snap_candidates = {
+            "firefox": ["/snap/bin/firefox", "/var/lib/snapd/snap/bin/firefox"],
+            "chrome": ["/snap/bin/chromium", "/var/lib/snapd/snap/bin/chromium"],
+            "google-chrome": ["/snap/bin/chromium", "/var/lib/snapd/snap/bin/chromium"],
+            "chromium": ["/snap/bin/chromium", "/var/lib/snapd/snap/bin/chromium"],
+            "brave": ["/snap/bin/brave", "/var/lib/snapd/snap/bin/brave"],
+            "brave-browser": ["/snap/bin/brave", "/var/lib/snapd/snap/bin/brave"],
+            "edge": ["/snap/bin/edge", "/var/lib/snapd/snap/bin/edge"],
+        }
+        for p_str in snap_candidates.get(name_clean, []):
+            if Path(p_str).exists() and os.access(p_str, os.X_OK):
+                return p_str
+
+        flatpak_app_ids = {
+            "firefox": "org.mozilla.firefox",
+            "chrome": "com.google.Chrome",
+            "google-chrome": "com.google.Chrome",
+            "google-chrome-stable": "com.google.Chrome",
+            "edge": "com.microsoft.Edge",
+            "microsoft-edge": "com.microsoft.Edge",
+            "microsoft-edge-stable": "com.microsoft.Edge",
+            "msedge": "com.microsoft.Edge",
+            "brave": "com.brave.Browser",
+            "brave-browser": "com.brave.Browser",
+            "chromium": "org.chromium.Chromium",
+            "chromium-browser": "org.chromium.Chromium"
+        }
+        app_id = flatpak_app_ids.get(name_clean)
+        if app_id:
+            flatpak_paths = [
+                Path(f"/var/lib/flatpak/exports/bin/{app_id}"),
+                Path.home() / f".local/share/flatpak/exports/bin/{app_id}"
+            ]
+            for fp in flatpak_paths:
+                if fp.exists() and os.access(str(fp), os.X_OK):
+                    return str(fp)
+
+    # 3. Windows system paths
     if sys.platform == "win32":
         prog_x86 = os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")
         prog_64 = os.environ.get("ProgramFiles", r"C:\Program Files")
@@ -110,6 +169,10 @@ def find_system_browser(name: str) -> Optional[str]:
                 Path(prog_64) / "Microsoft" / "Edge" / "Application" / "msedge.exe",
             ],
             "msedge": [
+                Path(prog_x86) / "Microsoft" / "Edge" / "Application" / "msedge.exe",
+                Path(prog_64) / "Microsoft" / "Edge" / "Application" / "msedge.exe",
+            ],
+            "edge": [
                 Path(prog_x86) / "Microsoft" / "Edge" / "Application" / "msedge.exe",
                 Path(prog_64) / "Microsoft" / "Edge" / "Application" / "msedge.exe",
             ],
@@ -134,13 +197,135 @@ def find_system_browser(name: str) -> Optional[str]:
             "brave": [
                 Path(prog_64) / "BraveSoftware" / "Brave-Browser" / "Application" / "brave.exe",
                 Path(local_app) / "BraveSoftware" / "Brave-Browser" / "Application" / "brave.exe",
+            ],
+            "chromium": [
+                Path(prog_64) / "Chromium" / "Application" / "chrome.exe",
+                Path(local_app) / "Chromium" / "Application" / "chrome.exe",
             ]
         }
-        for path in candidates.get(name.lower(), []):
+        for path in candidates.get(name_clean, []):
             if path.exists():
                 return str(path)
 
     return None
+
+
+def get_available_browsers() -> List[Dict[str, Any]]:
+    """
+    Detects installed web browsers across Linux and Windows with recommendations
+    based on audio/video autoplay compatibility and seamless user experience.
+    """
+    browser_defs = [
+        {
+            "id": "firefox",
+            "name": "Mozilla Firefox",
+            "recommended": True,
+            "badge": "⭐ Top Pick (Zero Autoplay Hassle)",
+            "description": "Best experience: audio and video play automatically with zero clicks or initial gesture blocks.",
+            "search_keys": ["firefox"]
+        },
+        {
+            "id": "chrome",
+            "name": "Google Chrome",
+            "recommended": False,
+            "badge": "⚠️ Autoplay Notice",
+            "description": "Chromium security requires clicking 'Play' once when the first song begins.",
+            "search_keys": ["google-chrome", "chrome"]
+        },
+        {
+            "id": "edge",
+            "name": "Microsoft Edge",
+            "recommended": False,
+            "badge": "⚠️ Autoplay Notice",
+            "description": "Chromium security requires clicking 'Play' once when the first song begins.",
+            "search_keys": ["microsoft-edge", "msedge"]
+        },
+        {
+            "id": "brave",
+            "name": "Brave Browser",
+            "recommended": False,
+            "badge": "⚠️ Autoplay Notice",
+            "description": "Chromium security requires clicking 'Play' once when the first song begins.",
+            "search_keys": ["brave-browser", "brave"]
+        },
+        {
+            "id": "chromium",
+            "name": "Chromium",
+            "recommended": False,
+            "badge": "⚠️ Autoplay Notice",
+            "description": "Chromium security requires clicking 'Play' once when the first song begins.",
+            "search_keys": ["chromium", "chromium-browser"]
+        }
+    ]
+
+    results: List[Dict[str, Any]] = []
+
+    for b in browser_defs:
+        resolved_path = None
+        for key in b["search_keys"]:
+            resolved_path = find_system_browser(key)
+            if resolved_path:
+                break
+
+        results.append({
+            "id": b["id"],
+            "name": b["name"],
+            "path": resolved_path or "",
+            "available": bool(resolved_path),
+            "recommended": b["recommended"] if resolved_path else False,
+            "badge": b["badge"],
+            "description": b["description"]
+        })
+
+    # System default browser is always available as fallback
+    results.append({
+        "id": "default",
+        "name": "System Default Browser",
+        "path": "OS default (via standard launcher)",
+        "available": True,
+        "recommended": False,
+        "badge": "Standard",
+        "description": "Opens windows using whichever browser is configured as your operating system default."
+    })
+
+    return results
+
+
+def open_url_in_preferred_browser(url: str) -> bool:
+    """
+    Opens a URL in the user's preferred browser (or auto-detected Firefox/Chrome/OS default).
+    """
+    import webbrowser
+    if os.environ.get("TIKI_TESTING") or os.environ.get("TIKI_DATA_DIR"):
+        return True
+
+    cfg = load_config()
+    pref = str(cfg.get("preferred_browser", "auto")).lower().strip()
+
+    if pref in ("default", "os", "webbrowser"):
+        try:
+            return webbrowser.open(url)
+        except Exception:
+            return False
+
+    target_bin = None
+    if pref != "auto":
+        target_bin = find_system_browser(pref)
+    else:
+        # In auto mode, prioritize Firefox if installed
+        target_bin = find_system_browser("firefox")
+
+    if target_bin:
+        try:
+            subprocess.Popen([target_bin, url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return True
+        except Exception as e:
+            print(f"[Browser] Could not launch {target_bin}: {e}")
+
+    try:
+        return webbrowser.open(url)
+    except Exception:
+        return False
 
 
 def get_system_drives() -> List[str]:
@@ -199,6 +384,7 @@ DEFAULT_CONFIG = {
     "stage_display_width": 1920,
     "stage_display_height": 1080,
     "kiosk_mode": False,
+    "preferred_browser": "auto",
     "audio_output_device": "default",
     "audio_output_name": "System Default Audio Output",
     "audio_input_device": "default",

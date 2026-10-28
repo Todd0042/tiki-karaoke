@@ -35,7 +35,8 @@ from config import (
     get_library_dir, get_tracks_dir, get_playlists_dir, get_recordings_dir, get_data_dir,
     get_db_path, get_path_info, ensure_storage_dirs, get_storage_status,
     get_available_displays, get_available_audio_sinks, get_available_audio_sources, get_bundled_binary_path,
-    get_default_library_dir, get_default_data_dir, get_default_recordings_dir, find_system_browser, get_system_drives
+    get_default_library_dir, get_default_data_dir, get_default_recordings_dir, find_system_browser, get_system_drives,
+    get_available_browsers, open_url_in_preferred_browser
 )
 from database import (
     init_db, get_db, get_or_create_singer, get_singer_by_token,
@@ -774,7 +775,8 @@ async def setup_page(request: Request):
         "current_recordings_dir": str(get_recordings_dir()),
         "displays": get_available_displays(),
         "audio_sinks": get_available_audio_sinks(),
-        "audio_sources": get_available_audio_sources()
+        "audio_sources": get_available_audio_sources(),
+        "browsers": get_available_browsers()
     })
 
 @app.get("/api/setup/displays")
@@ -782,6 +784,12 @@ async def api_get_setup_displays(request: Request):
     if is_configured() and not (is_host_request(request) or is_local_request(request)):
         raise HTTPException(status_code=403, detail="Host DJ authorization required")
     return get_available_displays()
+
+@app.get("/api/setup/browsers")
+async def api_get_setup_browsers(request: Request):
+    if is_configured() and not (is_host_request(request) or is_local_request(request)):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
+    return get_available_browsers()
 
 @app.get("/api/setup/audio-devices")
 async def api_get_setup_audio_devices(request: Request):
@@ -1295,6 +1303,8 @@ async def api_save_setup(payload: Dict[str, Any], request: Request, response: Re
             set_setting("stage_display_height", str(payload["stage_display_height"]))
         if "audio_output_device" in payload:
             set_setting("audio_output_device", str(payload["audio_output_device"]))
+        if "preferred_browser" in payload:
+            set_setting("preferred_browser", str(payload["preferred_browser"]).strip().lower())
         if "kiosk_mode" in payload:
             set_setting("kiosk_mode", "true" if payload["kiosk_mode"] else "false")
         if "host_display_enabled" in payload:

@@ -485,6 +485,19 @@
                         </label>
                     </div>
                 </div>
+
+                <hr style="border: 0; border-top: 1px solid rgba(255, 255, 255, 0.1); margin: 20px 0;">
+
+                <div class="field-group">
+                    <label for="preferredBrowserSelect">🌐 Preferred Web Browser</label>
+                    <div class="field-desc" style="margin-bottom: 8px;">
+                        Choose which browser to use when launching Tiki Karaoke windows (Stage screen, Host desk, Setup).
+                    </div>
+                    <select id="preferredBrowserSelect" name="preferred_browser" onchange="onBrowserSelected()" style="width: 100%;">
+                        <option value="auto">Detecting browsers...</option>
+                    </select>
+                    <div id="browserNoticeInfo" class="field-desc" style="margin-top: 8px; font-size: 0.9rem; line-height: 1.4;"></div>
+                </div>
             </div>
 
             <!-- Section 5: Audio Output Device Selection -->
@@ -741,6 +754,75 @@
                 document.getElementById('hostDisplayName').value = disp.name;
                 if (infoEl) {
                     infoEl.innerHTML = `Host Screen: <strong>${disp.width}x${disp.height}</strong> at offset <strong>+${disp.x}+${disp.y}</strong>`;
+                }
+            }
+        }
+
+        let detectedBrowsers = [];
+
+        async function loadBrowsers() {
+            const sel = document.getElementById('preferredBrowserSelect');
+            if (!sel) return;
+            try {
+                const res = await fetch('/api/setup/browsers');
+                detectedBrowsers = await res.json();
+                sel.innerHTML = '';
+                
+                const autoOpt = document.createElement('option');
+                autoOpt.value = 'auto';
+                autoOpt.text = '✨ Automatic (Use Top Recommended Browser)';
+                sel.appendChild(autoOpt);
+
+                const configuredBrowser = '{{ config.preferred_browser or "auto" }}'.toLowerCase();
+
+                detectedBrowsers.forEach(b => {
+                    const opt = document.createElement('option');
+                    opt.value = b.id;
+                    const recMark = b.recommended ? ' [⭐ Top Pick]' : (!b.available && b.id !== 'default' ? ' [Not Installed]' : '');
+                    opt.text = `${b.name}${recMark}`;
+                    if (!b.available && b.id !== 'default') {
+                        opt.disabled = true;
+                        opt.style.color = '#888';
+                    }
+                    if (b.id === configuredBrowser) {
+                        opt.selected = true;
+                    }
+                    sel.appendChild(opt);
+                });
+
+                if (configuredBrowser === 'auto') {
+                    autoOpt.selected = true;
+                }
+
+                onBrowserSelected();
+            } catch (e) {
+                console.error("Error loading browsers:", e);
+                sel.innerHTML = '<option value="auto">✨ Automatic (Recommended)</option><option value="default">System Default</option>';
+            }
+        }
+
+        function onBrowserSelected() {
+            const sel = document.getElementById('preferredBrowserSelect');
+            const noticeEl = document.getElementById('browserNoticeInfo');
+            if (!sel || !noticeEl) return;
+            const val = sel.value;
+            if (val === 'auto') {
+                const top = detectedBrowsers.find(b => b.recommended && b.available);
+                if (top) {
+                    noticeEl.innerHTML = `<span style="color: var(--neon-lime);">⭐ <strong>${top.name} detected:</strong> Zero-click autoplay enabled. Lyrics and music will play immediately without requiring a user tap.</span>`;
+                } else {
+                    noticeEl.innerHTML = `<span style="color: var(--neon-gold);">ℹ️ Automatic mode will launch Firefox if available, otherwise Chromium app-mode or OS default.</span>`;
+                }
+            } else {
+                const b = detectedBrowsers.find(x => x.id === val);
+                if (b) {
+                    if (b.recommended) {
+                        noticeEl.innerHTML = `<span style="color: var(--neon-lime);"><strong>${b.badge}:</strong> ${b.description}</span>`;
+                    } else if (b.id === 'default') {
+                        noticeEl.innerHTML = `<span style="color: var(--neon-cyan);"><strong>${b.badge}:</strong> ${b.description}</span>`;
+                    } else {
+                        noticeEl.innerHTML = `<span style="color: var(--neon-gold);"><strong>${b.badge}:</strong> ${b.description}</span>`;
+                    }
                 }
             }
         }
@@ -1097,6 +1179,7 @@
             checkStoragePath('libraryDir', 'libDiskInfo');
             checkStoragePath('dataDir', 'dataDiskInfo');
             loadDisplays();
+            loadBrowsers();
             loadAudioDevices();
             loadAudioSources();
             // Restore saved monitoring mode and show its description
@@ -1150,6 +1233,7 @@
                 stage_display_width: parseInt(formData.get('stage_display_width') || "1920"),
                 stage_display_height: parseInt(formData.get('stage_display_height') || "1080"),
                 kiosk_mode: formData.get('kiosk_mode') === 'true',
+                preferred_browser: formData.get('preferred_browser') || 'auto',
                 audio_output_device: formData.get('audio_output_device') || "default",
                 audio_output_name: formData.get('audio_output_name') || "System Default Audio Output",
                 audio_input_device: formData.get('audio_input_device') || "default",

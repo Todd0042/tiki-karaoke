@@ -23,6 +23,15 @@ import subprocess
 from pathlib import Path
 from typing import Optional, Callable
 
+try:
+    from config import open_url_in_preferred_browser
+except Exception:
+    def open_url_in_preferred_browser(url: str) -> bool:
+        try:
+            return webbrowser.open(url)
+        except Exception:
+            return False
+
 qt_tray_proc = None
 tray_icon = None
 
@@ -222,7 +231,7 @@ def run_qt_tray_daemon(args):
     def _open(url):
         def _h():
             if url:
-                webbrowser.open(url)
+                open_url_in_preferred_browser(url)
         return _h
 
     def _copy_url():
@@ -386,7 +395,7 @@ def start_tray(
     def _open(url):
         def _handler(icon=None, item=None):
             try:
-                webbrowser.open(url)
+                open_url_in_preferred_browser(url)
             except Exception as e:
                 print(f"[System Tray] Error opening {url}: {e}")
         return _handler

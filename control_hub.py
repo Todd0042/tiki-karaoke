@@ -16,6 +16,7 @@ import webbrowser
 import threading
 from pathlib import Path
 from typing import Optional, Callable, Dict, Any
+from config import open_url_in_preferred_browser
 
 HAS_GUI = False
 _gui_import_error = ""
@@ -235,7 +236,7 @@ class TikiControlHub:
             relief="flat",
             cursor="hand2",
             pady=8,
-            command=lambda: webbrowser.open(self.urls.get("host", "http://127.0.0.1:8000/host"))
+            command=lambda: open_url_in_preferred_browser(self.urls.get("host", "http://127.0.0.1:8000/host"))
         )
         host_btn.pack(fill="x", pady=3)
 
@@ -251,7 +252,7 @@ class TikiControlHub:
             relief="flat",
             cursor="hand2",
             pady=8,
-            command=lambda: webbrowser.open(self.urls.get("stage", "http://127.0.0.1:8000/stage"))
+            command=lambda: open_url_in_preferred_browser(self.urls.get("stage", "http://127.0.0.1:8000/stage"))
         )
         stage_btn.pack(fill="x", pady=3)
 
@@ -302,7 +303,7 @@ class TikiControlHub:
             relief="flat",
             cursor="hand2",
             pady=6,
-            command=lambda: webbrowser.open(self.urls.get("setup", "http://127.0.0.1:8000/setup"))
+            command=lambda: open_url_in_preferred_browser(self.urls.get("setup", "http://127.0.0.1:8000/setup"))
         )
         setup_btn.pack(side="left", expand=True, fill="x", padx=(0, 4))
 
