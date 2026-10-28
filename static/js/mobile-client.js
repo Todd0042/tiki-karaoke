@@ -1968,8 +1968,10 @@ function installStarterCrate(mode = 'music_video') {
         return res.json();
     })
     .then(data => {
-        const count = data.enqueued || 15;
-        showCustomToast(`🌴 Queued ${count} starter ${modeLabel}!`);
+        const count = data.enqueued !== undefined ? data.enqueued : 15;
+        const instMsg = data.already_installed ? ` (${data.already_installed} already installed)` : '';
+        showCustomToast(`🌴 Queued ${count} starter ${modeLabel}${instMsg}!`);
+        if (typeof loadPartyPacks === 'function') loadPartyPacks();
         if (typeof loadFillerTracks === 'function') loadFillerTracks();
         if (typeof loadLibraryTracks === 'function') loadLibraryTracks();
     })
@@ -4999,16 +5001,46 @@ function closeWifiQrModal() {
 // -------------------------------------------------------------
 async function loadPartyPacks() {
     const container = document.getElementById("partyPacksContainer");
-    if (!container) return;
 
     try {
         const res = await fetch("/api/host/party-packs");
         if (!res.ok) return;
         const data = await res.json();
         const packs = data.packs || [];
-        renderPartyPacks(packs);
+        if (container) renderPartyPacks(packs);
+        if (data.starter_crate) {
+            renderStarterCrateButtons(data.starter_crate);
+        }
     } catch (e) {
         console.error("[Host] Error loading party packs:", e);
+    }
+}
+
+function renderStarterCrateButtons(c) {
+    const total = c.total_tracks || 15;
+    const btnMv = document.getElementById('btnCrate_mv');
+    const btnK = document.getElementById('btnCrate_k');
+    const btnSa = document.getElementById('btnCrate_sa');
+    const badge = document.getElementById('starterCrateBadge');
+
+    if (btnMv) {
+        btnMv.innerHTML = c.is_installed_mv ? `✅ Music Video (${c.music_video_count}/${total})` : `🎬 Music Video (${c.music_video_count}/${total})`;
+        btnMv.style.borderColor = c.is_installed_mv ? 'var(--neon-lime)' : 'var(--neon-cyan)';
+        btnMv.style.color = c.is_installed_mv ? 'var(--neon-lime)' : 'var(--neon-cyan)';
+    }
+    if (btnK) {
+        btnK.innerHTML = c.is_installed_k ? `✅ Karaoke (${c.karaoke_count}/${total})` : `🎤 Karaoke (${c.karaoke_count}/${total})`;
+        btnK.style.borderColor = c.is_installed_k ? 'var(--neon-lime)' : 'var(--neon-lime)';
+        btnK.style.color = 'var(--neon-lime)';
+    }
+    if (btnSa) {
+        btnSa.innerHTML = c.is_installed_sa ? `✅ Sing-Along (${c.sing_along_count}/${total})` : `🎙️ Sing-Along (${c.sing_along_count}/${total})`;
+        btnSa.style.borderColor = c.is_installed_sa ? 'var(--neon-lime)' : 'var(--neon-gold)';
+        btnSa.style.color = c.is_installed_sa ? 'var(--neon-lime)' : 'var(--neon-gold)';
+    }
+    if (badge) {
+        badge.innerHTML = c.is_fully_installed ? '✅ Crate Installed' : 'Dynamic Auto-Matching';
+        badge.style.color = c.is_fully_installed ? 'var(--neon-lime)' : 'var(--neon-gold)';
     }
 }
 
@@ -5027,26 +5059,33 @@ function renderPartyPacks(packs) {
         const saCount = p.sing_along_count || 0;
         const total = p.track_count || 15;
 
+        const isMvInstalled = mvCount >= total;
+        const isKInstalled = kCount >= total;
+        const isSaInstalled = saCount >= total;
+        const isAnyInstalled = isMvInstalled || isKInstalled || isSaInstalled;
+
+        const badgeHtml = isAnyInstalled
+            ? `<span style="font-size: 0.7rem; font-weight: 700; padding: 2px 6px; border-radius: 6px; color: var(--neon-lime); background: rgba(57,255,20,0.15); border: 1px solid var(--neon-lime);">✅ Installed (${total} Tracks)</span>`
+            : `<span style="font-size: 0.7rem; font-weight: 700; padding: 2px 6px; border-radius: 6px; color: var(--neon-gold); background: rgba(255,183,3,0.15);">${total} Tracks</span>`;
+
         return `
-            <div style="background: rgba(16, 28, 45, 0.85); border: 1px solid rgba(0, 240, 255, 0.25); border-radius: 10px; padding: 10px 12px; margin-bottom: 8px;">
+            <div style="background: rgba(16, 28, 45, 0.85); border: 1px solid ${isAnyInstalled ? 'rgba(57,255,20,0.4)' : 'rgba(0, 240, 255, 0.25)'}; border-radius: 10px; padding: 10px 12px; margin-bottom: 8px;">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
                     <div style="font-weight: 700; font-size: 0.84rem; color: #fff;">${escapeHtml(p.name)}</div>
-                    <span style="font-size: 0.7rem; font-weight: 700; padding: 2px 6px; border-radius: 6px; color: var(--neon-gold); background: rgba(255,183,3,0.15);">
-                        ${total} Tracks
-                    </span>
+                    ${badgeHtml}
                 </div>
                 <div style="font-size: 0.72rem; color: var(--text-muted); margin-bottom: 8px; line-height: 1.3;">
                     ${escapeHtml(p.description)}
                 </div>
                 <div style="display: flex; gap: 6px; flex-wrap: wrap;">
-                    <button type="button" onclick="downloadPartyPack('${p.id}', 'music_video')" id="btnPack_${p.id}_mv" class="btn-ghost" style="flex: 1; min-width: 95px; padding: 6px 8px; font-size: 0.72rem; border-color: var(--neon-cyan); color: var(--neon-cyan); font-weight: 700;">
-                        🎬 Music Video (${mvCount}/${total})
+                    <button type="button" onclick="downloadPartyPack('${p.id}', 'music_video')" id="btnPack_${p.id}_mv" class="btn-ghost" style="flex: 1; min-width: 95px; padding: 6px 8px; font-size: 0.72rem; border-color: ${isMvInstalled ? 'var(--neon-lime)' : 'var(--neon-cyan)'}; color: ${isMvInstalled ? 'var(--neon-lime)' : 'var(--neon-cyan)'}; font-weight: 700;">
+                        ${isMvInstalled ? `✅ Music Video (${mvCount}/${total})` : `🎬 Music Video (${mvCount}/${total})`}
                     </button>
                     <button type="button" onclick="downloadPartyPack('${p.id}', 'karaoke')" id="btnPack_${p.id}_k" class="btn-ghost" style="flex: 1; min-width: 95px; padding: 6px 8px; font-size: 0.72rem; border-color: var(--neon-lime); color: var(--neon-lime); font-weight: 700;">
-                        🎤 Karaoke (${kCount}/${total})
+                        ${isKInstalled ? `✅ Karaoke (${kCount}/${total})` : `🎤 Karaoke (${kCount}/${total})`}
                     </button>
-                    <button type="button" onclick="downloadPartyPack('${p.id}', 'sing_along')" id="btnPack_${p.id}_sa" class="btn-ghost" style="flex: 1; min-width: 95px; padding: 6px 8px; font-size: 0.72rem; border-color: var(--neon-gold); color: var(--neon-gold); font-weight: 700;">
-                        🎙️ Sing-Along (${saCount}/${total})
+                    <button type="button" onclick="downloadPartyPack('${p.id}', 'sing_along')" id="btnPack_${p.id}_sa" class="btn-ghost" style="flex: 1; min-width: 95px; padding: 6px 8px; font-size: 0.72rem; border-color: ${isSaInstalled ? 'var(--neon-lime)' : 'var(--neon-gold)'}; color: ${isSaInstalled ? 'var(--neon-lime)' : 'var(--neon-gold)'}; font-weight: 700;">
+                        ${isSaInstalled ? `✅ Sing-Along (${saCount}/${total})` : `🎙️ Sing-Along (${saCount}/${total})`}
                     </button>
                 </div>
             </div>
@@ -5074,7 +5113,8 @@ async function downloadPartyPack(packId, mode = 'karaoke') {
         });
         if (res.ok) {
             const data = await res.json();
-            showCustomToast(`🚀 ${data.enqueued} songs enqueued for offline party! 🌺`);
+            const instMsg = data.already_installed ? ` (${data.already_installed} already installed)` : '';
+            showCustomToast(`🚀 ${data.enqueued} songs enqueued${instMsg}! 🌺`);
             loadPartyPacks();
             if (typeof loadLibraryTracks === 'function') loadLibraryTracks();
             if (typeof loadFillerTracks === 'function') loadFillerTracks();

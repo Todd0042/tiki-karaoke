@@ -1133,6 +1133,121 @@ def get_pending_download_by_track_id(track_id: int) -> Optional[Dict[str, Any]]:
     conn.close()
     return dict(row) if row else None
 
+
+def get_pending_download_by_filler_id(filler_id: int) -> Optional[Dict[str, Any]]:
+    conn = get_db()
+    cursor = conn.execute("""
+        SELECT 
+            p.id,
+            p.track_id,
+            coalesce(p.filler_id, 0) as filler_id,
+            p.singer_id,
+            p.duet_partner,
+            p.pitch_shift,
+            coalesce(p.dedication, '') as dedication,
+            p.progress,
+            p.status,
+            coalesce(p.error_message, '') as error_message,
+            p.retry_count,
+            p.quality_profile,
+            coalesce(p.priority, 10) as priority,
+            coalesce(p.auto_promote, 1) as auto_promote,
+            coalesce(p.is_starter_pack, 0) as is_starter_pack,
+            coalesce(p.starter_pack_name, '') as starter_pack_name,
+            p.created_at,
+            coalesce(f.video_id, '') as video_id,
+            coalesce(f.title, '') as title,
+            coalesce(f.artist, '') as artist,
+            coalesce(f.original_title, '') as original_title,
+            coalesce(f.duration, 0) as duration,
+            coalesce(f.is_downloaded, 0) as is_downloaded,
+            coalesce(f.download_status, 'pending') as download_status,
+            0 as is_sing_along,
+            coalesce(s.name, CASE WHEN p.is_starter_pack = 1 THEN '📦 Starter Pack' ELSE 'Host DJ' END) as singer_name,
+            coalesce(s.avatar, '🌴') as singer_avatar
+        FROM pending_downloads p
+        LEFT JOIN filler_tracks f ON p.filler_id = f.id
+        LEFT JOIN singers s ON p.singer_id = s.id
+        WHERE p.filler_id = ?
+        ORDER BY p.id DESC
+        LIMIT 1
+    """, (filler_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def find_existing_downloaded_track(artist: str, title: str, mode: str = "karaoke") -> Optional[Dict[str, Any]]:
+    """
+    Checks if a track with matching (artist AND title) is already downloaded in SQLite.
+    Title alone does not constitute duplication; both must match.
+    Verifies that the physical MP4 file still exists on disk.
+    """
+    def norm(s: str) -> str:
+        return re.sub(r'[^a-z0-9]', '', (s or '').lower())
+
+    norm_art = norm(artist)
+    norm_tit = norm(title)
+    if not norm_art or not norm_tit:
+        return None
+
+    conn = get_db()
+    mode = (mode or "karaoke").lower()
+    match = None
+
+    if mode == "music_video":
+        rows = conn.execute("SELECT id, title, artist, video_id, local_path, is_downloaded FROM filler_tracks WHERE is_downloaded = 1").fetchall()
+        for r in rows:
+            if norm(r["artist"]) == norm_art and norm(r["title"]) == norm_tit:
+                cand = dict(r)
+                if cand.get("local_path") and Path(cand["local_path"]).exists():
+                    match = cand
+                    break
+    else:
+        is_sa = 1 if mode == "sing_along" else 0
+        rows = conn.execute("SELECT id, title, artist, video_id, local_path, is_downloaded, is_sing_along FROM tracks WHERE is_downloaded = 1 AND coalesce(is_sing_along, 0) = ?", (is_sa,)).fetchall()
+        for r in rows:
+            if norm(r["artist"]) == norm_art and norm(r["title"]) == norm_tit:
+                cand = dict(r)
+                if cand.get("local_path") and Path(cand["local_path"]).exists():
+                    match = cand
+                    break
+
+    conn.close()
+    return match
+
+
+def get_starter_crate_status() -> Dict[str, Any]:
+    """
+    Returns installation status and counts for Starter Crate tracks across the 3 flavors.
+    """
+    from scripts.seed_filler_crate import STARTER_CRATE_TRACKS
+    total = len(STARTER_CRATE_TRACKS)
+    mv_count = 0
+    k_count = 0
+    sa_count = 0
+
+    for t in STARTER_CRATE_TRACKS:
+        art = t.get("artist", "")
+        tit = t.get("title", "")
+        if find_existing_downloaded_track(art, tit, "music_video"):
+            mv_count += 1
+        if find_existing_downloaded_track(art, tit, "karaoke"):
+            k_count += 1
+        if find_existing_downloaded_track(art, tit, "sing_along"):
+            sa_count += 1
+
+    return {
+        "total_tracks": total,
+        "music_video_count": mv_count,
+        "karaoke_count": k_count,
+        "sing_along_count": sa_count,
+        "is_installed_mv": mv_count >= total,
+        "is_installed_k": k_count >= total,
+        "is_installed_sa": sa_count >= total,
+        "is_fully_installed": (k_count >= total or sa_count >= total or mv_count >= total)
+    }
+
 def update_pending_download_progress(
     pending_id: int,
     progress: float,

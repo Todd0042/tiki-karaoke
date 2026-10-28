@@ -53,9 +53,10 @@ from database import (
     remove_duet_partner, clear_queue_on_startup, get_singer_songbook,
     get_pending_queue_count_for_singer,
     add_pending_download, get_pending_downloads, get_pending_download_by_id,
-    get_pending_download_by_track_id, update_pending_download_progress,
-    increment_pending_download_retry, remove_pending_download,
-    promote_pending_download_to_queue,
+    get_pending_download_by_track_id, get_pending_download_by_filler_id,
+    update_pending_download_progress, increment_pending_download_retry,
+    remove_pending_download, promote_pending_download_to_queue,
+    find_existing_downloaded_track, get_starter_crate_status,
     add_filler_track, get_filler_tracks, get_filler_track_by_id,
     get_filler_track_by_video_id, update_filler_track_status,
     update_filler_track_metadata, delete_filler_track,
@@ -367,13 +368,29 @@ async def on_download_progress(track_id: int, pending_id: Optional[int], pct: fl
 
 register_download_progress_callback(on_download_progress)
 
-async def on_filler_download_finished(filler_id: int, local_path: Optional[str]):
+async def on_filler_download_finished(filler_id: int, local_path: Optional[str], pending_id: Optional[int] = None):
     track = get_filler_track_by_id(filler_id)
+    if not pending_id:
+        pending = get_pending_download_by_filler_id(filler_id)
+        if pending:
+            pending_id = pending["id"]
+
+    if local_path:
+        if pending_id:
+            remove_pending_download(pending_id)
+    else:
+        if pending_id:
+            update_pending_download_progress(pending_id, 0.0, "failed", "Download failed")
+
     await manager.broadcast({
         "type": "filler_track_updated",
         "track": track,
         "filler_id": filler_id,
         "ready": bool(local_path)
+    })
+    await manager.broadcast({
+        "type": "pending_downloads_updated",
+        "pending_downloads": get_pending_downloads()
     })
 
 register_filler_callback(on_filler_download_finished)
@@ -2436,65 +2453,83 @@ async def api_force_play_filler(filler_id: int, request: Request):
 @app.post("/api/host/filler-tracks/finished")
 async def api_filler_finished(request: Request):
     await on_filler_track_ended()
-async def batch_stage_and_download_tracks(tracks: List[Dict[str, Any]], mode: str, pack_name: str) -> int:
-    mode = (mode or "karaoke").lower()
-    from database import (
-        save_track, get_track_by_video_id, add_filler_track, get_filler_track_by_video_id,
-        add_pending_download, get_pending_downloads
-    )
-    from downloader import enqueue_download, enqueue_filler_download
+async def background_resolve_and_download_tracks(tracks_to_resolve: List[Dict[str, Any]], mode: str, pack_name: str):
+    """
+    Background worker that resolves YouTube videos one by one using asyncio.to_thread
+    with rate-limit pacing and safe error alerts, keeping the FastAPI main loop completely unblocked.
+    """
     from search import query_youtube_karaoke, query_youtube_sing_along, query_youtube_music_videos
+    from downloader import enqueue_download, enqueue_filler_download
+    from database import (
+        save_track, add_filler_track, add_pending_download,
+        get_pending_downloads, find_existing_downloaded_track
+    )
 
-    enqueued_count = 0
-    is_testing = bool(os.environ.get("TIKI_TESTING"))
-
-    for t in tracks:
-        artist = t["artist"]
-        title = t["title"]
+    for item in tracks_to_resolve:
+        artist = item["artist"]
+        title = item["title"]
         query = f"{artist} {title}"
         candidate = None
+        is_testing = bool(os.environ.get("TIKI_TESTING"))
+
+        # Deduplication check: if song was downloaded while queue was processing, skip
+        existing = find_existing_downloaded_track(artist, title, mode)
+        if existing:
+            continue
 
         if not is_testing:
             try:
                 if mode == "music_video":
-                    results = query_youtube_music_videos(query, max_results=5)
+                    results = await asyncio.to_thread(query_youtube_music_videos, query, 5)
                     if results:
                         candidate = results[0]
                 elif mode == "sing_along":
-                    results, _ = query_youtube_sing_along(query, limit=5)
+                    results, _ = await asyncio.to_thread(query_youtube_sing_along, query, 1, 5)
                     if results:
                         candidate = results[0]
-                else: # karaoke
-                    results, _ = query_youtube_karaoke(query, limit=5)
+                else:  # karaoke
+                    results, _ = await asyncio.to_thread(query_youtube_karaoke, query, 1, 5)
                     if results:
                         candidate = results[0]
             except Exception as e:
-                print(f"[Starter Pack Search] Error searching for {query}: {e}")
+                print(f"[Starter Pack Worker] Search error for {query}: {e}")
 
-        if not candidate:
+        # Extract video_id reliably across all search engines (including grouped results)
+        vid = None
+        cand_title = title
+        cand_artist = artist
+        cand_dur = item.get("duration", 0)
+
+        if candidate:
+            vid = candidate.get("video_id") or candidate.get("best_video_id")
+            if not vid and candidate.get("versions"):
+                vid = candidate["versions"][0].get("video_id")
+            cand_title = candidate.get("title") or title
+            cand_artist = candidate.get("artist") or artist
+            cand_dur = candidate.get("duration") or cand_dur
+
+        if not vid and is_testing:
             hash_suffix = abs(hash(f"{artist}_{title}_{mode}")) % 1000000
-            candidate = {
-                "video_id": f"dyn_{mode[:2]}_{hash_suffix}",
-                "title": title,
-                "artist": artist,
-                "original_title": f"{artist} - {title}",
-                "duration": t.get("duration", 210),
-                "genre": t.get("genre", ""),
-                "release_year": t.get("release_year", 0)
-            }
+            vid = f"dyn_{mode[:2]}_{hash_suffix}"
+
+        if not vid:
+            print(f"[Starter Pack Worker] No YouTube match found for {artist} - {title} ({mode})")
+            await manager.broadcast({
+                "type": "host_alert",
+                "level": "warning",
+                "message": f"Could not find YouTube match for {artist} - {title}. Skipped."
+            })
+            continue
 
         if mode == "music_video":
-            ex = get_filler_track_by_video_id(candidate["video_id"])
-            if ex and ex.get("is_downloaded") and ex.get("local_path") and Path(ex["local_path"]).exists():
-                continue
             fid = add_filler_track(
-                video_id=candidate["video_id"],
-                title=candidate.get("title", title),
-                artist=candidate.get("artist", artist),
-                original_title=candidate.get("original_title", f"{artist} - {title}"),
-                duration=candidate.get("duration", 0),
-                genre=candidate.get("genre", t.get("genre", "")),
-                release_year=candidate.get("release_year", t.get("release_year", 0)),
+                video_id=vid,
+                title=cand_title,
+                artist=cand_artist,
+                original_title=f"{artist} - {title}",
+                duration=cand_dur,
+                genre=item.get("genre", ""),
+                release_year=item.get("release_year", 0),
                 is_starter_pack=1,
                 starter_pack_name=pack_name
             )
@@ -2506,20 +2541,16 @@ async def batch_stage_and_download_tracks(tracks: List[Dict[str, Any]], mode: st
                 is_starter_pack=1,
                 starter_pack_name=f"{pack_name} (Music Video)"
             )
-            enqueue_filler_download(fid)
-            enqueued_count += 1
+            enqueue_filler_download(fid, pending_id=pid)
         else:
             is_sa = 1 if mode == "sing_along" else 0
-            ex = get_track_by_video_id(candidate["video_id"])
-            if ex and ex.get("is_downloaded") and ex.get("local_path") and Path(ex["local_path"]).exists():
-                continue
             tid = save_track(
-                video_id=candidate["video_id"],
-                title=candidate.get("title", title),
-                artist=candidate.get("artist", artist),
-                original_title=candidate.get("original_title", f"{artist} - {title}"),
-                channel=candidate.get("channel", "Starter Pack"),
-                duration=candidate.get("duration", 0),
+                video_id=vid,
+                title=cand_title,
+                artist=cand_artist,
+                original_title=f"{artist} - {title}",
+                channel=candidate.get("channel", "Starter Pack") if candidate else "Starter Pack",
+                duration=cand_dur,
                 is_sing_along=bool(is_sa),
                 is_starter_pack=1,
                 starter_pack_name=pack_name
@@ -2535,18 +2566,53 @@ async def batch_stage_and_download_tracks(tracks: List[Dict[str, Any]], mode: st
             enqueue_download(
                 track_id=tid,
                 singer_name=pack_name,
-                title=candidate.get("title", title),
-                artist=candidate.get("artist", artist),
+                title=cand_title,
+                artist=cand_artist,
                 pending_id=pid,
                 priority=100
             )
-            enqueued_count += 1
 
-    await manager.broadcast({
-        "type": "pending_downloads_updated",
-        "pending_downloads": get_pending_downloads()
-    })
-    return enqueued_count
+        await manager.broadcast({
+            "type": "pending_downloads_updated",
+            "pending_downloads": get_pending_downloads()
+        })
+
+        if not is_testing:
+            await asyncio.sleep(1.2)
+
+
+async def batch_stage_and_download_tracks(tracks: List[Dict[str, Any]], mode: str, pack_name: str) -> Dict[str, Any]:
+    mode = (mode or "karaoke").lower()
+    from database import find_existing_downloaded_track
+
+    needed_tracks = []
+    already_downloaded_count = 0
+
+    for t in tracks:
+        art = t.get("artist", "").strip()
+        tit = t.get("title", "").strip()
+        existing = find_existing_downloaded_track(art, tit, mode)
+        if existing:
+            already_downloaded_count += 1
+        else:
+            needed_tracks.append(t)
+
+    if needed_tracks:
+        asyncio.create_task(background_resolve_and_download_tracks(needed_tracks, mode=mode, pack_name=pack_name))
+
+    return {
+        "total": len(tracks),
+        "enqueued": len(needed_tracks),
+        "already_installed": already_downloaded_count
+    }
+
+
+@app.get("/api/host/starter-crate/status")
+async def api_get_starter_crate_status_endpoint(request: Request):
+    if not (is_host_request(request) or is_local_request(request)):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
+    return get_starter_crate_status()
+
 
 @app.post("/api/host/filler/install-starter")
 async def api_install_starter_crate(request: Request):
@@ -2561,13 +2627,14 @@ async def api_install_starter_crate(request: Request):
         pass
     mode = (request.query_params.get("mode") or mode).lower()
     from scripts.seed_filler_crate import STARTER_CRATE_TRACKS
-    enqueued = await batch_stage_and_download_tracks(STARTER_CRATE_TRACKS, mode=mode, pack_name="Starter Crate")
+    res = await batch_stage_and_download_tracks(STARTER_CRATE_TRACKS, mode=mode, pack_name="Starter Crate")
     return {
         "status": "ok",
         "mode": mode,
         "pack_name": "Starter Crate",
-        "total_tracks": len(STARTER_CRATE_TRACKS),
-        "enqueued": enqueued
+        "total_tracks": res["total"],
+        "enqueued": res["enqueued"],
+        "already_installed": res["already_installed"]
     }
 
 def parse_karaoke_filename(filename: str) -> Tuple[str, str]:
@@ -3663,19 +3730,31 @@ async def host_get_party_packs(request: Request):
     if not (is_host_request(request) or is_local_request(request)):
         raise HTTPException(status_code=403, detail="Host DJ authorization required")
     from party_packs import PARTY_PACKS
-    from database import get_db
+    from database import get_db, get_starter_crate_status
 
     conn = get_db()
-    downloaded_tracks = [dict(r) for r in conn.execute("SELECT title, artist, coalesce(is_sing_along, 0) as is_sing_along FROM tracks WHERE is_downloaded = 1").fetchall()]
-    downloaded_fillers = [dict(r) for r in conn.execute("SELECT title, artist FROM filler_tracks WHERE is_downloaded = 1").fetchall()]
+    raw_tracks = conn.execute("SELECT title, artist, local_path, coalesce(is_sing_along, 0) as is_sing_along FROM tracks WHERE is_downloaded = 1").fetchall()
+    raw_fillers = conn.execute("SELECT title, artist, local_path FROM filler_tracks WHERE is_downloaded = 1").fetchall()
     conn.close()
 
     def norm(s):
         return re.sub(r'[^a-z0-9]', '', (s or '').lower())
 
-    downloaded_karaoke_set = {f"{norm(r['artist'])}::{norm(r['title'])}" for r in downloaded_tracks if not r.get("is_sing_along")}
-    downloaded_singalong_set = {f"{norm(r['artist'])}::{norm(r['title'])}" for r in downloaded_tracks if r.get("is_sing_along")}
-    downloaded_mv_set = {f"{norm(r['artist'])}::{norm(r['title'])}" for r in downloaded_fillers}
+    downloaded_karaoke_set = {
+        f"{norm(r['artist'])}::{norm(r['title'])}"
+        for r in raw_tracks
+        if not r["is_sing_along"] and r["local_path"] and Path(r["local_path"]).exists()
+    }
+    downloaded_singalong_set = {
+        f"{norm(r['artist'])}::{norm(r['title'])}"
+        for r in raw_tracks
+        if r["is_sing_along"] and r["local_path"] and Path(r["local_path"]).exists()
+    }
+    downloaded_mv_set = {
+        f"{norm(r['artist'])}::{norm(r['title'])}"
+        for r in raw_fillers
+        if r["local_path"] and Path(r["local_path"]).exists()
+    }
 
     result = []
     for pack in PARTY_PACKS:
@@ -3695,11 +3774,15 @@ async def host_get_party_packs(request: Request):
         pack_copy["karaoke_count"] = k_count
         pack_copy["sing_along_count"] = sa_count
         pack_copy["music_video_count"] = mv_count
+        pack_copy["is_installed_k"] = k_count >= pack["track_count"]
+        pack_copy["is_installed_sa"] = sa_count >= pack["track_count"]
+        pack_copy["is_installed_mv"] = mv_count >= pack["track_count"]
         pack_copy["downloaded_count"] = max(k_count, sa_count, mv_count)
         pack_copy["is_fully_downloaded"] = (k_count >= pack["track_count"] or sa_count >= pack["track_count"] or mv_count >= pack["track_count"])
         result.append(pack_copy)
 
-    return {"status": "ok", "packs": result}
+    crate_status = get_starter_crate_status()
+    return {"status": "ok", "packs": result, "starter_crate": crate_status}
 
 @app.post("/api/host/party-packs/{pack_id}/download")
 async def host_download_party_pack(pack_id: str, request: Request):
@@ -3719,14 +3802,15 @@ async def host_download_party_pack(pack_id: str, request: Request):
     if not pack:
         raise HTTPException(status_code=404, detail="Party pack not found")
 
-    enqueued = await batch_stage_and_download_tracks(pack["tracks"], mode=mode, pack_name=pack["name"])
+    res = await batch_stage_and_download_tracks(pack["tracks"], mode=mode, pack_name=pack["name"])
     return {
         "status": "ok",
         "pack_id": pack_id,
         "pack_name": pack["name"],
         "mode": mode,
-        "total_tracks": pack["track_count"],
-        "enqueued": enqueued
+        "total_tracks": res["total"],
+        "enqueued": res["enqueued"],
+        "already_installed": res["already_installed"]
     }
 
 shutdown_trigger_callback: Optional[Callable] = None

@@ -1574,6 +1574,72 @@ class TestAPIEndpoints(unittest.TestCase):
         if mv_file.exists():
             mv_file.unlink()
 
+    def test_starter_packs_repair_and_deduplication(self):
+        """Verifies starter crate status endpoint, pack repair deduplication, and artist+title matching."""
+        from config import HOST_TOKEN, get_tracks_dir
+        from database import save_track, update_track_download_status, find_existing_downloaded_track
+        cookies = {"tiki_host": HOST_TOKEN}
+
+        # 1. Test GET /api/host/starter-crate/status
+        r_status = self.client.get("/api/host/starter-crate/status", cookies=cookies)
+        self.assertEqual(r_status.status_code, 200)
+        data = r_status.json()
+        self.assertIn("total_tracks", data)
+        self.assertIn("music_video_count", data)
+        self.assertIn("karaoke_count", data)
+        self.assertIn("sing_along_count", data)
+        self.assertIn("is_fully_installed", data)
+
+        # 2. Test find_existing_downloaded_track logic
+        dummy_dir = get_tracks_dir() / "DedupeArtist"
+        dummy_dir.mkdir(parents=True, exist_ok=True)
+        dummy_file = dummy_dir / "UniqueSong [dedupe_vid].mp4"
+        dummy_file.write_text("mp4 content")
+
+        tid = save_track(
+            video_id="dedupe_vid",
+            title="UniqueSong",
+            artist="DedupeArtist",
+            original_title="DedupeArtist - UniqueSong",
+            is_sing_along=False
+        )
+        update_track_download_status(tid, "ready", local_path=str(dummy_file))
+
+        # 2a. Exact and normalized match should succeed
+        match = find_existing_downloaded_track("DedupeArtist", "UniqueSong", "karaoke")
+        self.assertIsNotNone(match)
+        self.assertEqual(match["id"], tid)
+
+        match_case = find_existing_downloaded_track("dedupe artist", "unique song", "karaoke")
+        self.assertIsNotNone(match_case)
+
+        # 2b. Same title with DIFFERENT artist must NOT deduplicate
+        diff_artist = find_existing_downloaded_track("OtherArtist", "UniqueSong", "karaoke")
+        self.assertIsNone(diff_artist)
+
+        # 2c. Same artist with DIFFERENT title must NOT deduplicate
+        diff_title = find_existing_downloaded_track("DedupeArtist", "OtherSong", "karaoke")
+        self.assertIsNone(diff_title)
+
+        # 2d. If physical file is missing, track must NOT be considered downloaded
+        dummy_file.unlink()
+        match_deleted = find_existing_downloaded_track("DedupeArtist", "UniqueSong", "karaoke")
+        self.assertIsNone(match_deleted)
+
+        # 3. Test pack endpoint returns already_installed counts and flags
+        r_packs = self.client.get("/api/host/party-packs", cookies=cookies)
+        self.assertEqual(r_packs.status_code, 200)
+        packs_data = r_packs.json()
+        self.assertIn("packs", packs_data)
+        self.assertIn("starter_crate", packs_data)
+        if len(packs_data["packs"]) > 0:
+            first_pack = packs_data["packs"][0]
+            self.assertIn("is_installed_k", first_pack)
+            self.assertIn("is_installed_sa", first_pack)
+            self.assertIn("is_installed_mv", first_pack)
+
+
+
     def test_browser_detection_and_discovery_api(self):
         """Verifies browser detection API, recommendation flags, and preferred_browser persistence."""
         from config import get_available_browsers, open_url_in_preferred_browser, HOST_TOKEN, load_config

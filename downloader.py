@@ -379,12 +379,23 @@ def download_and_normalize_filler_track(filler_id: int) -> Optional[str]:
                 pass
         return None
 
-def enqueue_filler_download(filler_id: int):
-    filler_download_queue.put_nowait(filler_id)
+def enqueue_filler_download(filler_id: int, pending_id: Optional[int] = None):
+    filler_download_queue.put_nowait((filler_id, pending_id))
 
 async def filler_downloader_worker():
     while True:
-        filler_id = await filler_download_queue.get()
+        task = await filler_download_queue.get()
+        if isinstance(task, tuple):
+            filler_id, pending_id = task
+        else:
+            filler_id, pending_id = task, None
+
+        if pending_id:
+            try:
+                update_pending_download_progress(pending_id, 15.0, "downloading")
+            except Exception:
+                pass
+
         try:
             loop = asyncio.get_event_loop()
             try:
@@ -395,11 +406,25 @@ async def filler_downloader_worker():
             except asyncio.TimeoutError:
                 print(f"[Filler Downloader] Download timed out after 300s for filler_id={filler_id}")
                 update_filler_track_status(filler_id, "failed", error_message="Download timed out after 300s")
+                if pending_id:
+                    try:
+                        update_pending_download_progress(pending_id, 0.0, "failed", "Download timed out")
+                    except Exception:
+                        pass
                 local_path = None
 
             for cb in filler_callbacks:
                 try:
-                    await cb(filler_id, local_path)
+                    res = cb(filler_id, local_path, pending_id)
+                    if asyncio.iscoroutine(res):
+                        await res
+                except TypeError:
+                    try:
+                        res = cb(filler_id, local_path)
+                        if asyncio.iscoroutine(res):
+                            await res
+                    except Exception as e:
+                        print(f"[Filler Downloader] Callback error: {e}")
                 except Exception as e:
                     print(f"[Filler Downloader] Callback error: {e}")
         except Exception as e:
