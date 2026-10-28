@@ -19,6 +19,8 @@ let configuredAudioSink = null;
 let bgmPlaylist = [];
 let currentBgmIndex = -1;
 let currentNextTrack = null;
+let currentQueue = [];
+let stagePendingDownloads = [];
 let onDeckAlertFiredForQueueId = null;
 
 function escapeHtml(str) {
@@ -263,7 +265,31 @@ function handleSocketMessage(data) {
             handleMarqueeUpdate(data);
             break;
         case "queue_updated":
+            currentQueue = data.queue;
             updateNextTicker(data.queue);
+            break;
+        case "pending_downloads_updated":
+            stagePendingDownloads = data.pending_downloads || [];
+            updateNextTicker(currentQueue || []);
+            syncFillerTickerMarquee();
+            break;
+        case "download_progress":
+            if (data.pending_downloads) {
+                stagePendingDownloads = data.pending_downloads;
+            } else if (data.pending_id) {
+                const item = stagePendingDownloads.find(p => p.id === data.pending_id);
+                if (item) {
+                    item.progress = data.progress;
+                    item.status = data.status;
+                }
+            }
+            updateNextTicker(currentQueue || []);
+            syncFillerTickerMarquee();
+            break;
+        case "host_alert":
+            if (typeof showToast === "function") {
+                showToast(`⚠️ ${data.message}`);
+            }
             break;
         case "start_intermission":
             triggerIntermission(data.next_track, data.duration || 15);
@@ -1525,6 +1551,14 @@ function fetchCurrentState(forceResync = false) {
                 }
             }
             if (data.queue) updateNextTicker(data.queue);
+            fetch("/api/downloads/pending")
+                .then(r => r.json())
+                .then(pData => {
+                    stagePendingDownloads = pData.pending_downloads || [];
+                    if (data.queue) updateNextTicker(data.queue);
+                    syncFillerTickerMarquee();
+                })
+                .catch(() => {});
             if (data.marquee) {
                 if (data.marquee.speed) {
                     configuredMarqueeSpeed = parseInt(data.marquee.speed, 10) || configuredMarqueeSpeed;
@@ -1564,13 +1598,20 @@ function fetchNextTrackForIntermission() {
 }
 
 function updateNextTicker(queue) {
+    currentQueue = queue || [];
     const ticker = document.getElementById("upNextSinger");
-    const pending = queue.filter(q => q.status === "pending");
+    if (!ticker) return;
+    const pending = (queue || []).filter(q => q.status === "pending");
     if (pending.length > 0) {
         currentNextTrack = pending[0];
         const nextSinger = pending[0].duet_partner ? `${pending[0].singer_name} & ${pending[0].duet_partner}` : pending[0].singer_name;
         const saBadge = pending[0].is_sing_along ? " [🎙️ Sing-Along]" : "";
         ticker.innerText = `${nextSinger} ("${pending[0].title}")${saBadge}`;
+    } else if (stagePendingDownloads && stagePendingDownloads.length > 0) {
+        currentNextTrack = null;
+        const dl = stagePendingDownloads[0];
+        const pct = Math.round(dl.progress || 0);
+        ticker.innerText = `🌴 Preparing next song for ${dl.singer_name} (${dl.title}) - Downloading ${pct}%...`;
     } else {
         currentNextTrack = null;
         ticker.innerText = "Queue is open — scan to sing!";
@@ -2121,6 +2162,10 @@ function renderStageMarquee(forceRestart = false) {
         textToShow = `💌 <strong>DEDICATED TO:</strong> ${escapeHtml(currentTrack.dedication)} • 🎤 ${escapeHtml(currentTrack.singer_name)} singing "${escapeHtml(currentTrack.title)}" • 🌺 `;
     } else if (m && m.queue_ticker) {
         textToShow = `🌴 ${escapeHtml(m.queue_ticker)} • 🌺 OPEN MIC: Scan QR to Sing! • `;
+    } else if (stagePendingDownloads && stagePendingDownloads.length > 0 && (!currentQueue || currentQueue.filter(q => q.status === "pending").length === 0)) {
+        const dl = stagePendingDownloads[0];
+        const pct = Math.round(dl.progress || 0);
+        textToShow = `🌴 Preparing next song for ${escapeHtml(dl.singer_name)} (${escapeHtml(dl.title)}) - Downloading ${pct}%... • 🌺 OPEN MIC: Scan QR to Sing! • `;
     } else if (isFillerPlaying && currentFillerTrack) {
         textToShow = currentFillerTrack.is_sing_along 
             ? `🎤 SING-ALONG INTERMISSION: ${escapeHtml(currentFillerTrack.artist)} - ${escapeHtml(currentFillerTrack.title)} • 🌺 Sing along with the stage or scan to queue next!`
@@ -2137,7 +2182,7 @@ function renderStageMarquee(forceRestart = false) {
         shouldShow = true;
     } else if (isSinging && currentTrack && currentTrack.dedication) {
         shouldShow = true;
-    } else if (isIntermission || isFillerPlaying) {
+    } else if (isIntermission || isFillerPlaying || (stagePendingDownloads && stagePendingDownloads.length > 0)) {
         shouldShow = true;
     }
 

@@ -143,6 +143,22 @@ def init_db():
         );
         CREATE INDEX IF NOT EXISTS idx_filler_play_history_id ON filler_play_history(id DESC);
 
+        CREATE TABLE IF NOT EXISTS pending_downloads (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            track_id INTEGER NOT NULL REFERENCES tracks(id),
+            singer_id INTEGER NOT NULL REFERENCES singers(id),
+            duet_partner TEXT DEFAULT '',
+            pitch_shift INTEGER DEFAULT 0,
+            dedication TEXT DEFAULT '',
+            progress REAL DEFAULT 0.0,
+            status TEXT DEFAULT 'pending', -- 'pending', 'downloading', 'failed'
+            error_message TEXT DEFAULT '',
+            retry_count INTEGER DEFAULT 0,
+            quality_profile TEXT DEFAULT 'default', -- 'default', 'medium_360p', 'lowest'
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_pending_downloads_status ON pending_downloads(status);
+
         -- Default settings
         INSERT OR IGNORE INTO settings (key, value) VALUES ('tts_enabled', 'false');
         INSERT OR IGNORE INTO settings (key, value) VALUES ('intermission_seconds', '15');
@@ -869,8 +885,15 @@ def get_pending_queue_count_for_singer(singer_id: int) -> int:
         (singer_id,)
     )
     row = cursor.fetchone()
+    count_queue = row["count"] if row else 0
+    cursor = conn.execute(
+        "SELECT COUNT(*) as count FROM pending_downloads WHERE singer_id = ? AND status IN ('pending', 'downloading')",
+        (singer_id,)
+    )
+    row = cursor.fetchone()
+    count_downloads = row["count"] if row else 0
     conn.close()
-    return row["count"] if row else 0
+    return count_queue + count_downloads
 
 def get_queue() -> List[Dict[str, Any]]:
     conn = get_db()
@@ -911,6 +934,211 @@ def get_queue() -> List[Dict[str, Any]]:
     rows = cursor.fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+def add_pending_download(
+    track_id: int,
+    singer_id: int,
+    duet_partner: str = "",
+    pitch_shift: int = 0,
+    dedication: str = "",
+    quality_profile: str = "default"
+) -> int:
+    conn = get_db()
+    with conn:
+        cursor = conn.execute("""
+            INSERT INTO pending_downloads (
+                track_id, singer_id, duet_partner, pitch_shift, dedication, quality_profile, status
+            ) VALUES (?, ?, ?, ?, ?, ?, 'downloading')
+        """, (track_id, singer_id, duet_partner, pitch_shift, (dedication or "").strip()[:60], quality_profile))
+        pending_id = cursor.lastrowid
+    conn.close()
+    return pending_id
+
+def get_pending_downloads() -> List[Dict[str, Any]]:
+    conn = get_db()
+    cursor = conn.execute("""
+        SELECT 
+            p.id,
+            p.track_id,
+            p.singer_id,
+            p.duet_partner,
+            p.pitch_shift,
+            coalesce(p.dedication, '') as dedication,
+            p.progress,
+            p.status,
+            coalesce(p.error_message, '') as error_message,
+            p.retry_count,
+            p.quality_profile,
+            p.created_at,
+            t.video_id,
+            t.title,
+            t.artist,
+            t.original_title,
+            t.duration,
+            t.is_downloaded,
+            t.download_status,
+            coalesce(t.is_sing_along, 0) as is_sing_along,
+            s.name as singer_name,
+            s.avatar as singer_avatar
+        FROM pending_downloads p
+        JOIN tracks t ON p.track_id = t.id
+        JOIN singers s ON p.singer_id = s.id
+        ORDER BY p.id ASC
+    """)
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+def get_pending_download_by_id(pending_id: int) -> Optional[Dict[str, Any]]:
+    conn = get_db()
+    cursor = conn.execute("""
+        SELECT 
+            p.id,
+            p.track_id,
+            p.singer_id,
+            p.duet_partner,
+            p.pitch_shift,
+            coalesce(p.dedication, '') as dedication,
+            p.progress,
+            p.status,
+            coalesce(p.error_message, '') as error_message,
+            p.retry_count,
+            p.quality_profile,
+            p.created_at,
+            t.video_id,
+            t.title,
+            t.artist,
+            t.original_title,
+            t.duration,
+            t.is_downloaded,
+            t.download_status,
+            coalesce(t.is_sing_along, 0) as is_sing_along,
+            s.name as singer_name,
+            s.avatar as singer_avatar
+        FROM pending_downloads p
+        JOIN tracks t ON p.track_id = t.id
+        JOIN singers s ON p.singer_id = s.id
+        WHERE p.id = ?
+        LIMIT 1
+    """, (pending_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def get_pending_download_by_track_id(track_id: int) -> Optional[Dict[str, Any]]:
+    conn = get_db()
+    cursor = conn.execute("""
+        SELECT 
+            p.id,
+            p.track_id,
+            p.singer_id,
+            p.duet_partner,
+            p.pitch_shift,
+            coalesce(p.dedication, '') as dedication,
+            p.progress,
+            p.status,
+            coalesce(p.error_message, '') as error_message,
+            p.retry_count,
+            p.quality_profile,
+            p.created_at,
+            t.video_id,
+            t.title,
+            t.artist,
+            t.original_title,
+            t.duration,
+            t.is_downloaded,
+            t.download_status,
+            coalesce(t.is_sing_along, 0) as is_sing_along,
+            s.name as singer_name,
+            s.avatar as singer_avatar
+        FROM pending_downloads p
+        JOIN tracks t ON p.track_id = t.id
+        JOIN singers s ON p.singer_id = s.id
+        WHERE p.track_id = ?
+        ORDER BY p.id DESC
+        LIMIT 1
+    """, (track_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def update_pending_download_progress(
+    pending_id: int,
+    progress: float,
+    status: Optional[str] = None,
+    error_message: Optional[str] = None
+):
+    conn = get_db()
+    with conn:
+        updates = ["progress = ?"]
+        params = [round(float(progress), 1)]
+        if status is not None:
+            updates.append("status = ?")
+            params.append(status)
+        if error_message is not None:
+            updates.append("error_message = ?")
+            params.append(error_message)
+        params.append(pending_id)
+        conn.execute(f"UPDATE pending_downloads SET {', '.join(updates)} WHERE id = ?", params)
+    conn.close()
+
+def increment_pending_download_retry(pending_id: int, quality_profile: Optional[str] = None) -> int:
+    conn = get_db()
+    with conn:
+        if quality_profile:
+            conn.execute("""
+                UPDATE pending_downloads
+                SET retry_count = retry_count + 1,
+                    quality_profile = ?,
+                    status = 'downloading',
+                    progress = 0.0,
+                    error_message = ''
+                WHERE id = ?
+            """, (quality_profile, pending_id))
+        else:
+            conn.execute("""
+                UPDATE pending_downloads
+                SET retry_count = retry_count + 1,
+                    status = 'downloading',
+                    progress = 0.0,
+                    error_message = ''
+                WHERE id = ?
+            """, (pending_id,))
+        row = conn.execute("SELECT retry_count FROM pending_downloads WHERE id = ?", (pending_id,)).fetchone()
+        count = row["retry_count"] if row else 0
+    conn.close()
+    return count
+
+def remove_pending_download(pending_id: int) -> bool:
+    conn = get_db()
+    with conn:
+        cursor = conn.execute("DELETE FROM pending_downloads WHERE id = ?", (pending_id,))
+        deleted = cursor.rowcount > 0
+    conn.close()
+    return deleted
+
+def promote_pending_download_to_queue(pending_id: int) -> Optional[int]:
+    """Promotes a downloaded track from pending_downloads into the active queue with fair round-robin."""
+    conn = get_db()
+    with conn:
+        cursor = conn.execute("SELECT * FROM pending_downloads WHERE id = ?", (pending_id,))
+        row = cursor.fetchone()
+        if not row:
+            conn.close()
+            return None
+        p = dict(row)
+        conn.execute("DELETE FROM pending_downloads WHERE id = ?", (pending_id,))
+    conn.close()
+    # Now enqueue the song into active queue (which triggers round-robin rebalancing)
+    queue_id = enqueue_song(
+        track_id=p["track_id"],
+        singer_id=p["singer_id"],
+        duet_partner=p["duet_partner"] or "",
+        pitch_shift=p["pitch_shift"] or 0,
+        dedication=p["dedication"] or ""
+    )
+    return queue_id
+
 
 def clear_queue_on_startup():
     """Clears any lingering queue entries when the server starts so queue starts fresh."""
@@ -1124,6 +1352,56 @@ def check_song_queue_duplicate(
                 "title": item["title"],
                 "artist": item["artist"],
                 "position_in_line": item["position_in_line"]
+            }
+
+    # 1.5 Check pending downloads
+    cursor = conn.execute("""
+        SELECT 
+            p.id as pending_id,
+            p.singer_id,
+            p.duet_partner,
+            s.name as singer_name,
+            s.avatar as singer_avatar,
+            t.id as track_id,
+            t.video_id,
+            t.title,
+            t.artist
+        FROM pending_downloads p
+        JOIN tracks t ON p.track_id = t.id
+        JOIN singers s ON p.singer_id = s.id
+        WHERE p.status IN ('pending', 'downloading')
+    """)
+    pending_dl_rows = [dict(r) for r in cursor.fetchall()]
+    for item in pending_dl_rows:
+        is_match = False
+        if track_id and item["track_id"] == track_id:
+            is_match = True
+        elif video_id and item["video_id"] == video_id:
+            is_match = True
+        elif norm_title and norm_artist:
+            item_title = normalize_song_string(item["title"])
+            item_artist = normalize_song_string(item["artist"])
+            if norm_title == item_title and norm_artist == item_artist:
+                is_match = True
+
+        if is_match:
+            conn.close()
+            is_self = (item["singer_id"] == singer_id)
+            match_type = "self" if is_self else "other_singer"
+            return {
+                "duplicate_found": True,
+                "match_type": match_type,
+                "status": "downloading",
+                "existing_queue_id": item["pending_id"],
+                "existing_singer_id": item["singer_id"],
+                "existing_singer_name": item["singer_name"],
+                "existing_singer_avatar": item["singer_avatar"],
+                "existing_duet_partner": item.get("duet_partner") or "",
+                "is_self": is_self,
+                "song_title": f"{item['artist']} - {item['title']}",
+                "title": item["title"],
+                "artist": item["artist"],
+                "position_in_line": "Downloading..."
             }
 
     # 2. Check history (sung within the last 6 hours)

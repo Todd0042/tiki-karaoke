@@ -13,18 +13,22 @@ from config import (
 from database import (
     get_track_by_id, update_track_download_status,
     get_filler_track_by_id, update_filler_track_status, update_filler_track_metadata,
-    get_setting
+    get_setting, update_pending_download_progress
 )
 from metadata import fetch_track_metadata
 
 download_queue: asyncio.Queue = asyncio.Queue()
 download_callbacks = []
+download_progress_callbacks = []
 
 filler_download_queue: asyncio.Queue = asyncio.Queue()
 filler_callbacks = []
 
 def register_download_callback(cb: Callable):
     download_callbacks.append(cb)
+
+def register_download_progress_callback(cb: Callable):
+    download_progress_callbacks.append(cb)
 
 def register_filler_callback(cb: Callable):
     filler_callbacks.append(cb)
@@ -34,11 +38,16 @@ def sanitize_filename(name: str) -> str:
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
     return cleaned if cleaned else "unknown"
 
-def get_ydl_video_format() -> str:
+def get_ydl_video_format(quality_profile: str = "default") -> str:
+    if quality_profile == "lowest":
+        return "worstvideo[ext=mp4]+worstaudio[ext=m4a]/worst[ext=mp4]/worst"
+    if quality_profile in ("medium_360p", "medium", "inept"):
+        # 480p/360p compact format (~70% smaller)
+        return "bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=480]+bestaudio/best[height<=480][ext=mp4]/best[height<=480]/worst[ext=mp4]"
+
     cfg = load_config()
     profile = cfg.get("video_quality_profile", "pro")
     if profile == "inept":
-        # 480p compact format (~70% smaller)
         return "bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=480]+bestaudio/best[height<=480][ext=mp4]/best[height<=480]/worst[ext=mp4]"
     # Pro / default: 1080p/720p HD
     return "bestvideo[height<=1080][vcodec^=avc1]+bestaudio[ext=m4a]/bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"
@@ -61,7 +70,12 @@ def normalize_audio_loudness(input_path: Path, output_path: Path, target_lufs: f
         print(f"[Downloader] Loudnorm error: {e}")
         return False
 
-def download_and_normalize_track(track_id: int) -> Optional[str]:
+def download_and_normalize_track(
+    track_id: int,
+    pending_id: Optional[int] = None,
+    progress_hook: Optional[Callable[[int, Optional[int], float, str], None]] = None,
+    quality_profile: str = "default"
+) -> Optional[str]:
     track = get_track_by_id(track_id)
     if not track:
         return None
@@ -80,6 +94,8 @@ def download_and_normalize_track(track_id: int) -> Optional[str]:
         return None
 
     update_track_download_status(track_id, "downloading")
+    if progress_hook:
+        progress_hook(track_id, pending_id, 0.0, "downloading")
 
     artist_clean = sanitize_filename(track["artist"])
     title_clean = sanitize_filename(track["title"])
@@ -90,8 +106,26 @@ def download_and_normalize_track(track_id: int) -> Optional[str]:
     temp_path = artist_dir / f"temp_{video_id}.mp4"
     final_path = artist_dir / f"{title_clean} [{video_id}].mp4"
 
+    last_reported_percent = [-1.0]
+
+    def ydl_progress_callback(d):
+        if not progress_hook:
+            return
+        status = d.get("status")
+        if status == "downloading":
+            total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
+            downloaded = d.get("downloaded_bytes") or 0
+            if total > 0:
+                pct = round((downloaded / total) * 100.0, 1)
+                if pct - last_reported_percent[0] >= 4.0 or pct >= 99.0:
+                    last_reported_percent[0] = pct
+                    progress_hook(track_id, pending_id, pct, "downloading")
+        elif status == "finished":
+            last_reported_percent[0] = 100.0
+            progress_hook(track_id, pending_id, 100.0, "normalizing")
+
     ydl_opts = {
-        "format": get_ydl_video_format(),
+        "format": get_ydl_video_format(quality_profile),
         "outtmpl": str(temp_path),
         "quiet": True,
         "no_warnings": True,
@@ -100,7 +134,8 @@ def download_and_normalize_track(track_id: int) -> Optional[str]:
         "socket_timeout": 15,
         "retries": 3,
         "fragment_retries": 3,
-        "skip_unavailable_fragments": True
+        "skip_unavailable_fragments": True,
+        "progress_hooks": [ydl_progress_callback]
     }
     ffmpeg_bin = get_bundled_binary_path("ffmpeg")
     if ffmpeg_bin.exists():
@@ -113,9 +148,13 @@ def download_and_normalize_track(track_id: int) -> Optional[str]:
 
         if not temp_path.exists():
             update_track_download_status(track_id, "failed")
+            if progress_hook:
+                progress_hook(track_id, pending_id, 0.0, "failed")
             return None
 
         # Apply FFmpeg Loudness Normalization (-16 LUFS)
+        if progress_hook:
+            progress_hook(track_id, pending_id, 100.0, "normalizing")
         success = normalize_audio_loudness(temp_path, final_path)
         if success and final_path.exists():
             if temp_path.exists():
@@ -127,11 +166,15 @@ def download_and_normalize_track(track_id: int) -> Optional[str]:
             local_file = str(final_path)
 
         update_track_download_status(track_id, "ready", local_path=local_file, normalized_lufs=TARGET_LUFS)
+        if progress_hook:
+            progress_hook(track_id, pending_id, 100.0, "ready")
         return local_file
 
     except Exception as e:
         print(f"[Downloader] Error downloading video {video_id}: {e}")
         update_track_download_status(track_id, "failed")
+        if progress_hook:
+            progress_hook(track_id, pending_id, 0.0, "failed")
         if temp_path.exists():
             try:
                 temp_path.unlink()
@@ -154,20 +197,49 @@ async def downloader_worker():
     while True:
         task = await download_queue.get()
         track_id = task.get("track_id")
+        pending_id = task.get("pending_id")
         singer_name = task.get("singer_name", "")
         title = task.get("title", "")
         artist = task.get("artist", "")
+        quality_profile = task.get("quality_profile", "default")
+
+        loop = asyncio.get_running_loop()
+
+        def sync_progress_hook(tid, pid, pct, status):
+            if pid:
+                try:
+                    update_pending_download_progress(pid, pct, status)
+                except Exception:
+                    pass
+            for cb in download_progress_callbacks:
+                try:
+                    res = cb(tid, pid, pct, status)
+                    if asyncio.iscoroutine(res):
+                        asyncio.run_coroutine_threadsafe(res, loop)
+                except Exception as e:
+                    print(f"[Downloader] Progress callback error: {e}")
 
         try:
-            loop = asyncio.get_event_loop()
             try:
                 local_path = await asyncio.wait_for(
-                    loop.run_in_executor(None, download_and_normalize_track, track_id),
+                    loop.run_in_executor(
+                        None,
+                        download_and_normalize_track,
+                        track_id,
+                        pending_id,
+                        sync_progress_hook,
+                        quality_profile
+                    ),
                     timeout=300
                 )
             except asyncio.TimeoutError:
                 print(f"[Downloader] Track download timed out after 300s for track_id={track_id}")
                 update_track_download_status(track_id, "failed")
+                if pending_id:
+                    try:
+                        update_pending_download_progress(pending_id, 0.0, "failed", "Download timed out")
+                    except Exception:
+                        pass
                 local_path = None
 
             if local_path and singer_name:
@@ -175,7 +247,16 @@ async def downloader_worker():
 
             for cb in download_callbacks:
                 try:
-                    await cb(track_id, local_path)
+                    res = cb(track_id, local_path, pending_id)
+                    if asyncio.iscoroutine(res):
+                        await res
+                except TypeError:
+                    try:
+                        res = cb(track_id, local_path)
+                        if asyncio.iscoroutine(res):
+                            await res
+                    except Exception as e:
+                        print(f"[Downloader] Callback error: {e}")
                 except Exception as e:
                     print(f"[Downloader] Callback error: {e}")
         except Exception as e:
@@ -183,15 +264,24 @@ async def downloader_worker():
         finally:
             download_queue.task_done()
 
-def enqueue_download(track_id: int, singer_name: str = "", title: str = "", artist: str = ""):
+def enqueue_download(
+    track_id: int,
+    singer_name: str = "",
+    title: str = "",
+    artist: str = "",
+    pending_id: Optional[int] = None,
+    quality_profile: str = "default"
+):
     if get_setting("strict_byom_only", "false") == "true":
         print(f"[Downloader] Strict Commercial / BYOM mode active: skipping download enqueue for track_id={track_id}")
         return
     download_queue.put_nowait({
         "track_id": track_id,
+        "pending_id": pending_id,
         "singer_name": singer_name,
         "title": title,
-        "artist": artist
+        "artist": artist,
+        "quality_profile": quality_profile
     })
 
 def download_and_normalize_filler_track(filler_id: int) -> Optional[str]:

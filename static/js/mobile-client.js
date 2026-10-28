@@ -580,6 +580,24 @@ function initWebSocket() {
                 if (isHost) {
                     loadHostSingerRoster();
                 }
+            } else if (data.type === "pending_downloads_updated") {
+                currentPendingDownloads = data.pending_downloads || [];
+                renderQueue(currentQueueCache);
+            } else if (data.type === "download_progress") {
+                if (data.pending_downloads) {
+                    currentPendingDownloads = data.pending_downloads;
+                } else if (data.pending_id) {
+                    const item = currentPendingDownloads.find(p => p.id === data.pending_id);
+                    if (item) {
+                        item.progress = data.progress;
+                        item.status = data.status;
+                    }
+                }
+                renderQueue(currentQueueCache);
+            } else if (data.type === "host_alert") {
+                if (isHost) {
+                    showToast(`⚠️ ${data.message}`);
+                }
             } else if (data.type === "singer_status_updated") {
                 if (currentSinger && (data.singer_id === currentSinger.id || data.token === currentSinger.token)) {
                     currentSinger.status = data.status;
@@ -1267,16 +1285,23 @@ function handleJoinDuet() {
     });
 }
 
+let currentQueueCache = [];
+let currentPendingDownloads = [];
+
 // Live Queue View
 function loadLiveQueue() {
-    fetch("/api/queue")
-        .then(res => res.json())
-        .then(queue => {
-            renderQueue(queue);
-        });
+    Promise.all([
+        fetch("/api/queue").then(res => res.json()).catch(() => []),
+        fetch("/api/downloads/pending").then(res => res.json()).then(d => d.pending_downloads || []).catch(() => [])
+    ]).then(([queue, pending]) => {
+        currentQueueCache = queue || [];
+        currentPendingDownloads = pending || [];
+        renderQueue(currentQueueCache);
+    });
 }
 
 function renderQueue(queue) {
+    currentQueueCache = queue || [];
     const quickstart = document.getElementById("hostQuickstartCard");
     if (quickstart) {
         let isDismissed = false;
@@ -1285,9 +1310,13 @@ function renderQueue(queue) {
     }
 
     const container = document.getElementById("queueListContainer");
+    if (!container) return;
     container.innerHTML = "";
 
-    if (queue.length === 0) {
+    const hasActive = queue && queue.length > 0;
+    const hasPending = currentPendingDownloads && currentPendingDownloads.length > 0;
+
+    if (!hasActive && !hasPending) {
         container.innerHTML = `
             <div style="text-align: center; padding: 40px 20px; color: var(--text-muted);">
                 <div style="font-size: 3rem; margin-bottom: 10px;">🌴</div>
@@ -1296,6 +1325,17 @@ function renderQueue(queue) {
             </div>
         `;
         return;
+    }
+
+    if (!hasActive && hasPending) {
+        const waitingHeader = document.createElement("div");
+        waitingHeader.style.cssText = "text-align: center; padding: 20px 15px; color: var(--text-muted);";
+        waitingHeader.innerHTML = `
+            <div style="font-size: 2rem; margin-bottom: 6px;">🌴</div>
+            <div class="font-tiki neon-cyan" style="font-size: 1.15rem;">Stage is Ready</div>
+            <p style="margin-top: 4px; font-size: 0.85rem;">Upcoming song is preparing in the staging crate below...</p>
+        `;
+        container.appendChild(waitingHeader);
     }
 
     queue.forEach((item, index) => {
@@ -1393,6 +1433,160 @@ function renderQueue(queue) {
         container.appendChild(card);
     });
 
+    // Render Pending / Downloading Staging Section below Active Stage Queue
+    if (hasPending) {
+        const pendingSection = document.createElement("div");
+        pendingSection.style.cssText = "margin-top: 24px; margin-bottom: 12px;";
+
+        const pendingHeader = document.createElement("div");
+        pendingHeader.style.cssText = "display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; padding: 0 4px;";
+        pendingHeader.innerHTML = `
+            <div style="font-size: 0.85rem; font-weight: 800; letter-spacing: 1px; color: var(--neon-cyan); display: flex; align-items: center; gap: 6px;">
+                <span>⏳ PREPARING & DOWNLOADING</span>
+                <span class="badge" style="background: rgba(0,240,255,0.15); border: 1px solid var(--neon-cyan); font-size: 0.72rem; padding: 1px 6px; border-radius: 10px;">${currentPendingDownloads.length}</span>
+            </div>
+            <div style="font-size: 0.72rem; color: var(--text-muted);">
+                Slots into fair rotation once ready
+            </div>
+        `;
+        pendingSection.appendChild(pendingHeader);
+
+        currentPendingDownloads.forEach((item) => {
+            const isMine = currentSinger && item.singer_id === currentSinger.id;
+            const canManage = isMine || isHost;
+            const progressPct = Math.min(100, Math.max(0, item.progress || 0));
+            const retryCount = item.retry_count || 0;
+            const isFailed = item.status === "failed";
+
+            const card = document.createElement("div");
+            card.className = "tiki-card";
+            card.style.cssText = "padding: 14px; margin-bottom: 10px; border-style: dashed; border-color: rgba(0,240,255,0.35); background: rgba(18, 11, 30, 0.65);";
+
+            let statusText = "Downloading...";
+            if (isFailed) {
+                statusText = item.error_message || "Download stalled";
+            } else if (progressPct >= 99) {
+                statusText = "Finalizing & Normalizing LUFS...";
+            } else {
+                statusText = `Downloading ${progressPct}%...`;
+            }
+
+            let actionsHtml = "";
+            if (canManage) {
+                if (retryCount >= 3 || (isFailed && retryCount >= 2)) {
+                    // Fail 3+: offer medium, lowest, and find another version
+                    actionsHtml = `
+                        <div style="display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap;">
+                            <button onclick="retryPendingDownload(${item.id}, 'medium_360p')" class="btn-ghost" style="padding: 4px 8px; font-size: 0.72rem; border-color: var(--neon-gold); color: var(--neon-gold); border-radius: 6px;">
+                                🔻 Try Medium Quality
+                            </button>
+                            <button onclick="retryPendingDownload(${item.id}, 'lowest')" class="btn-ghost" style="padding: 4px 8px; font-size: 0.72rem; border-color: var(--neon-cyan); color: var(--neon-cyan); border-radius: 6px;">
+                                🔻 Try Lowest Quality
+                            </button>
+                            <button onclick="findAnotherVersion(${item.id}, '${escapeHtml(item.title)}', '${escapeHtml(item.artist)}')" class="btn-ghost" style="padding: 4px 8px; font-size: 0.72rem; border-color: var(--neon-pink); color: var(--neon-pink); border-radius: 6px;">
+                                🔎 Find Another Version
+                            </button>
+                            <button onclick="cancelPendingDownload(${item.id})" class="btn-ghost" style="padding: 4px 8px; font-size: 0.72rem; color: #ff5555; border-radius: 6px;" title="Cancel">
+                                ✕
+                            </button>
+                        </div>
+                    `;
+                } else if (isFailed || retryCount >= 1) {
+                    // Fail 2: retry button
+                    actionsHtml = `
+                        <div style="display: flex; gap: 6px; margin-top: 10px; align-items: center;">
+                            <button onclick="retryPendingDownload(${item.id})" class="btn-ghost" style="padding: 4px 10px; font-size: 0.75rem; border-color: var(--neon-gold); color: var(--neon-gold); border-radius: 6px; font-weight: 700;">
+                                🔄 Retry Download
+                            </button>
+                            <button onclick="cancelPendingDownload(${item.id})" class="btn-ghost" style="padding: 4px 8px; font-size: 0.72rem; color: #ff5555; border-radius: 6px;" title="Cancel">
+                                ✕ Cancel
+                            </button>
+                        </div>
+                    `;
+                } else {
+                    actionsHtml = `
+                        <div style="display: flex; justify-content: flex-end; margin-top: 6px;">
+                            <button onclick="cancelPendingDownload(${item.id})" class="btn-ghost" style="padding: 2px 8px; font-size: 0.75rem; color: #ff5555; border-radius: 6px;" title="Cancel download">
+                                ✕ Cancel
+                            </button>
+                        </div>
+                    `;
+                }
+            }
+
+            card.innerHTML = `
+                <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 8px;">
+                    <div style="display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0;">
+                        <div style="font-size: 1.6rem; flex-shrink: 0;">${item.singer_avatar || "🌺"}</div>
+                        <div style="min-width: 0; overflow: hidden; flex: 1;">
+                            <div style="font-size: 0.75rem; font-weight: 700; color: ${isFailed ? '#ff5555' : 'var(--neon-cyan)'}; display: flex; align-items: center; gap: 6px;">
+                                <span>${isFailed ? '⚠️ STALLED' : 'PREPARING'}</span>
+                                <span style="font-size: 0.7rem; color: var(--text-muted);">${statusText}</span>
+                            </div>
+                            <div style="font-weight: 700; font-size: 0.98rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                                ${escapeHtml(item.singer_name)}
+                            </div>
+                            <div style="color: var(--text-muted); font-size: 0.85rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                                ${escapeHtml(item.artist)} - ${escapeHtml(item.title)}
+                            </div>
+                            <div style="margin-top: 8px; width: 100%; height: 6px; background: rgba(255,255,255,0.08); border-radius: 3px; overflow: hidden;">
+                                <div style="width: ${progressPct}%; height: 100%; background: ${isFailed ? '#ff5555' : 'linear-gradient(90deg, var(--neon-cyan), var(--neon-pink))'}; transition: width 0.3s ease;"></div>
+                            </div>
+                            ${actionsHtml}
+                        </div>
+                    </div>
+                </div>
+            `;
+            pendingSection.appendChild(card);
+        });
+        container.appendChild(pendingSection);
+    }
+}
+
+function retryPendingDownload(pendingId, quality = "default") {
+    fetch(`/api/download/retry/${pendingId}?quality=${encodeURIComponent(quality)}`, {
+        method: "POST"
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.status === "ok") {
+            showToast("🔄 Retrying download...");
+            loadLiveQueue();
+        } else {
+            showToast("❌ " + (data.detail || "Could not retry download"));
+        }
+    })
+    .catch(() => showToast("Network error retrying download"));
+}
+
+function cancelPendingDownload(pendingId) {
+    fetch(`/api/download/${pendingId}`, {
+        method: "DELETE"
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.status === "ok") {
+            showToast("Removed from downloads");
+            loadLiveQueue();
+        } else {
+            showToast("❌ " + (data.detail || "Could not cancel download"));
+        }
+    })
+    .catch(() => showToast("Network error cancelling download"));
+}
+
+function findAnotherVersion(pendingId, title, artist) {
+    cancelPendingDownload(pendingId);
+    if (typeof switchTab === "function") {
+        switchTab("search");
+    }
+    const searchInput = document.getElementById("searchInput");
+    if (searchInput) {
+        searchInput.value = `${artist} ${title}`.trim();
+        if (typeof performSearch === "function") {
+            performSearch();
+        }
+    }
 }
 
 // "You're On Deck (~30s)" Phone Alert Engine (Haptic, Push Notification, Non-blocking Top Banner)

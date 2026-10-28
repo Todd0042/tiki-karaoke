@@ -1374,6 +1374,77 @@ class TestAPIEndpoints(unittest.TestCase):
         self.assertEqual(stage_page.status_code, 200)
         self.assertIn("transition: bottom 0.25s ease;", stage_page.text)
 
+    def test_pending_downloads_staging_and_retry_ladder(self):
+        from config import HOST_TOKEN
+        from database import (
+            get_pending_downloads, get_pending_download_by_id,
+            update_pending_download_progress, promote_pending_download_to_queue,
+            remove_pending_download, check_song_queue_duplicate, get_queue
+        )
+
+        singer_token = "tok_pending_test_1"
+
+        # 1. Enqueue an online un-downloaded track
+        res = self.client.post("/api/queue", json={
+            "singer_token": singer_token,
+            "title": "Bohemian Rhapsody",
+            "artist": "Queen",
+            "video_id": "online_queen_bohemian",
+            "duet_partner": "Freddie",
+            "pitch_shift": 2,
+            "dedication": "For everyone in the car!"
+        })
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertTrue(data.get("is_pending_download"))
+        pending_id = data["pending_id"]
+        self.assertIsNotNone(pending_id)
+
+        # 2. Verify track is in pending_downloads, NOT in active stage queue
+        active_queue = self.client.get("/api/queue").json()
+        self.assertFalse(any(q.get("video_id") == "online_queen_bohemian" for q in active_queue))
+
+        pending_list = self.client.get("/api/downloads/pending").json()["pending_downloads"]
+        found = next((p for p in pending_list if p["id"] == pending_id), None)
+        self.assertIsNotNone(found)
+        self.assertEqual(found["title"], "Bohemian Rhapsody")
+        self.assertEqual(found["artist"], "Queen")
+        self.assertEqual(found["duet_partner"], "Freddie")
+        self.assertEqual(found["pitch_shift"], 2)
+
+        # 3. Check duplicate prevention catches pending download
+        dup = check_song_queue_duplicate(singer_id=found["singer_id"], video_id="online_queen_bohemian")
+        self.assertIsNotNone(dup)
+        self.assertTrue(dup["duplicate_found"])
+        self.assertEqual(dup["status"], "downloading")
+
+        # 4. Progress update
+        update_pending_download_progress(pending_id, 45.5, status="downloading")
+        item = get_pending_download_by_id(pending_id)
+        self.assertEqual(item["progress"], 45.5)
+
+        # 5. Retry endpoint with lower quality profile
+        r_retry = self.client.post(f"/api/download/retry/{pending_id}?quality=medium_360p")
+        self.assertEqual(r_retry.status_code, 200)
+        item = get_pending_download_by_id(pending_id)
+        self.assertEqual(item["quality_profile"], "medium_360p")
+        self.assertGreaterEqual(item["retry_count"], 1)
+
+        # 6. Promotion to active queue upon download completion
+        new_queue_id = promote_pending_download_to_queue(pending_id)
+        self.assertIsNotNone(new_queue_id)
+
+        # Now active queue has it
+        active_queue = self.client.get("/api/queue").json()
+        promoted = next((q for q in active_queue if q["queue_id"] == new_queue_id), None)
+        self.assertIsNotNone(promoted)
+        self.assertEqual(promoted["title"], "Bohemian Rhapsody")
+        self.assertEqual(promoted["pitch_shift"], 2)
+
+        # Pending downloads list no longer has it
+        pending_list = self.client.get("/api/downloads/pending").json()["pending_downloads"]
+        self.assertFalse(any(p["id"] == pending_id for p in pending_list))
+
 if __name__ == "__main__":
     unittest.main()
 

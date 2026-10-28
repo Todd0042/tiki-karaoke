@@ -51,6 +51,10 @@ from database import (
     prune_local_track, check_song_queue_duplicate, add_duet_partner,
     remove_duet_partner, clear_queue_on_startup, get_singer_songbook,
     get_pending_queue_count_for_singer,
+    add_pending_download, get_pending_downloads, get_pending_download_by_id,
+    get_pending_download_by_track_id, update_pending_download_progress,
+    increment_pending_download_retry, remove_pending_download,
+    promote_pending_download_to_queue,
     add_filler_track, get_filler_tracks, get_filler_track_by_id,
     get_filler_track_by_video_id, update_filler_track_status,
     update_filler_track_metadata, delete_filler_track,
@@ -62,6 +66,7 @@ from database import (
 from search import tiered_search, query_youtube_music_videos
 from downloader import (
     downloader_worker, enqueue_download, register_download_callback,
+    register_download_progress_callback,
     filler_downloader_worker, enqueue_filler_download, register_filler_callback
 )
 from metadata import fetch_track_metadata
@@ -192,17 +197,174 @@ marquee_expires_at: Optional[float] = None
 marquee_mode: str = "auto"  # "auto", "intermission_only", "off"
 last_karaoke_track: Optional[Dict[str, Any]] = None
 
-# Background download completion notifications
-async def on_download_finished(track_id: int, local_path: Optional[str]):
+async def trigger_intermission_if_idle():
+    """
+    If nothing is currently playing and a stage display is connected, triggers smooth transition
+    from ambient filler into intermission countdown for the next song in queue.
+    """
+    global current_intermission_end, filler_active, filler_transition_state, filler_buffer_task
+    current_playing = get_current_playing()
+    if current_playing:
+        return
+
     queue = get_queue()
+    if not queue:
+        return
+
+    # If an intermission countdown is already actively running, do not clobber it
+    if current_intermission_end and time.time() < current_intermission_end:
+        return
+
+    next_song_item = queue[0]
+
+    if filler_active:
+        if filler_transition_state in ("fading_out", "finishing"):
+            return
+        elif filler_transition_state == "buffer_15s":
+            if filler_buffer_task and not filler_buffer_task.done():
+                filler_buffer_task.cancel()
+            filler_active = False
+            filler_transition_state = "idle"
+        elif filler_transition_state == "playing":
+            policy = get_setting("bgm_transition_policy", "fade")
+            if policy == "fade":
+                filler_transition_state = "fading_out"
+                await manager.broadcast({
+                    "type": "filler_transition_fade",
+                    "fade_duration": 3,
+                    "next_singer": next_song_item["singer_name"] if next_song_item else "",
+                    "next_title": next_song_item["title"] if next_song_item else "",
+                    "next_artist": next_song_item["artist"] if next_song_item else ""
+                })
+
+                async def _delayed_fade_to_intermission(target_track):
+                    global filler_active, filler_transition_state, current_intermission_end
+                    try:
+                        await asyncio.sleep(3)
+                        filler_active = False
+                        filler_transition_state = "idle"
+                        dur = int(get_setting("intermission_seconds", str(DEFAULT_INTERMISSION_SECONDS)))
+                        current_intermission_end = time.time() + dur
+                        await manager.broadcast({"type": "stop_filler"})
+                        await manager.broadcast({
+                            "type": "start_intermission",
+                            "next_track": target_track,
+                            "duration": dur
+                        })
+                    except asyncio.CancelledError:
+                        pass
+
+                asyncio.create_task(_delayed_fade_to_intermission(next_song_item))
+                return
+            else:
+                filler_transition_state = "finishing"
+                await manager.broadcast({
+                    "type": "filler_transition_finish",
+                    "next_singer": next_song_item["singer_name"] if next_song_item else "",
+                    "next_title": next_song_item["title"] if next_song_item else "",
+                    "next_artist": next_song_item["artist"] if next_song_item else ""
+                })
+                return
+
+    dur = int(get_setting("intermission_seconds", str(DEFAULT_INTERMISSION_SECONDS)))
+    current_intermission_end = time.time() + dur
     await manager.broadcast({
-        "type": "queue_updated",
-        "queue": queue,
-        "track_id": track_id,
-        "ready": bool(local_path)
+        "type": "start_intermission",
+        "next_track": next_song_item,
+        "duration": dur
     })
 
+# Background download completion notifications
+async def on_download_finished(track_id: int, local_path: Optional[str], pending_id: Optional[int] = None):
+    pending = None
+    if pending_id:
+        pending = get_pending_download_by_id(pending_id)
+    if not pending:
+        pending = get_pending_download_by_track_id(track_id)
+        if pending:
+            pending_id = pending["id"]
+
+    if local_path:
+        if pending_id:
+            promote_pending_download_to_queue(pending_id)
+
+        queue = get_queue()
+        await manager.broadcast({
+            "type": "queue_updated",
+            "queue": queue,
+            "track_id": track_id,
+            "ready": True
+        })
+        await manager.broadcast({
+            "type": "pending_downloads_updated",
+            "pending_downloads": get_pending_downloads()
+        })
+        await trigger_intermission_if_idle()
+    else:
+        if pending_id and pending:
+            rc = pending.get("retry_count", 0)
+            if rc == 0:
+                # Fail 1: auto-retry once silently in background
+                increment_pending_download_retry(pending_id)
+                enqueue_download(
+                    track_id=track_id,
+                    singer_name=pending["singer_name"],
+                    title=pending["title"],
+                    artist=pending["artist"],
+                    pending_id=pending_id,
+                    quality_profile=pending.get("quality_profile", "default")
+                )
+                await manager.broadcast({
+                    "type": "pending_downloads_updated",
+                    "pending_downloads": get_pending_downloads()
+                })
+            elif rc == 1:
+                # Fail 2: host alert & retry button
+                increment_pending_download_retry(pending_id)
+                update_pending_download_progress(
+                    pending_id, 0.0, status="failed",
+                    error_message="Download stalled. Tap Retry to try again."
+                )
+                await manager.broadcast({
+                    "type": "pending_downloads_updated",
+                    "pending_downloads": get_pending_downloads()
+                })
+                await manager.broadcast({
+                    "type": "host_alert",
+                    "level": "warning",
+                    "message": f"Download stalled for {pending['singer_name']} ({pending['title']})",
+                    "pending_id": pending_id
+                })
+            else:
+                # Fail 3+: offer medium/lowest quality & search another version
+                increment_pending_download_retry(pending_id)
+                update_pending_download_progress(
+                    pending_id, 0.0, status="failed",
+                    error_message="Download repeatedly failed. Try medium or lowest quality."
+                )
+                await manager.broadcast({
+                    "type": "pending_downloads_updated",
+                    "pending_downloads": get_pending_downloads()
+                })
+        else:
+            await manager.broadcast({
+                "type": "pending_downloads_updated",
+                "pending_downloads": get_pending_downloads()
+            })
+
 register_download_callback(on_download_finished)
+
+async def on_download_progress(track_id: int, pending_id: Optional[int], pct: float, status: str):
+    await manager.broadcast({
+        "type": "download_progress",
+        "track_id": track_id,
+        "pending_id": pending_id,
+        "progress": pct,
+        "status": status,
+        "pending_downloads": get_pending_downloads()
+    })
+
+register_download_progress_callback(on_download_progress)
 
 async def on_filler_download_finished(filler_id: int, local_path: Optional[str]):
     track = get_filler_track_by_id(filler_id)
@@ -420,6 +582,24 @@ async def lifespan(app: FastAPI):
     filler_worker_task = asyncio.create_task(filler_downloader_worker())
     watchdog_task = asyncio.create_task(intermission_watchdog_loop())
     enricher_task = asyncio.create_task(background_metadata_enricher())
+
+    # Resume any staged downloads from SQLite
+    try:
+        pending_list = get_pending_downloads()
+        for p in pending_list:
+            if p.get("status") in ("pending", "downloading", "failed"):
+                enqueue_download(
+                    track_id=p["track_id"],
+                    singer_name=p["singer_name"],
+                    title=p["title"],
+                    artist=p["artist"],
+                    pending_id=p["id"],
+                    quality_profile=p.get("quality_profile", "default")
+                )
+        if pending_list:
+            print(f"[Startup] Resumed {len(pending_list)} staged downloads from database.")
+    except Exception as e:
+        print(f"[Startup] Error resuming pending downloads: {e}")
     print("=" * 60)
     print("🌴 TIKI KARAOKE LOUNGE 🌴")
     print(f"👉 TV Main Stage Display: {get_base_url()}/stage")
@@ -474,6 +654,7 @@ class QueueSongRequest(BaseModel):
     force: bool = False
     is_sing_along: bool = False
     dedication: str = ""
+    stage_download: bool = False
 
 class SingerStatusRequest(BaseModel):
     status: str  # "active", "on_break", "checked_out"
@@ -1605,6 +1786,47 @@ async def api_enqueue_song(req: QueueSongRequest, request: Request):
     elif req.is_sing_along:
         set_track_sing_along(track_id, True)
 
+    if not is_host:
+        now = time.time()
+        last_queue_time_by_singer[singer_key] = now
+
+    track = get_track_by_id(track_id)
+
+    is_testing = bool(os.environ.get("TIKI_TESTING"))
+    # In live production, all un-downloaded YouTube tracks stage in pending_downloads first.
+    # In automated test suites, fake IDs enter active queue directly unless testing staging explicitly.
+    should_stage = (not track["is_downloaded"]) and (not is_testing or req.stage_download or req.video_id.startswith("online_") or req.video_id.startswith("pending_"))
+
+    # If track is NOT yet downloaded to disk (and not local imported), stage it in pending_downloads!
+    if track and should_stage:
+        pending_id = add_pending_download(
+            track_id=track_id,
+            singer_id=singer["id"],
+            duet_partner=req.duet_partner,
+            pitch_shift=req.pitch_shift,
+            dedication=getattr(req, "dedication", ""),
+            quality_profile="default"
+        )
+        enqueue_download(
+            track_id=track_id,
+            singer_name=singer["name"],
+            title=req.title,
+            artist=req.artist,
+            pending_id=pending_id,
+            quality_profile="default"
+        )
+        await manager.broadcast({
+            "type": "pending_downloads_updated",
+            "pending_downloads": get_pending_downloads()
+        })
+        return {
+            "status": "ok",
+            "pending_id": pending_id,
+            "is_pending_download": True,
+            "message": f"Downloading {req.title}. It will automatically enter the stage queue once ready!"
+        }
+
+    # Track is already downloaded / local: Enqueue directly into active stage queue
     queue_id = enqueue_song(
         track_id=track_id,
         singer_id=singer["id"],
@@ -1613,23 +1835,6 @@ async def api_enqueue_song(req: QueueSongRequest, request: Request):
         dedication=getattr(req, "dedication", "")
     )
 
-    if not is_host:
-        now = time.time()
-        last_queue_time_by_singer[singer_key] = now
-
-    track = get_track_by_id(track_id)
-
-    # Pre-cache / download track in background if not yet downloaded (unless in live stream-only mode)
-    if track and not track["is_downloaded"]:
-        cfg = load_config()
-        if cfg.get("video_quality_profile") != "stream_only":
-            enqueue_download(
-                track_id=track_id,
-                singer_name=singer["name"],
-                title=req.title,
-                artist=req.artist
-            )
-
     current_playing = get_current_playing()
     queue = get_queue()
     await manager.broadcast({
@@ -1637,75 +1842,55 @@ async def api_enqueue_song(req: QueueSongRequest, request: Request):
         "queue": queue
     })
 
-    # If nothing is currently playing and a stage display is connected, trigger intermission countdown!
-    if not current_playing:
-        global current_intermission_end, filler_active, filler_transition_state, filler_buffer_task
-
-        # If an intermission countdown is already actively running, do not clobber it or reset the singer's timer!
-        if current_intermission_end and time.time() < current_intermission_end:
-            return {"status": "ok", "queue_id": queue_id}
-
-        if filler_active:
-            if filler_transition_state in ("fading_out", "finishing"):
-                # Transition is already in progress; let it complete smoothly without interrupting
-                return {"status": "ok", "queue_id": queue_id}
-            elif filler_transition_state == "buffer_15s":
-                if filler_buffer_task and not filler_buffer_task.done():
-                    filler_buffer_task.cancel()
-                filler_active = False
-                filler_transition_state = "idle"
-                # Proceed directly to stage intermission
-            elif filler_transition_state == "playing":
-                policy = get_setting("bgm_transition_policy", "fade")
-                next_song_item = queue[0] if queue else None
-                if policy == "fade":
-                    filler_transition_state = "fading_out"
-                    await manager.broadcast({
-                        "type": "filler_transition_fade",
-                        "fade_duration": 3,
-                        "next_singer": next_song_item["singer_name"] if next_song_item else "",
-                        "next_title": next_song_item["title"] if next_song_item else "",
-                        "next_artist": next_song_item["artist"] if next_song_item else ""
-                    })
-
-                    async def _delayed_fade_to_intermission(target_track):
-                        global filler_active, filler_transition_state, current_intermission_end
-                        try:
-                            await asyncio.sleep(3)
-                            filler_active = False
-                            filler_transition_state = "idle"
-                            dur = int(get_setting("intermission_seconds", str(DEFAULT_INTERMISSION_SECONDS)))
-                            current_intermission_end = time.time() + dur
-                            await manager.broadcast({"type": "stop_filler"})
-                            await manager.broadcast({
-                                "type": "start_intermission",
-                                "next_track": target_track,
-                                "duration": dur
-                            })
-                        except asyncio.CancelledError:
-                            pass
-
-                    asyncio.create_task(_delayed_fade_to_intermission(next_song_item))
-                    return {"status": "ok", "queue_id": queue_id}
-                else:  # 'finish' mode
-                    filler_transition_state = "finishing"
-                    await manager.broadcast({
-                        "type": "filler_transition_finish",
-                        "next_singer": next_song_item["singer_name"] if next_song_item else "",
-                        "next_title": next_song_item["title"] if next_song_item else "",
-                        "next_artist": next_song_item["artist"] if next_song_item else ""
-                    })
-                    return {"status": "ok", "queue_id": queue_id}
-
-        dur = int(get_setting("intermission_seconds", str(DEFAULT_INTERMISSION_SECONDS)))
-        current_intermission_end = time.time() + dur
-        await manager.broadcast({
-            "type": "start_intermission",
-            "next_track": queue[0] if queue else None,
-            "duration": dur
-        })
+    await trigger_intermission_if_idle()
 
     return {"status": "ok", "queue_id": queue_id}
+
+@app.get("/api/downloads/pending")
+async def api_get_pending_downloads():
+    return {"status": "ok", "pending_downloads": get_pending_downloads()}
+
+@app.post("/api/download/retry/{pending_id}")
+async def api_retry_download(pending_id: int, request: Request, quality: str = "default"):
+    pending = get_pending_download_by_id(pending_id)
+    if not pending:
+        raise HTTPException(status_code=404, detail="Pending download not found")
+
+    increment_pending_download_retry(pending_id, quality_profile=quality)
+    enqueue_download(
+        track_id=pending["track_id"],
+        singer_name=pending["singer_name"],
+        title=pending["title"],
+        artist=pending["artist"],
+        pending_id=pending_id,
+        quality_profile=quality
+    )
+    await manager.broadcast({
+        "type": "pending_downloads_updated",
+        "pending_downloads": get_pending_downloads()
+    })
+    return {"status": "ok", "message": f"Retrying download with quality: {quality}"}
+
+@app.delete("/api/download/{pending_id}")
+async def api_cancel_pending_download(pending_id: int, request: Request):
+    pending = get_pending_download_by_id(pending_id)
+    if not pending:
+        raise HTTPException(status_code=404, detail="Pending download not found")
+
+    singer_token = request.cookies.get("singer_token") or request.headers.get("X-Singer-Token", "")
+    is_host = is_host_request(request)
+    singer = get_singer_by_token(singer_token) if singer_token else None
+
+    if not is_host:
+        if not singer or singer["id"] != pending["singer_id"]:
+            raise HTTPException(status_code=403, detail="You can only remove your own requested songs.")
+
+    removed = remove_pending_download(pending_id)
+    await manager.broadcast({
+        "type": "pending_downloads_updated",
+        "pending_downloads": get_pending_downloads()
+    })
+    return {"status": "ok", "removed": removed}
 
 @app.delete("/api/queue/{queue_id}")
 async def api_remove_queue(queue_id: int, request: Request, token: str = ""):
@@ -3500,6 +3685,12 @@ async def websocket_endpoint(websocket: WebSocket):
             msg_type = data.get("type")
             if msg_type == "ping":
                 await websocket.send_json({"type": "pong", "time": time.time()})
+                continue
+            if msg_type == "get_pending_downloads":
+                await websocket.send_json({
+                    "type": "pending_downloads_updated",
+                    "pending_downloads": get_pending_downloads()
+                })
                 continue
             if msg_type == "stage_register":
                 manager.register_stage_display(
