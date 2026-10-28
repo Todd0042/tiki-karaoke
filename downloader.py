@@ -17,7 +17,8 @@ from database import (
 )
 from metadata import fetch_track_metadata
 
-download_queue: asyncio.Queue = asyncio.Queue()
+download_queue: asyncio.PriorityQueue = asyncio.PriorityQueue()
+download_task_seq: int = 0
 download_callbacks = []
 download_progress_callbacks = []
 
@@ -195,7 +196,7 @@ def update_singer_m3u_playlist(singer_name: str, local_path: str, title: str, ar
 
 async def downloader_worker():
     while True:
-        task = await download_queue.get()
+        priority, seq, task = await download_queue.get()
         track_id = task.get("track_id")
         pending_id = task.get("pending_id")
         singer_name = task.get("singer_name", "")
@@ -270,19 +271,22 @@ def enqueue_download(
     title: str = "",
     artist: str = "",
     pending_id: Optional[int] = None,
-    quality_profile: str = "default"
+    quality_profile: str = "default",
+    priority: int = 10
 ):
+    global download_task_seq
     if get_setting("strict_byom_only", "false") == "true":
         print(f"[Downloader] Strict Commercial / BYOM mode active: skipping download enqueue for track_id={track_id}")
         return
-    download_queue.put_nowait({
+    download_task_seq += 1
+    download_queue.put_nowait((priority, download_task_seq, {
         "track_id": track_id,
         "pending_id": pending_id,
         "singer_name": singer_name,
         "title": title,
         "artist": artist,
         "quality_profile": quality_profile
-    })
+    }))
 
 def download_and_normalize_filler_track(filler_id: int) -> Optional[str]:
     track = get_filler_track_by_id(filler_id)

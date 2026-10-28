@@ -1445,8 +1445,138 @@ class TestAPIEndpoints(unittest.TestCase):
         pending_list = self.client.get("/api/downloads/pending").json()["pending_downloads"]
         self.assertFalse(any(p["id"] == pending_id for p in pending_list))
 
+    def test_starter_packs_3_buttons_and_song_management(self):
+        import shutil
+        from config import HOST_TOKEN, get_tracks_dir, get_sing_along_dir, get_filler_dir
+        from database import (
+            save_track, get_track_by_id, add_filler_track, get_filler_track_by_id,
+            get_pending_downloads, get_cleanup_candidates
+        )
+        cookies = {"tiki_host": HOST_TOKEN}
+
+        # 1. Test Party Packs 3-button enqueue (Karaoke, Sing-Along, Music Video)
+        r_k = self.client.post("/api/host/party-packs/essentials/download?mode=karaoke", cookies=cookies)
+        self.assertEqual(r_k.status_code, 200)
+        self.assertEqual(r_k.json()["mode"], "karaoke")
+        self.assertGreater(r_k.json()["enqueued"], 0)
+
+        r_sa = self.client.post("/api/host/party-packs/rock_classics/download", json={"mode": "sing_along"}, cookies=cookies)
+        self.assertEqual(r_sa.status_code, 200)
+        self.assertEqual(r_sa.json()["mode"], "sing_along")
+
+        r_mv = self.client.post("/api/host/filler/install-starter", json={"mode": "music_video"}, cookies=cookies)
+        self.assertEqual(r_mv.status_code, 200)
+        self.assertEqual(r_mv.json()["mode"], "music_video")
+
+        # 2. Verify priority in pending downloads: singer requests (priority 10) sort before starter packs (priority 100)
+        r_singer = self.client.post("/api/singer/register", json={"name": "VIP Guest", "avatar": "⭐", "token": "vip_guest_token"})
+        self.assertEqual(r_singer.status_code, 200)
+
+        r_queue = self.client.post("/api/queue", json={
+            "singer_token": "vip_guest_token",
+            "video_id": "online_urgent_song",
+            "title": "Urgent Live Track",
+            "artist": "Priority Singer",
+            "original_title": "Priority Singer - Urgent Live Track"
+        })
+        self.assertEqual(r_queue.status_code, 200)
+
+        pending_items = self.client.get("/api/downloads/pending").json()["pending_downloads"]
+        self.assertGreater(len(pending_items), 1)
+        # The first item must be the singer's request because priority=10 < priority=100
+        first_item = pending_items[0]
+        self.assertEqual(first_item["singer_name"], "VIP Guest")
+        self.assertEqual(first_item["priority"], 10)
+
+        # Starter pack items must have priority=100 and auto_promote=0
+        starter_items = [p for p in pending_items if p["priority"] == 100]
+        self.assertTrue(len(starter_items) > 0)
+        self.assertEqual(starter_items[0]["auto_promote"], 0)
+
+        # 3. Test Metadata Editing and Physical File Renaming
+        test_dir = get_tracks_dir() / "TestArtist"
+        test_dir.mkdir(parents=True, exist_ok=True)
+        dummy_file = test_dir / "OldSong [test_vid_edit].mp4"
+        dummy_file.write_text("dummy video content")
+
+        tid = save_track(
+            video_id="test_vid_edit",
+            title="OldSong",
+            artist="TestArtist",
+            original_title="TestArtist - OldSong",
+            is_sing_along=False,
+            is_starter_pack=1,
+            starter_pack_name="Test Pack"
+        )
+        from database import update_track_download_status
+        update_track_download_status(tid, "ready", local_path=str(dummy_file))
+
+        # Edit metadata via API
+        r_edit = self.client.put(f"/api/host/tracks/{tid}", json={
+            "title": "RenamedSong",
+            "artist": "NewArtist",
+            "is_filler": False
+        }, cookies=cookies)
+        self.assertEqual(r_edit.status_code, 200)
+
+        updated_track = get_track_by_id(tid)
+        self.assertEqual(updated_track["title"], "RenamedSong")
+        self.assertEqual(updated_track["artist"], "NewArtist")
+        # Check that physical file was renamed
+        self.assertFalse(dummy_file.exists())
+        new_file = Path(updated_track["local_path"])
+        self.assertTrue(new_file.exists())
+        self.assertIn("RenamedSong [test_vid_edit].mp4", new_file.name)
+
+        # 4. Test Failsafe Type Conversion (Option A: Physical File Relocation)
+        # 4a. Convert from Karaoke to Sing-Along
+        r_conv_sa = self.client.put(f"/api/host/tracks/{tid}/convert-type", json={
+            "target_type": "sing_along",
+            "source_type": "karaoke",
+            "is_filler": False
+        }, cookies=cookies)
+        self.assertEqual(r_conv_sa.status_code, 200)
+        t_sa = get_track_by_id(tid)
+        self.assertEqual(t_sa["is_sing_along"], 1)
+        sa_file = Path(t_sa["local_path"])
+        self.assertTrue(sa_file.exists())
+        self.assertTrue(str(sa_file).startswith(str(get_sing_along_dir())))
+
+        # 4b. Convert from Sing-Along to Music Video (Filler)
+        r_conv_mv = self.client.put(f"/api/host/tracks/{tid}/convert-type", json={
+            "target_type": "music_video",
+            "source_type": "sing_along",
+            "is_filler": False
+        }, cookies=cookies)
+        self.assertEqual(r_conv_mv.status_code, 200)
+        mv_id = r_conv_mv.json()["track_id"]
+        f_track = get_filler_track_by_id(mv_id)
+        self.assertIsNotNone(f_track)
+        mv_file = Path(f_track["local_path"])
+        self.assertTrue(mv_file.exists())
+        self.assertTrue(str(mv_file).startswith(str(get_filler_dir())))
+
+        # 5. Test Storage Cleanup Candidates Tab Filtering
+        r_clean_all = self.client.get("/api/storage/cleanup-candidates?tab=all")
+        self.assertEqual(r_clean_all.status_code, 200)
+        candidates_all = r_clean_all.json()["candidates"]
+        self.assertTrue(any(c["video_id"] == "test_vid_edit" for c in candidates_all))
+
+        r_clean_pack = self.client.get("/api/storage/cleanup-candidates?tab=starter_packs")
+        self.assertEqual(r_clean_pack.status_code, 200)
+        candidates_pack = r_clean_pack.json()["candidates"]
+        found_pack = next((c for c in candidates_pack if c["video_id"] == "test_vid_edit"), None)
+        self.assertIsNotNone(found_pack)
+        self.assertEqual(found_pack["song_type"], "music_video")
+        self.assertEqual(found_pack["is_starter_pack"], 1)
+
+        # Clean up created file
+        if mv_file.exists():
+            mv_file.unlink()
+
 if __name__ == "__main__":
     unittest.main()
+
 
 
 

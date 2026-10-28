@@ -916,14 +916,26 @@
                     </div>
                 </div>
 
-                <!-- Starter Crate Seed Action -->
-                <div style="margin-bottom: 14px; display: flex; gap: 8px;">
-                    <button type="button" id="installStarterBtn" onclick="installStarterCrate(event)" class="btn-ghost" style="flex: 1; border-color: var(--neon-gold); color: var(--neon-gold); font-size: 0.82rem; padding: 10px; border-radius: 10px;">
-                        🌴 Install Starter Crate (15 Classics)
-                    </button>
-                    <button type="button" onclick="switchTab('fillerSearchTab')" class="btn-ghost" style="flex: 1; border-color: var(--neon-cyan); color: var(--neon-cyan); font-size: 0.82rem; padding: 10px; border-radius: 10px;">
-                        🔍 Search YouTube
-                    </button>
+                <!-- Starter Crate Seed Action (3-Button Bar) -->
+                <div style="margin-bottom: 14px; background: rgba(16, 28, 45, 0.85); border: 1px solid rgba(255,183,3,0.3); border-radius: 12px; padding: 12px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                        <span style="font-size: 0.82rem; font-weight: 700; color: #fff;">🌴 Starter Crate (15 Party Classics)</span>
+                        <span style="font-size: 0.7rem; color: var(--neon-gold); font-weight: 700;">Dynamic Auto-Matching</span>
+                    </div>
+                    <div style="font-size: 0.72rem; color: var(--text-muted); margin-bottom: 8px;">
+                        Instant crowd-pleasers across 70s-2010s. Choose your desired flavor to download:
+                    </div>
+                    <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+                        <button type="button" onclick="installStarterCrate('music_video')" id="btnCrate_mv" class="btn-ghost" style="flex: 1; min-width: 95px; padding: 6px 8px; font-size: 0.74rem; border-color: var(--neon-cyan); color: var(--neon-cyan); font-weight: 700;">
+                            🎬 Music Video
+                        </button>
+                        <button type="button" onclick="installStarterCrate('karaoke')" id="btnCrate_k" class="btn-ghost" style="flex: 1; min-width: 95px; padding: 6px 8px; font-size: 0.74rem; border-color: var(--neon-lime); color: var(--neon-lime); font-weight: 700;">
+                            🎤 Karaoke
+                        </button>
+                        <button type="button" onclick="installStarterCrate('sing_along')" id="btnCrate_sa" class="btn-ghost" style="flex: 1; min-width: 95px; padding: 6px 8px; font-size: 0.74rem; border-color: var(--neon-gold); color: var(--neon-gold); font-weight: 700;">
+                            🎙️ Sing-Along
+                        </button>
+                    </div>
                 </div>
 
                 <!-- Batch Actions Banner -->
@@ -1111,19 +1123,25 @@
 
     <!-- Storage Cleanup Modal (Host Only) -->
     <div id="cleanupModal" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.88); backdrop-filter: blur(12px); display: none; align-items: center; justify-content: center; z-index: 150; padding: 16px;">
-        <div class="tiki-card-pink" style="max-width: 480px; width: 100%; max-height: 90vh; display: flex; flex-direction: column; padding: 20px;">
+        <div class="tiki-card-pink" style="max-width: 520px; width: 100%; max-height: 90vh; display: flex; flex-direction: column; padding: 20px;">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                <h3 class="font-tiki neon-cyan" style="font-size: 1.25rem; margin: 0;">🧹 Free Up Drive Space</h3>
+                <h3 class="font-tiki neon-cyan" style="font-size: 1.25rem; margin: 0;">🧹 Storage & Song Manager</h3>
                 <button type="button" onclick="closeCleanupModal()" class="btn-ghost" style="padding: 2px 8px; font-size: 0.85rem;">✕</button>
             </div>
-            <p style="color: var(--text-muted); font-size: 0.8rem; margin: 0 0 10px 0;">
-                Delete local video files to free up SSD space. Song history and stats remain intact! If requested again, tracks re-download on demand.
+            <p style="color: var(--text-muted); font-size: 0.78rem; margin: 0 0 10px 0;">
+                Preview tracks, fix misparsed names, switch song types, or prune files to free drive space.
             </p>
+
+            <!-- Storage Source Tabs -->
+            <div style="display: flex; gap: 6px; margin-bottom: 10px;">
+                <button type="button" id="cleanTabAll" onclick="setCleanupTab('all')" class="btn-ghost" style="flex: 1; padding: 6px; font-size: 0.78rem; border-color: var(--neon-cyan); color: var(--neon-cyan); font-weight: 700;">🎵 All Songs</button>
+                <button type="button" id="cleanTabStarter" onclick="setCleanupTab('starter_packs')" class="btn-ghost" style="flex: 1; padding: 6px; font-size: 0.78rem;">📦 Starter Packs / Crate</button>
+            </div>
 
             <!-- Cleanup Sort Toggle -->
             <div style="display: flex; gap: 8px; margin-bottom: 10px;">
-                <button type="button" id="cleanSortOldest" onclick="setCleanupSort('oldest_played')" class="btn-ghost" style="flex: 1; padding: 6px; font-size: 0.78rem; border-color: var(--neon-cyan); color: var(--neon-cyan);">⌛ Longest Unplayed</button>
-                <button type="button" id="cleanSortLeast" onclick="setCleanupSort('least_played')" class="btn-ghost" style="flex: 1; padding: 6px; font-size: 0.78rem;">🆕 Least Played</button>
+                <button type="button" id="cleanSortOldest" onclick="setCleanupSort('oldest_played')" class="btn-ghost" style="flex: 1; padding: 5px; font-size: 0.75rem; border-color: var(--neon-cyan); color: var(--neon-cyan);">⌛ Longest Unplayed</button>
+                <button type="button" id="cleanSortLeast" onclick="setCleanupSort('least_played')" class="btn-ghost" style="flex: 1; padding: 5px; font-size: 0.75rem;">🆕 Least Played</button>
             </div>
 
             <!-- Selection Action Bar -->
@@ -1136,7 +1154,7 @@
             </div>
 
             <!-- Candidate Track List (Scrollable) -->
-            <div id="cleanupCandidateList" style="flex: 1; overflow-y: auto; margin-bottom: 12px; max-height: 280px; display: flex; flex-direction: column; gap: 6px;" class="custom-scroll">
+            <div id="cleanupCandidateList" style="flex: 1; overflow-y: auto; margin-bottom: 12px; max-height: 290px; display: flex; flex-direction: column; gap: 6px;" class="custom-scroll">
                 <!-- Populated by JS -->
             </div>
 
@@ -1145,6 +1163,33 @@
                 <button type="button" id="pruneExecuteBtn" onclick="executePrune()" class="btn-neon-pink" style="flex: 2; padding: 10px; font-size: 0.9rem;" disabled>
                     🗑️ Prune Selected Files
                 </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Host Song Metadata Edit Modal -->
+    <div id="editTrackModal" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); backdrop-filter: blur(12px); display: none; align-items: center; justify-content: center; z-index: 260; padding: 16px;">
+        <div class="tiki-card-pink" style="max-width: 400px; width: 100%; padding: 20px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                <h3 class="font-tiki neon-gold" style="font-size: 1.15rem; margin: 0;">✏️ Edit Track Metadata</h3>
+                <button type="button" onclick="closeEditTrackModal()" class="btn-ghost" style="padding: 2px 8px; font-size: 0.85rem;">✕</button>
+            </div>
+            <p style="color: var(--text-muted); font-size: 0.78rem; margin: 0 0 12px 0;">
+                Correct misparsed YouTube title or artist. Saves to library and safely renames the local video file.
+            </p>
+            <input type="hidden" id="editTrackId" value="">
+            <input type="hidden" id="editTrackIsFiller" value="0">
+            <div style="margin-bottom: 10px;">
+                <label style="font-size: 0.75rem; color: var(--neon-cyan); font-weight: 700; display: block; margin-bottom: 4px;">Song Title</label>
+                <input type="text" id="editTrackTitleInput" class="tiki-input" style="width: 100%; font-size: 0.9rem; padding: 8px 10px; background: rgba(0,0,0,0.5); border: 1px solid var(--neon-cyan); border-radius: 8px; color: #fff;">
+            </div>
+            <div style="margin-bottom: 16px;">
+                <label style="font-size: 0.75rem; color: var(--neon-gold); font-weight: 700; display: block; margin-bottom: 4px;">Artist Name</label>
+                <input type="text" id="editTrackArtistInput" class="tiki-input" style="width: 100%; font-size: 0.9rem; padding: 8px 10px; background: rgba(0,0,0,0.5); border: 1px solid var(--neon-gold); border-radius: 8px; color: #fff;">
+            </div>
+            <div style="display: flex; gap: 10px;">
+                <button type="button" onclick="closeEditTrackModal()" class="btn-ghost" style="flex: 1;">Cancel</button>
+                <button type="button" onclick="submitEditTrack()" class="btn-neon-pink" style="flex: 2; padding: 10px; font-weight: 700;">💾 Save & Rename</button>
             </div>
         </div>
     </div>

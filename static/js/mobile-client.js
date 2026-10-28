@@ -1944,36 +1944,44 @@ function renderSongbookList() {
     });
 }
 
-function installStarterCrate(e) {
-    const btn = document.getElementById("installStarterBtn") || (e && (e.currentTarget || e.target));
+function installStarterCrate(mode = 'music_video') {
+    if (typeof mode !== 'string') mode = 'music_video';
+    const btnId = mode === 'music_video' ? 'btnCrate_mv' : (mode === 'karaoke' ? 'btnCrate_k' : 'btnCrate_sa');
+    const btn = document.getElementById(btnId) || document.getElementById("installStarterBtn");
     const oldText = btn ? btn.innerText : "";
     if (btn) {
         btn.disabled = true;
-        btn.innerText = "🌴 Installing 15 Classics...";
+        btn.innerText = "⏳ Enqueuing...";
     }
-    showCustomToast("🌴 Queueing starter music videos...");
-    fetch("/api/host/filler/install-starter", { method: "POST" })
-        .then(async res => {
-            if (!res.ok) {
-                const errData = await res.json().catch(() => ({}));
-                throw new Error(errData.detail || `Server returned error (${res.status})`);
-            }
-            return res.json();
-        })
-        .then(data => {
-            const count = data.total_queued || (data.added_count + (data.requeued_count || 0)) || 15;
-            showCustomToast(`🌴 Queued ${count} starter music videos to BGM!`);
-            loadFillerTracks();
-        })
-        .catch(err => {
-            showCustomToast("⚠️ Error installing starter crate: " + err.message);
-        })
-        .finally(() => {
-            if (btn) {
-                btn.disabled = false;
-                btn.innerText = oldText || "🌴 Install Starter Crate (15 Classics)";
-            }
-        });
+    const modeLabel = mode === 'music_video' ? 'Music Videos' : (mode === 'karaoke' ? 'Karaoke Tracks' : 'Sing-Alongs');
+    showCustomToast(`🌴 Queueing 15 starter ${modeLabel}...`);
+    fetch("/api/host/filler/install-starter", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: mode })
+    })
+    .then(async res => {
+        if (!res.ok) {
+            const errData = await res.json().catch(() => ({}));
+            throw new Error(errData.detail || `Server returned error (${res.status})`);
+        }
+        return res.json();
+    })
+    .then(data => {
+        const count = data.enqueued || 15;
+        showCustomToast(`🌴 Queued ${count} starter ${modeLabel}!`);
+        if (typeof loadFillerTracks === 'function') loadFillerTracks();
+        if (typeof loadLibraryTracks === 'function') loadLibraryTracks();
+    })
+    .catch(err => {
+        showCustomToast("⚠️ Error installing starter crate: " + err.message);
+    })
+    .finally(() => {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerText = oldText || "🌴 Done";
+        }
+    });
 }
 
 function loadHistory() {
@@ -3026,7 +3034,9 @@ function loadLibraryTracks() {
 // ==========================================
 
 let currentCleanupSort = "oldest_played";
+let currentCleanupTab = "all";
 let selectedCleanupTrackIds = new Set();
+let selectedCleanupFillerIds = new Set();
 let cleanupCandidatesList = [];
 
 function loadHostStorageStatus() {
@@ -3266,12 +3276,45 @@ function openCleanupModal() {
     const modal = document.getElementById("cleanupModal");
     if (modal) modal.style.display = "flex";
     selectedCleanupTrackIds.clear();
+    selectedCleanupFillerIds.clear();
     loadCleanupCandidates();
 }
 
 function closeCleanupModal() {
     const modal = document.getElementById("cleanupModal");
     if (modal) modal.style.display = "none";
+}
+
+function setCleanupTab(tab) {
+    currentCleanupTab = tab;
+    const btnAll = document.getElementById("cleanTabAll");
+    const btnStarter = document.getElementById("cleanTabStarter");
+    if (tab === "all") {
+        if (btnAll) {
+            btnAll.style.borderColor = "var(--neon-cyan)";
+            btnAll.style.color = "var(--neon-cyan)";
+            btnAll.style.fontWeight = "700";
+        }
+        if (btnStarter) {
+            btnStarter.style.borderColor = "rgba(255,255,255,0.2)";
+            btnStarter.style.color = "#fff";
+            btnStarter.style.fontWeight = "normal";
+        }
+    } else {
+        if (btnStarter) {
+            btnStarter.style.borderColor = "var(--neon-gold)";
+            btnStarter.style.color = "var(--neon-gold)";
+            btnStarter.style.fontWeight = "700";
+        }
+        if (btnAll) {
+            btnAll.style.borderColor = "rgba(255,255,255,0.2)";
+            btnAll.style.color = "#fff";
+            btnAll.style.fontWeight = "normal";
+        }
+    }
+    selectedCleanupTrackIds.clear();
+    selectedCleanupFillerIds.clear();
+    loadCleanupCandidates();
 }
 
 function setCleanupSort(sort) {
@@ -3306,44 +3349,63 @@ function loadCleanupCandidates() {
     if (!list) return;
     list.innerHTML = `<div style="text-align: center; color: var(--text-muted); padding: 20px;">Scanning library files...</div>`;
 
-    fetch(`/api/storage/cleanup-candidates?sort_by=${encodeURIComponent(currentCleanupSort)}&limit=60`)
+    fetch(`/api/storage/cleanup-candidates?sort_by=${encodeURIComponent(currentCleanupSort)}&limit=60&tab=${encodeURIComponent(currentCleanupTab)}`)
         .then(res => res.json())
         .then(data => {
             cleanupCandidatesList = Array.isArray(data.candidates) ? data.candidates : [];
             list.innerHTML = "";
 
             if (cleanupCandidatesList.length === 0) {
-                list.innerHTML = `<div style="text-align: center; color: var(--text-muted); padding: 20px;">No downloaded video files found to prune.</div>`;
+                list.innerHTML = `<div style="text-align: center; color: var(--text-muted); padding: 20px;">No downloaded video files found in this category.</div>`;
                 updateCleanupStats();
                 return;
             }
 
             cleanupCandidatesList.forEach(item => {
-                const row = document.createElement("label");
+                const row = document.createElement("div");
                 row.style.display = "flex";
                 row.style.alignItems = "center";
-                row.style.gap = "10px";
-                row.style.padding = "10px 12px";
-                row.style.background = "rgba(8, 14, 24, 0.8)";
+                row.style.gap = "8px";
+                row.style.padding = "8px 10px";
+                row.style.background = "rgba(8, 14, 24, 0.85)";
                 row.style.border = "1px solid rgba(255,255,255,0.1)";
                 row.style.borderRadius = "10px";
-                row.style.cursor = "pointer";
+                row.style.marginBottom = "4px";
 
-                const isChecked = selectedCleanupTrackIds.has(item.id);
+                const isChecked = item.is_filler ? selectedCleanupFillerIds.has(item.id) : selectedCleanupTrackIds.has(item.id);
+
+                const starterBadge = item.is_starter_pack 
+                    ? `<span style="font-size:0.65rem; padding:1px 4px; border-radius:4px; background:rgba(255,42,133,0.18); color:var(--neon-pink); font-weight:600;" title="${escapeHtml(item.starter_pack_name || 'Starter Pack')}">📦 Starter</span>`
+                    : "";
 
                 row.innerHTML = `
-                    <input type="checkbox" value="${item.id}" ${isChecked ? 'checked' : ''} onchange="toggleCleanupTrack(${item.id}, this.checked)" style="transform: scale(1.3); cursor: pointer;">
+                    <input type="checkbox" value="${item.id}" ${isChecked ? 'checked' : ''} onchange="toggleCleanupItem(${item.id}, ${item.is_filler ? 'true' : 'false'}, this.checked)" style="transform: scale(1.2); cursor: pointer; flex-shrink: 0;">
                     <div style="flex: 1; min-width: 0;">
-                        <div style="font-weight: 700; font-size: 0.9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #fff;">
-                            ${escapeHtml(item.title)}
+                        <div style="display: flex; align-items: center; gap: 4px; margin-bottom: 2px;">
+                            <div style="font-weight: 700; font-size: 0.84rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #fff;">
+                                ${escapeHtml(item.title)}
+                            </div>
+                            ${starterBadge}
                         </div>
-                        <div style="color: var(--text-muted); font-size: 0.78rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
-                            ${escapeHtml(item.artist)}
+                        <div style="color: var(--text-muted); font-size: 0.74rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                            ${escapeHtml(item.artist)} • <span style="color: var(--neon-gold); font-weight: 600;">${item.size_mb} MB</span>
                         </div>
                     </div>
-                    <div style="text-align: right; flex-shrink: 0; font-size: 0.75rem;">
-                        <div style="color: var(--neon-gold); font-weight: 700;">${item.size_mb} MB</div>
-                        <div style="color: var(--text-muted);">🎤 ${item.play_count} • ${formatRelativeTime(item.last_played)}</div>
+                    <div style="display: flex; align-items: center; gap: 5px; flex-shrink: 0;">
+                        <!-- Failsafe Type Switcher -->
+                        <select onchange="convertCleanupTrackType(${item.id}, this.value, '${item.song_type}', ${item.is_filler ? 'true' : 'false'})" class="btn-ghost" style="padding: 2px 4px; font-size: 0.68rem; border-radius: 6px; background: rgba(0,0,0,0.6); color: #fff; border-color: rgba(255,255,255,0.25); cursor: pointer;">
+                            <option value="karaoke" ${item.song_type === 'karaoke' ? 'selected' : ''}>🎤 Karaoke</option>
+                            <option value="sing_along" ${item.song_type === 'sing_along' ? 'selected' : ''}>🎙️ Sing-Along</option>
+                            <option value="music_video" ${item.song_type === 'music_video' ? 'selected' : ''}>🎬 Music Video</option>
+                        </select>
+                        <!-- Audit Preview Button -->
+                        <button type="button" onclick="previewCleanupTrack(${item.id}, '${escapeHtml(item.title).replace(/'/g, "\\'")}', '${escapeHtml(item.artist).replace(/'/g, "\\'")}', '${item.video_id}', ${item.is_filler ? 'true' : 'false'})" class="btn-ghost" style="padding: 2px 6px; font-size: 0.75rem; border-color: var(--neon-cyan); color: var(--neon-cyan); border-radius: 6px;" title="Audit Video & Audio">
+                            👁️
+                        </button>
+                        <!-- Edit Metadata Button -->
+                        <button type="button" onclick="openEditTrackModal(${item.id}, '${escapeHtml(item.title).replace(/'/g, "\\'")}', '${escapeHtml(item.artist).replace(/'/g, "\\'")}', ${item.is_filler ? 'true' : 'false'})" class="btn-ghost" style="padding: 2px 6px; font-size: 0.75rem; border-color: var(--neon-gold); color: var(--neon-gold); border-radius: 6px;" title="Edit Title & Artist">
+                            ✏️
+                        </button>
                     </div>
                 `;
                 list.appendChild(row);
@@ -3356,36 +3418,48 @@ function loadCleanupCandidates() {
         });
 }
 
-function toggleCleanupTrack(trackId, isChecked) {
-    if (isChecked) {
-        selectedCleanupTrackIds.add(trackId);
+function toggleCleanupItem(id, isFiller, isChecked) {
+    if (isFiller) {
+        if (isChecked) selectedCleanupFillerIds.add(id);
+        else selectedCleanupFillerIds.delete(id);
     } else {
-        selectedCleanupTrackIds.delete(trackId);
+        if (isChecked) selectedCleanupTrackIds.add(id);
+        else selectedCleanupTrackIds.delete(id);
     }
     updateCleanupStats();
 }
 
 function selectTopNCleanup(n) {
     cleanupCandidatesList.slice(0, n).forEach(item => {
-        selectedCleanupTrackIds.add(item.id);
+        if (item.is_filler) selectedCleanupFillerIds.add(item.id);
+        else selectedCleanupTrackIds.add(item.id);
     });
     // Check checkboxes
-    document.querySelectorAll('#cleanupCandidateList input[type="checkbox"]').forEach(cb => {
-        if (selectedCleanupTrackIds.has(parseInt(cb.value))) {
-            cb.checked = true;
+    document.querySelectorAll('#cleanupCandidateList input[type="checkbox"]').forEach((cb, idx) => {
+        const item = cleanupCandidatesList[idx];
+        if (item) {
+            cb.checked = item.is_filler ? selectedCleanupFillerIds.has(item.id) : selectedCleanupTrackIds.has(item.id);
         }
     });
     updateCleanupStats();
 }
 
 function toggleAllCleanup() {
-    if (selectedCleanupTrackIds.size === cleanupCandidatesList.length) {
+    const totalSelected = selectedCleanupTrackIds.size + selectedCleanupFillerIds.size;
+    if (totalSelected === cleanupCandidatesList.length) {
         selectedCleanupTrackIds.clear();
+        selectedCleanupFillerIds.clear();
     } else {
-        cleanupCandidatesList.forEach(item => selectedCleanupTrackIds.add(item.id));
+        cleanupCandidatesList.forEach(item => {
+            if (item.is_filler) selectedCleanupFillerIds.add(item.id);
+            else selectedCleanupTrackIds.add(item.id);
+        });
     }
-    document.querySelectorAll('#cleanupCandidateList input[type="checkbox"]').forEach(cb => {
-        cb.checked = selectedCleanupTrackIds.has(parseInt(cb.value));
+    document.querySelectorAll('#cleanupCandidateList input[type="checkbox"]').forEach((cb, idx) => {
+        const item = cleanupCandidatesList[idx];
+        if (item) {
+            cb.checked = item.is_filler ? selectedCleanupFillerIds.has(item.id) : selectedCleanupTrackIds.has(item.id);
+        }
     });
     updateCleanupStats();
 }
@@ -3396,13 +3470,14 @@ function updateCleanupStats() {
 
     let totalMb = 0;
     cleanupCandidatesList.forEach(item => {
-        if (selectedCleanupTrackIds.has(item.id)) {
+        const isSel = item.is_filler ? selectedCleanupFillerIds.has(item.id) : selectedCleanupTrackIds.has(item.id);
+        if (isSel) {
             totalMb += item.size_mb || 0;
         }
     });
     totalMb = Math.round(totalMb * 10) / 10;
 
-    const count = selectedCleanupTrackIds.size;
+    const count = selectedCleanupTrackIds.size + selectedCleanupFillerIds.size;
     if (statsEl) {
         statsEl.innerText = `Selected: ${count} songs (${totalMb} MB)`;
     }
@@ -3414,8 +3489,8 @@ function updateCleanupStats() {
 }
 
 function executePrune() {
-    if (selectedCleanupTrackIds.size === 0) return;
-    const count = selectedCleanupTrackIds.size;
+    const count = selectedCleanupTrackIds.size + selectedCleanupFillerIds.size;
+    if (count === 0) return;
     if (!confirm(`Are you sure you want to delete ${count} video files from disk? History and songs can be re-downloaded anytime.`)) {
         return;
     }
@@ -3429,7 +3504,10 @@ function executePrune() {
     fetch("/api/storage/prune", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ track_ids: Array.from(selectedCleanupTrackIds) })
+        body: JSON.stringify({
+            track_ids: Array.from(selectedCleanupTrackIds),
+            filler_ids: Array.from(selectedCleanupFillerIds)
+        })
     })
     .then(res => {
         if (!res.ok) throw new Error("Unauthorized or server error");
@@ -3438,9 +3516,11 @@ function executePrune() {
     .then(data => {
         showToast(`✅ Successfully pruned ${data.pruned_count} video files!`);
         selectedCleanupTrackIds.clear();
+        selectedCleanupFillerIds.clear();
         closeCleanupModal();
         loadHostStorageStatus();
         loadLibraryTracks();
+        if (typeof loadFillerTracks === 'function') loadFillerTracks();
     })
     .catch(err => {
         alert("Error pruning files: " + err.message);
@@ -3449,6 +3529,113 @@ function executePrune() {
             updateCleanupStats();
         }
     });
+}
+
+function previewCleanupTrack(trackId, title, artist, videoId, isFiller) {
+    const modal = document.getElementById("rehearsalPreviewModal");
+    if (!modal) return;
+
+    const titleEl = document.getElementById("rehearsalModalTitle");
+    const artistEl = document.getElementById("rehearsalModalArtist");
+    const localV = document.getElementById("rehearsalLocalVideo");
+    const iframe = document.getElementById("rehearsalYoutubeIframe");
+    const muteBtn = document.getElementById("rehearsalMuteToggleBtn");
+
+    if (titleEl) titleEl.innerText = title || "Track";
+    if (artistEl) artistEl.innerText = (isFiller ? "🎬 Music Video • " : "") + (artist || "");
+
+    rehearsalIsMuted = true;
+    if (muteBtn) {
+        muteBtn.innerText = "🔇 Unmute Audio";
+        muteBtn.style.color = "var(--neon-gold)";
+        muteBtn.style.borderColor = "var(--neon-gold)";
+    }
+
+    if (iframe) { iframe.src = ""; iframe.style.display = "none"; }
+    if (localV) {
+        localV.style.display = "block";
+        localV.muted = true;
+        localV.src = isFiller ? `/stream/filler/${trackId}` : `/stream/${trackId}`;
+        localV.play().catch(() => {});
+    }
+
+    modal.style.display = "flex";
+}
+
+function openEditTrackModal(trackId, title, artist, isFiller) {
+    const modal = document.getElementById("editTrackModal");
+    if (!modal) return;
+    document.getElementById("editTrackId").value = trackId;
+    document.getElementById("editTrackIsFiller").value = isFiller ? "1" : "0";
+    document.getElementById("editTrackTitleInput").value = title || "";
+    document.getElementById("editTrackArtistInput").value = artist || "";
+    modal.style.display = "flex";
+}
+
+function closeEditTrackModal() {
+    const modal = document.getElementById("editTrackModal");
+    if (modal) modal.style.display = "none";
+}
+
+async function submitEditTrack() {
+    const trackId = document.getElementById("editTrackId").value;
+    const isFiller = document.getElementById("editTrackIsFiller").value === "1";
+    const newTitle = document.getElementById("editTrackTitleInput").value.trim();
+    const newArtist = document.getElementById("editTrackArtistInput").value.trim();
+
+    if (!newTitle || !newArtist) {
+        alert("Please enter both title and artist");
+        return;
+    }
+
+    try {
+        const res = await fetch(`/api/host/tracks/${encodeURIComponent(trackId)}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                title: newTitle,
+                artist: newArtist,
+                is_filler: isFiller
+            })
+        });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.detail || "Server error");
+        }
+        closeEditTrackModal();
+        showToast("✅ Track metadata updated & file renamed!");
+        loadCleanupCandidates();
+        if (typeof loadLibraryTracks === 'function') loadLibraryTracks();
+        if (typeof loadFillerTracks === 'function') loadFillerTracks();
+    } catch (e) {
+        alert("Error saving metadata: " + e.message);
+    }
+}
+
+async function convertCleanupTrackType(trackId, targetType, sourceType, isFiller) {
+    if (targetType === sourceType) return;
+    try {
+        const res = await fetch(`/api/host/tracks/${encodeURIComponent(trackId)}/convert-type`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                target_type: targetType,
+                source_type: sourceType,
+                is_filler: isFiller
+            })
+        });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.detail || "Server error");
+        }
+        showToast(`✅ Converted to ${targetType.replace('_', ' ')}! File relocated.`);
+        loadCleanupCandidates();
+        if (typeof loadLibraryTracks === 'function') loadLibraryTracks();
+        if (typeof loadFillerTracks === 'function') loadFillerTracks();
+    } catch (e) {
+        alert("Error converting type: " + e.message);
+        loadCleanupCandidates();
+    }
 }
 
 // =============================================================================
@@ -4835,67 +5022,72 @@ function renderPartyPacks(packs) {
     }
 
     container.innerHTML = packs.map(p => {
-        const remaining = p.track_count - p.downloaded_count;
-        const isComplete = remaining <= 0;
-        const badgeColor = isComplete ? "var(--neon-lime)" : "var(--neon-cyan)";
-        const badgeBg = isComplete ? "rgba(0, 255, 100, 0.15)" : "rgba(0, 240, 255, 0.15)";
-        const badgeText = isComplete ? `✅ ${p.track_count}/${p.track_count} Ready` : `📥 ${p.downloaded_count}/${p.track_count} Ready`;
+        const mvCount = p.music_video_count || 0;
+        const kCount = p.karaoke_count || 0;
+        const saCount = p.sing_along_count || 0;
+        const total = p.track_count || 15;
 
         return `
-            <div style="background: rgba(16, 28, 45, 0.85); border: 1px solid rgba(0, 240, 255, 0.25); border-radius: 10px; padding: 10px 12px;">
+            <div style="background: rgba(16, 28, 45, 0.85); border: 1px solid rgba(0, 240, 255, 0.25); border-radius: 10px; padding: 10px 12px; margin-bottom: 8px;">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-                    <div style="font-weight: 700; font-size: 0.82rem; color: #fff;">${escapeHtml(p.name)}</div>
-                    <span style="font-size: 0.7rem; font-weight: 700; padding: 2px 6px; border-radius: 6px; color: ${badgeColor}; background: ${badgeBg};">
-                        ${badgeText}
+                    <div style="font-weight: 700; font-size: 0.84rem; color: #fff;">${escapeHtml(p.name)}</div>
+                    <span style="font-size: 0.7rem; font-weight: 700; padding: 2px 6px; border-radius: 6px; color: var(--neon-gold); background: rgba(255,183,3,0.15);">
+                        ${total} Tracks
                     </span>
                 </div>
                 <div style="font-size: 0.72rem; color: var(--text-muted); margin-bottom: 8px; line-height: 1.3;">
                     ${escapeHtml(p.description)}
                 </div>
-                <div style="display: flex; justify-content: flex-end;">
-                    ${isComplete ? `
-                        <button type="button" class="btn-ghost" disabled style="padding: 4px 10px; font-size: 0.72rem; opacity: 0.6; cursor: default; border-color: var(--neon-lime); color: var(--neon-lime);">
-                            ✅ Pack Installed
-                        </button>
-                    ` : `
-                        <button type="button" onclick="downloadPartyPack('${p.id}')" id="btnPack_${p.id}" class="btn-ghost" style="padding: 4px 12px; font-size: 0.72rem; border-color: var(--neon-cyan); color: var(--neon-cyan); font-weight: 700;">
-                            ⚡ Download Pack (${remaining} songs)
-                        </button>
-                    `}
+                <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+                    <button type="button" onclick="downloadPartyPack('${p.id}', 'music_video')" id="btnPack_${p.id}_mv" class="btn-ghost" style="flex: 1; min-width: 95px; padding: 6px 8px; font-size: 0.72rem; border-color: var(--neon-cyan); color: var(--neon-cyan); font-weight: 700;">
+                        🎬 Music Video (${mvCount}/${total})
+                    </button>
+                    <button type="button" onclick="downloadPartyPack('${p.id}', 'karaoke')" id="btnPack_${p.id}_k" class="btn-ghost" style="flex: 1; min-width: 95px; padding: 6px 8px; font-size: 0.72rem; border-color: var(--neon-lime); color: var(--neon-lime); font-weight: 700;">
+                        🎤 Karaoke (${kCount}/${total})
+                    </button>
+                    <button type="button" onclick="downloadPartyPack('${p.id}', 'sing_along')" id="btnPack_${p.id}_sa" class="btn-ghost" style="flex: 1; min-width: 95px; padding: 6px 8px; font-size: 0.72rem; border-color: var(--neon-gold); color: var(--neon-gold); font-weight: 700;">
+                        🎙️ Sing-Along (${saCount}/${total})
+                    </button>
                 </div>
             </div>
         `;
     }).join("");
 }
 
-async function downloadPartyPack(packId) {
-    const btn = document.getElementById(`btnPack_${packId}`);
+async function downloadPartyPack(packId, mode = 'karaoke') {
+    const btnId = mode === 'music_video' ? `btnPack_${packId}_mv` : (mode === 'karaoke' ? `btnPack_${packId}_k` : `btnPack_${packId}_sa`);
+    const btn = document.getElementById(btnId);
+    const oldText = btn ? btn.innerText : "";
     if (btn) {
         btn.disabled = true;
         btn.innerText = "⏳ Enqueuing...";
     }
 
+    const modeLabel = mode === 'music_video' ? 'Music Videos' : (mode === 'karaoke' ? 'Karaoke Tracks' : 'Sing-Alongs');
+    showCustomToast(`🚀 Queueing pack for ${modeLabel}...`);
+
     try {
         const res = await fetch(`/api/host/party-packs/${encodeURIComponent(packId)}/download`, {
-            method: "POST"
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ mode: mode })
         });
         if (res.ok) {
             const data = await res.json();
-            showToast(`🚀 ${data.enqueued} songs enqueued for offline party! 🌺`);
+            showCustomToast(`🚀 ${data.enqueued} songs enqueued for offline party! 🌺`);
             loadPartyPacks();
+            if (typeof loadLibraryTracks === 'function') loadLibraryTracks();
+            if (typeof loadFillerTracks === 'function') loadFillerTracks();
         } else {
-            showToast("⚠️ Failed to enqueue party pack");
-            if (btn) {
-                btn.disabled = false;
-                btn.innerText = "⚡ Try Again";
-            }
+            showCustomToast("⚠️ Failed to enqueue party pack");
         }
     } catch (e) {
         console.error("[Host] Error downloading pack:", e);
-        showToast("⚠️ Network error starting pack download");
+        showCustomToast("⚠️ Network error starting pack download");
+    } finally {
         if (btn) {
             btn.disabled = false;
-            btn.innerText = "⚡ Try Again";
+            btn.innerText = oldText;
         }
     }
 }

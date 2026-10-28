@@ -3,7 +3,12 @@ import datetime
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 import hashlib
-from config import get_db_path, get_data_dir, ensure_storage_dirs, DB_PATH
+import shutil
+import re
+from config import (
+    get_db_path, get_data_dir, ensure_storage_dirs, DB_PATH,
+    get_tracks_dir, get_sing_along_dir, get_filler_dir
+)
 
 def get_db():
     ensure_storage_dirs()
@@ -145,8 +150,9 @@ def init_db():
 
         CREATE TABLE IF NOT EXISTS pending_downloads (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            track_id INTEGER NOT NULL REFERENCES tracks(id),
-            singer_id INTEGER NOT NULL REFERENCES singers(id),
+            track_id INTEGER REFERENCES tracks(id),
+            filler_id INTEGER REFERENCES filler_tracks(id),
+            singer_id INTEGER REFERENCES singers(id),
             duet_partner TEXT DEFAULT '',
             pitch_shift INTEGER DEFAULT 0,
             dedication TEXT DEFAULT '',
@@ -155,6 +161,10 @@ def init_db():
             error_message TEXT DEFAULT '',
             retry_count INTEGER DEFAULT 0,
             quality_profile TEXT DEFAULT 'default', -- 'default', 'medium_360p', 'lowest'
+            priority INTEGER DEFAULT 10,
+            auto_promote INTEGER DEFAULT 1,
+            is_starter_pack INTEGER DEFAULT 0,
+            starter_pack_name TEXT DEFAULT '',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
         CREATE INDEX IF NOT EXISTS idx_pending_downloads_status ON pending_downloads(status);
@@ -203,11 +213,32 @@ def init_db():
             conn.execute("ALTER TABLE tracks ADD COLUMN media_type TEXT DEFAULT 'video'")
         if "cdg_path" not in cols:
             conn.execute("ALTER TABLE tracks ADD COLUMN cdg_path TEXT DEFAULT ''")
+        if "is_starter_pack" not in cols:
+            conn.execute("ALTER TABLE tracks ADD COLUMN is_starter_pack INTEGER DEFAULT 0")
+        if "starter_pack_name" not in cols:
+            conn.execute("ALTER TABLE tracks ADD COLUMN starter_pack_name TEXT DEFAULT ''")
 
-        # Ensure media_source exists on filler_tracks
+        # Ensure media_source and starter pack columns exist on filler_tracks
         cols_filler = [r["name"] for r in conn.execute("PRAGMA table_info(filler_tracks)").fetchall()]
         if "media_source" not in cols_filler:
             conn.execute("ALTER TABLE filler_tracks ADD COLUMN media_source TEXT DEFAULT 'youtube'")
+        if "is_starter_pack" not in cols_filler:
+            conn.execute("ALTER TABLE filler_tracks ADD COLUMN is_starter_pack INTEGER DEFAULT 0")
+        if "starter_pack_name" not in cols_filler:
+            conn.execute("ALTER TABLE filler_tracks ADD COLUMN starter_pack_name TEXT DEFAULT ''")
+
+        # Ensure pending_downloads priority, auto_promote, filler_id, and starter pack columns exist
+        cols_pending = [r["name"] for r in conn.execute("PRAGMA table_info(pending_downloads)").fetchall()]
+        if "filler_id" not in cols_pending:
+            conn.execute("ALTER TABLE pending_downloads ADD COLUMN filler_id INTEGER DEFAULT 0")
+        if "priority" not in cols_pending:
+            conn.execute("ALTER TABLE pending_downloads ADD COLUMN priority INTEGER DEFAULT 10")
+        if "auto_promote" not in cols_pending:
+            conn.execute("ALTER TABLE pending_downloads ADD COLUMN auto_promote INTEGER DEFAULT 1")
+        if "is_starter_pack" not in cols_pending:
+            conn.execute("ALTER TABLE pending_downloads ADD COLUMN is_starter_pack INTEGER DEFAULT 0")
+        if "starter_pack_name" not in cols_pending:
+            conn.execute("ALTER TABLE pending_downloads ADD COLUMN starter_pack_name TEXT DEFAULT ''")
 
         # Ensure status and status_updated_at exist on singers
         cols_singers = [r["name"] for r in conn.execute("PRAGMA table_info(singers)").fetchall()]
@@ -600,15 +631,17 @@ def save_track(
     is_sing_along: bool = False,
     media_source: str = "youtube",
     media_type: str = "video",
-    cdg_path: str = ""
+    cdg_path: str = "",
+    is_starter_pack: int = 0,
+    starter_pack_name: str = ""
 ) -> int:
     conn = get_db()
     if video_id.startswith("local_") and media_source == "youtube":
         media_source = "imported"
     with conn:
         cursor = conn.execute("""
-            INSERT INTO tracks (video_id, title, artist, original_title, channel, duration, is_sing_along, media_source, media_type, cdg_path)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO tracks (video_id, title, artist, original_title, channel, duration, is_sing_along, media_source, media_type, cdg_path, is_starter_pack, starter_pack_name)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(video_id) DO UPDATE SET
                 title = CASE WHEN tracks.is_downloaded = 1 THEN tracks.title ELSE excluded.title END,
                 artist = CASE WHEN tracks.is_downloaded = 1 THEN tracks.artist ELSE excluded.artist END,
@@ -618,8 +651,10 @@ def save_track(
                 is_sing_along = CASE WHEN excluded.is_sing_along = 1 THEN 1 ELSE tracks.is_sing_along END,
                 media_source = CASE WHEN tracks.media_source = 'imported' THEN 'imported' ELSE excluded.media_source END,
                 media_type = CASE WHEN excluded.media_type != '' THEN excluded.media_type ELSE tracks.media_type END,
-                cdg_path = CASE WHEN excluded.cdg_path != '' THEN excluded.cdg_path ELSE tracks.cdg_path END
-        """, (video_id, title, artist, original_title, channel, duration, 1 if is_sing_along else 0, media_source, media_type, cdg_path))
+                cdg_path = CASE WHEN excluded.cdg_path != '' THEN excluded.cdg_path ELSE tracks.cdg_path END,
+                is_starter_pack = CASE WHEN excluded.is_starter_pack = 1 THEN 1 ELSE tracks.is_starter_pack END,
+                starter_pack_name = CASE WHEN excluded.starter_pack_name != '' THEN excluded.starter_pack_name ELSE tracks.starter_pack_name END
+        """, (video_id, title, artist, original_title, channel, duration, 1 if is_sing_along else 0, media_source, media_type, cdg_path, is_starter_pack, starter_pack_name))
         
         cursor = conn.execute("SELECT id FROM tracks WHERE video_id = ?", (video_id,))
         track_id = cursor.fetchone()["id"]
@@ -936,20 +971,38 @@ def get_queue() -> List[Dict[str, Any]]:
     return [dict(r) for r in rows]
 
 def add_pending_download(
-    track_id: int,
-    singer_id: int,
+    track_id: int = 0,
+    singer_id: int = 0,
     duet_partner: str = "",
     pitch_shift: int = 0,
     dedication: str = "",
-    quality_profile: str = "default"
+    quality_profile: str = "default",
+    filler_id: int = 0,
+    priority: int = 10,
+    auto_promote: int = 1,
+    is_starter_pack: int = 0,
+    starter_pack_name: str = ""
 ) -> int:
     conn = get_db()
     with conn:
         cursor = conn.execute("""
             INSERT INTO pending_downloads (
-                track_id, singer_id, duet_partner, pitch_shift, dedication, quality_profile, status
-            ) VALUES (?, ?, ?, ?, ?, ?, 'downloading')
-        """, (track_id, singer_id, duet_partner, pitch_shift, (dedication or "").strip()[:60], quality_profile))
+                track_id, filler_id, singer_id, duet_partner, pitch_shift, dedication, quality_profile, status,
+                priority, auto_promote, is_starter_pack, starter_pack_name
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'downloading', ?, ?, ?, ?)
+        """, (
+            track_id if track_id else None,
+            filler_id if filler_id else None,
+            singer_id if singer_id else None,
+            duet_partner,
+            pitch_shift,
+            (dedication or "").strip()[:60],
+            quality_profile,
+            priority,
+            auto_promote,
+            is_starter_pack,
+            starter_pack_name
+        ))
         pending_id = cursor.lastrowid
     conn.close()
     return pending_id
@@ -960,6 +1013,7 @@ def get_pending_downloads() -> List[Dict[str, Any]]:
         SELECT 
             p.id,
             p.track_id,
+            coalesce(p.filler_id, 0) as filler_id,
             p.singer_id,
             p.duet_partner,
             p.pitch_shift,
@@ -969,21 +1023,26 @@ def get_pending_downloads() -> List[Dict[str, Any]]:
             coalesce(p.error_message, '') as error_message,
             p.retry_count,
             p.quality_profile,
+            coalesce(p.priority, 10) as priority,
+            coalesce(p.auto_promote, 1) as auto_promote,
+            coalesce(p.is_starter_pack, 0) as is_starter_pack,
+            coalesce(p.starter_pack_name, '') as starter_pack_name,
             p.created_at,
-            t.video_id,
-            t.title,
-            t.artist,
-            t.original_title,
-            t.duration,
-            t.is_downloaded,
-            t.download_status,
+            coalesce(t.video_id, f.video_id, '') as video_id,
+            coalesce(t.title, f.title, '') as title,
+            coalesce(t.artist, f.artist, '') as artist,
+            coalesce(t.original_title, f.original_title, '') as original_title,
+            coalesce(t.duration, f.duration, 0) as duration,
+            coalesce(t.is_downloaded, f.is_downloaded, 0) as is_downloaded,
+            coalesce(t.download_status, f.download_status, 'pending') as download_status,
             coalesce(t.is_sing_along, 0) as is_sing_along,
-            s.name as singer_name,
-            s.avatar as singer_avatar
+            coalesce(s.name, CASE WHEN p.is_starter_pack = 1 THEN '📦 Starter Pack' ELSE 'Host DJ' END) as singer_name,
+            coalesce(s.avatar, '🌴') as singer_avatar
         FROM pending_downloads p
-        JOIN tracks t ON p.track_id = t.id
-        JOIN singers s ON p.singer_id = s.id
-        ORDER BY p.id ASC
+        LEFT JOIN tracks t ON p.track_id = t.id
+        LEFT JOIN filler_tracks f ON p.filler_id = f.id
+        LEFT JOIN singers s ON p.singer_id = s.id
+        ORDER BY p.priority ASC, p.id ASC
     """)
     rows = cursor.fetchall()
     conn.close()
@@ -995,6 +1054,7 @@ def get_pending_download_by_id(pending_id: int) -> Optional[Dict[str, Any]]:
         SELECT 
             p.id,
             p.track_id,
+            coalesce(p.filler_id, 0) as filler_id,
             p.singer_id,
             p.duet_partner,
             p.pitch_shift,
@@ -1004,20 +1064,25 @@ def get_pending_download_by_id(pending_id: int) -> Optional[Dict[str, Any]]:
             coalesce(p.error_message, '') as error_message,
             p.retry_count,
             p.quality_profile,
+            coalesce(p.priority, 10) as priority,
+            coalesce(p.auto_promote, 1) as auto_promote,
+            coalesce(p.is_starter_pack, 0) as is_starter_pack,
+            coalesce(p.starter_pack_name, '') as starter_pack_name,
             p.created_at,
-            t.video_id,
-            t.title,
-            t.artist,
-            t.original_title,
-            t.duration,
-            t.is_downloaded,
-            t.download_status,
+            coalesce(t.video_id, f.video_id, '') as video_id,
+            coalesce(t.title, f.title, '') as title,
+            coalesce(t.artist, f.artist, '') as artist,
+            coalesce(t.original_title, f.original_title, '') as original_title,
+            coalesce(t.duration, f.duration, 0) as duration,
+            coalesce(t.is_downloaded, f.is_downloaded, 0) as is_downloaded,
+            coalesce(t.download_status, f.download_status, 'pending') as download_status,
             coalesce(t.is_sing_along, 0) as is_sing_along,
-            s.name as singer_name,
-            s.avatar as singer_avatar
+            coalesce(s.name, CASE WHEN p.is_starter_pack = 1 THEN '📦 Starter Pack' ELSE 'Host DJ' END) as singer_name,
+            coalesce(s.avatar, '🌴') as singer_avatar
         FROM pending_downloads p
-        JOIN tracks t ON p.track_id = t.id
-        JOIN singers s ON p.singer_id = s.id
+        LEFT JOIN tracks t ON p.track_id = t.id
+        LEFT JOIN filler_tracks f ON p.filler_id = f.id
+        LEFT JOIN singers s ON p.singer_id = s.id
         WHERE p.id = ?
         LIMIT 1
     """, (pending_id,))
@@ -1031,6 +1096,7 @@ def get_pending_download_by_track_id(track_id: int) -> Optional[Dict[str, Any]]:
         SELECT 
             p.id,
             p.track_id,
+            coalesce(p.filler_id, 0) as filler_id,
             p.singer_id,
             p.duet_partner,
             p.pitch_shift,
@@ -1040,20 +1106,25 @@ def get_pending_download_by_track_id(track_id: int) -> Optional[Dict[str, Any]]:
             coalesce(p.error_message, '') as error_message,
             p.retry_count,
             p.quality_profile,
+            coalesce(p.priority, 10) as priority,
+            coalesce(p.auto_promote, 1) as auto_promote,
+            coalesce(p.is_starter_pack, 0) as is_starter_pack,
+            coalesce(p.starter_pack_name, '') as starter_pack_name,
             p.created_at,
-            t.video_id,
-            t.title,
-            t.artist,
-            t.original_title,
-            t.duration,
-            t.is_downloaded,
-            t.download_status,
+            coalesce(t.video_id, f.video_id, '') as video_id,
+            coalesce(t.title, f.title, '') as title,
+            coalesce(t.artist, f.artist, '') as artist,
+            coalesce(t.original_title, f.original_title, '') as original_title,
+            coalesce(t.duration, f.duration, 0) as duration,
+            coalesce(t.is_downloaded, f.is_downloaded, 0) as is_downloaded,
+            coalesce(t.download_status, f.download_status, 'pending') as download_status,
             coalesce(t.is_sing_along, 0) as is_sing_along,
-            s.name as singer_name,
-            s.avatar as singer_avatar
+            coalesce(s.name, CASE WHEN p.is_starter_pack = 1 THEN '📦 Starter Pack' ELSE 'Host DJ' END) as singer_name,
+            coalesce(s.avatar, '🌴') as singer_avatar
         FROM pending_downloads p
-        JOIN tracks t ON p.track_id = t.id
-        JOIN singers s ON p.singer_id = s.id
+        LEFT JOIN tracks t ON p.track_id = t.id
+        LEFT JOIN filler_tracks f ON p.filler_id = f.id
+        LEFT JOIN singers s ON p.singer_id = s.id
         WHERE p.track_id = ?
         ORDER BY p.id DESC
         LIMIT 1
@@ -1129,6 +1200,18 @@ def promote_pending_download_to_queue(pending_id: int) -> Optional[int]:
         p = dict(row)
         conn.execute("DELETE FROM pending_downloads WHERE id = ?", (pending_id,))
     conn.close()
+
+    # If auto_promote is turned off (e.g. background starter pack caching), do not add to active queue
+    if p.get("auto_promote") == 0:
+        return None
+
+    # If this was solely a filler music video, do not add to singer queue
+    if (p.get("filler_id") or 0) > 0 and not (p.get("track_id") or 0):
+        return None
+
+    if not p.get("track_id") or not p.get("singer_id"):
+        return None
+
     # Now enqueue the song into active queue (which triggers round-robin rebalancing)
     queue_id = enqueue_song(
         track_id=p["track_id"],
@@ -1777,39 +1860,281 @@ def get_unique_downloaded_artists(sing_along: bool = False) -> List[str]:
     conn.close()
     return [r["artist"] for r in rows]
 
-def get_cleanup_candidates(sort_by: str = "oldest_played", limit: int = 50) -> List[Dict[str, Any]]:
-    """Returns candidate tracks for pruning storage sorted by longest unplayed or least played."""
+def sanitize_db_filename(name: str) -> str:
+    cleaned = re.sub(r'[\\/*?:"<>|]', "", name)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned if cleaned else "unknown"
+
+def edit_track_metadata(track_id: int, new_title: str, new_artist: str, is_filler: bool = False) -> bool:
+    """Updates title and artist metadata for a track or filler, and safely renames its physical video file on disk."""
+    new_title = new_title.strip()
+    new_artist = new_artist.strip()
+    if not new_title or not new_artist:
+        return False
+
+    conn = get_db()
+    table = "filler_tracks" if is_filler else "tracks"
+    row = conn.execute(f"SELECT * FROM {table} WHERE id = ?", (track_id,)).fetchone()
+    if not row:
+        conn.close()
+        return False
+
+    item = dict(row)
+    local_path = item.get("local_path", "")
+    new_local_path = local_path
+    video_id = item.get("video_id", "")
+
+    # Rename physical file on disk if it exists
+    if local_path and Path(local_path).exists():
+        old_path = Path(local_path)
+        clean_title = sanitize_db_filename(new_title)
+        clean_artist = sanitize_db_filename(new_artist)
+
+        if is_filler:
+            target_dir = get_filler_dir()
+            target_dir.mkdir(parents=True, exist_ok=True)
+            target_file = target_dir / f"{clean_artist} - {clean_title} [{video_id}].mp4"
+        else:
+            base_dir = get_sing_along_dir() if item.get("is_sing_along") else get_tracks_dir()
+            target_dir = base_dir / clean_artist
+            target_dir.mkdir(parents=True, exist_ok=True)
+            target_file = target_dir / f"{clean_title} [{video_id}].mp4"
+
+        try:
+            if old_path.resolve() != target_file.resolve():
+                shutil.move(str(old_path), str(target_file))
+                new_local_path = str(target_file)
+        except Exception as e:
+            print(f"[Edit Metadata] Error renaming file from {old_path} to {target_file}: {e}")
+
+    with conn:
+        conn.execute(f"""
+            UPDATE {table}
+            SET title = ?, artist = ?, local_path = ?
+            WHERE id = ?
+        """, (new_title, new_artist, new_local_path, track_id))
+    conn.close()
+    return True
+
+def convert_track_type(track_id: int, target_type: str, source_type: str = "auto", is_filler: bool = False) -> Dict[str, Any]:
+    """
+    Failsafe song type converter (Option A: Physical File Relocation).
+    Converts between 'karaoke', 'sing_along', and 'music_video'.
+    Relocates the .mp4 file to the appropriate folder and updates the database record.
+    """
+    valid_types = {"karaoke", "sing_along", "music_video"}
+    if target_type not in valid_types:
+        return {"success": False, "error": f"Invalid target type '{target_type}'"}
+
+    conn = get_db()
+    
+    # 1. Determine source item
+    if is_filler or source_type == "music_video":
+        row = conn.execute("SELECT * FROM filler_tracks WHERE id = ?", (track_id,)).fetchone()
+        source_is_filler = True
+    else:
+        row = conn.execute("SELECT * FROM tracks WHERE id = ?", (track_id,)).fetchone()
+        source_is_filler = False
+        if not row:
+            # Fallback check filler
+            row = conn.execute("SELECT * FROM filler_tracks WHERE id = ?", (track_id,)).fetchone()
+            source_is_filler = bool(row)
+
+    if not row:
+        conn.close()
+        return {"success": False, "error": "Track not found"}
+
+    item = dict(row)
+    video_id = item["video_id"]
+    title = item["title"]
+    artist = item["artist"]
+    local_path = item.get("local_path", "")
+    old_file_exists = bool(local_path and Path(local_path).exists())
+    old_path = Path(local_path) if old_file_exists else None
+
+    clean_artist = sanitize_db_filename(artist)
+    clean_title = sanitize_db_filename(title)
+    new_local_path = local_path
+
+    # Compute target file destination
+    if target_type == "music_video":
+        target_dir = get_filler_dir()
+        target_file = target_dir / f"{clean_artist} - {clean_title} [{video_id}].mp4"
+    elif target_type == "sing_along":
+        target_dir = get_sing_along_dir() / clean_artist
+        target_file = target_dir / f"{clean_title} [{video_id}].mp4"
+    else: # karaoke
+        target_dir = get_tracks_dir() / clean_artist
+        target_file = target_dir / f"{clean_title} [{video_id}].mp4"
+
+    # Option A: Relocate physical file if present
+    if old_file_exists:
+        try:
+            target_dir.mkdir(parents=True, exist_ok=True)
+            if old_path.resolve() != target_file.resolve():
+                shutil.move(str(old_path), str(target_file))
+            new_local_path = str(target_file)
+        except Exception as e:
+            print(f"[Convert Type] Error relocating file from {old_path} to {target_file}: {e}")
+            new_local_path = str(target_file)
+    else:
+        new_local_path = str(target_file) if local_path else ""
+
+    # Database transition
+    new_track_id = track_id
+    new_is_filler = False
+
+    with conn:
+        if source_is_filler and target_type in ("karaoke", "sing_along"):
+            # Migrating from filler_tracks to tracks
+            is_sa = 1 if target_type == "sing_along" else 0
+            cur = conn.execute("""
+                INSERT INTO tracks (
+                    video_id, title, artist, original_title, duration, is_downloaded,
+                    local_path, download_status, is_sing_along, is_starter_pack, starter_pack_name
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'ready', ?, ?, ?)
+                ON CONFLICT(video_id) DO UPDATE SET
+                    title = excluded.title,
+                    artist = excluded.artist,
+                    is_downloaded = excluded.is_downloaded,
+                    local_path = excluded.local_path,
+                    download_status = excluded.download_status,
+                    is_sing_along = excluded.is_sing_along,
+                    is_starter_pack = excluded.is_starter_pack,
+                    starter_pack_name = excluded.starter_pack_name
+            """, (
+                video_id, title, artist, item.get("original_title", f"{artist} - {title}"),
+                item.get("duration", 0), 1 if old_file_exists else 0, new_local_path,
+                is_sa, item.get("is_starter_pack", 0), item.get("starter_pack_name", "")
+            ))
+            # Get track id from tracks
+            row_t = conn.execute("SELECT id FROM tracks WHERE video_id = ?", (video_id,)).fetchone()
+            if row_t:
+                new_track_id = row_t["id"]
+            # Mark or remove filler
+            conn.execute("DELETE FROM filler_tracks WHERE id = ?", (item["id"],))
+            new_is_filler = False
+
+        elif not source_is_filler and target_type == "music_video":
+            # Migrating from tracks to filler_tracks
+            conn.execute("""
+                INSERT INTO filler_tracks (
+                    video_id, title, artist, original_title, duration, is_downloaded,
+                    local_path, download_status, is_starter_pack, starter_pack_name
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'ready', ?, ?)
+                ON CONFLICT(video_id) DO UPDATE SET
+                    title = excluded.title,
+                    artist = excluded.artist,
+                    is_downloaded = excluded.is_downloaded,
+                    local_path = excluded.local_path,
+                    download_status = excluded.download_status,
+                    is_starter_pack = excluded.is_starter_pack,
+                    starter_pack_name = excluded.starter_pack_name
+            """, (
+                video_id, title, artist, item.get("original_title", f"{artist} - {title}"),
+                item.get("duration", 0), 1 if old_file_exists else 0, new_local_path,
+                item.get("is_starter_pack", 0), item.get("starter_pack_name", "")
+            ))
+            row_f = conn.execute("SELECT id FROM filler_tracks WHERE video_id = ?", (video_id,)).fetchone()
+            if row_f:
+                new_track_id = row_f["id"]
+            # Mark track as no longer locally downloaded
+            conn.execute("UPDATE tracks SET is_downloaded = 0, local_path = '' WHERE id = ?", (item["id"],))
+            new_is_filler = True
+
+        elif not source_is_filler and target_type in ("karaoke", "sing_along"):
+            # Migrating between karaoke and sing_along inside tracks
+            is_sa = 1 if target_type == "sing_along" else 0
+            conn.execute("""
+                UPDATE tracks
+                SET is_sing_along = ?, local_path = ?
+                WHERE id = ?
+            """, (is_sa, new_local_path, item["id"]))
+            new_track_id = item["id"]
+            new_is_filler = False
+
+    conn.close()
+    return {
+        "success": True,
+        "track_id": new_track_id,
+        "target_type": target_type,
+        "is_filler": new_is_filler,
+        "local_path": new_local_path
+    }
+
+def get_cleanup_candidates(sort_by: str = "oldest_played", limit: int = 60, tab: str = "all") -> List[Dict[str, Any]]:
+    """Returns candidate tracks for pruning storage sorted by longest unplayed or least played, supporting starter pack tab."""
     conn = get_db()
     if sort_by == "least_played":
         order_clause = "ORDER BY play_count ASC, coalesce(last_played, created_at) ASC"
     else: # oldest_played
         order_clause = "ORDER BY coalesce(last_played, '1970-01-01') ASC, play_count ASC"
 
-    query = f"""
+    starter_filter = "AND is_starter_pack = 1" if tab == "starter_packs" else ""
+
+    # 1. Tracks (Karaoke & Sing-Along)
+    query_tracks = f"""
         SELECT id, video_id, title, artist, duration, local_path,
-               coalesce(play_count, 0) as play_count, last_played, created_at
+               coalesce(play_count, 0) as play_count, last_played, created_at,
+               coalesce(is_sing_along, 0) as is_sing_along,
+               coalesce(is_starter_pack, 0) as is_starter_pack,
+               coalesce(starter_pack_name, '') as starter_pack_name
         FROM tracks
-        WHERE is_downloaded = 1 AND local_path != ''
+        WHERE is_downloaded = 1 AND local_path != '' {starter_filter}
         {order_clause}
         LIMIT ?
     """
-    rows = conn.execute(query, (limit,)).fetchall()
+    rows_tracks = conn.execute(query_tracks, (limit,)).fetchall()
+
+    # 2. Filler Tracks (Music Videos)
+    query_filler = f"""
+        SELECT id, video_id, title, artist, duration, local_path,
+               coalesce(play_count, 0) as play_count, last_played, created_at,
+               0 as is_sing_along,
+               coalesce(is_starter_pack, 0) as is_starter_pack,
+               coalesce(starter_pack_name, '') as starter_pack_name
+        FROM filler_tracks
+        WHERE is_downloaded = 1 AND local_path != '' {starter_filter}
+        {order_clause}
+        LIMIT ?
+    """
+    rows_filler = conn.execute(query_filler, (limit,)).fetchall()
     conn.close()
 
     results = []
-    for r in rows:
+    for r in rows_tracks:
         d = dict(r)
         p = Path(d["local_path"])
         size_bytes = p.stat().st_size if p.exists() else 0
         d["size_bytes"] = size_bytes
         d["size_mb"] = round(size_bytes / (1024 * 1024), 1)
+        d["is_filler"] = False
+        d["song_type"] = "sing_along" if d.get("is_sing_along") else "karaoke"
         results.append(d)
-    return results
 
-def prune_local_track(track_id: int) -> bool:
+    for r in rows_filler:
+        d = dict(r)
+        p = Path(d["local_path"])
+        size_bytes = p.stat().st_size if p.exists() else 0
+        d["size_bytes"] = size_bytes
+        d["size_mb"] = round(size_bytes / (1024 * 1024), 1)
+        d["is_filler"] = True
+        d["song_type"] = "music_video"
+        results.append(d)
+
+    # Sort combined list
+    if sort_by == "least_played":
+        results.sort(key=lambda x: (x.get("play_count", 0), x.get("last_played") or x.get("created_at") or ""))
+    else:
+        results.sort(key=lambda x: (x.get("last_played") or "1970-01-01", x.get("play_count", 0)))
+
+    return results[:limit]
+
+def prune_local_track(track_id: int, is_filler: bool = False) -> bool:
     """Removes the downloaded video file on disk while keeping track metadata & history intact."""
     conn = get_db()
-    track = conn.execute("SELECT local_path FROM tracks WHERE id = ?", (track_id,)).fetchone()
+    table = "filler_tracks" if is_filler else "tracks"
+    track = conn.execute(f"SELECT local_path FROM {table} WHERE id = ?", (track_id,)).fetchone()
     if not track:
         conn.close()
         return False
@@ -1822,8 +2147,8 @@ def prune_local_track(track_id: int) -> bool:
             except Exception as e:
                 print(f"[Storage Prune] Error removing file {p}: {e}")
     with conn:
-        conn.execute("""
-            UPDATE tracks
+        conn.execute(f"""
+            UPDATE {table}
             SET is_downloaded = 0,
                 local_path = '',
                 download_status = 'idle'
@@ -1847,7 +2172,9 @@ def add_filler_track(
     release_year: int = 0,
     is_downloaded: int = 0,
     local_path: str = "",
-    media_source: str = "youtube"
+    media_source: str = "youtube",
+    is_starter_pack: int = 0,
+    starter_pack_name: str = ""
 ) -> int:
     conn = get_db()
     if video_id.startswith("local_") and media_source == "youtube":
@@ -1856,8 +2183,9 @@ def add_filler_track(
         cursor = conn.execute("""
             INSERT INTO filler_tracks (
                 video_id, title, artist, original_title, duration,
-                genre, release_year, is_downloaded, local_path, download_status, media_source
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                genre, release_year, is_downloaded, local_path, download_status, media_source,
+                is_starter_pack, starter_pack_name
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(video_id) DO UPDATE SET
                 title = excluded.title,
                 artist = excluded.artist,
@@ -1865,11 +2193,14 @@ def add_filler_track(
                 duration = CASE WHEN excluded.duration > 0 THEN excluded.duration ELSE filler_tracks.duration END,
                 genre = CASE WHEN excluded.genre != '' THEN excluded.genre ELSE filler_tracks.genre END,
                 release_year = CASE WHEN excluded.release_year > 0 THEN excluded.release_year ELSE filler_tracks.release_year END,
-                media_source = CASE WHEN filler_tracks.media_source = 'imported' THEN 'imported' ELSE excluded.media_source END
+                media_source = CASE WHEN filler_tracks.media_source = 'imported' THEN 'imported' ELSE excluded.media_source END,
+                is_starter_pack = CASE WHEN excluded.is_starter_pack = 1 THEN 1 ELSE filler_tracks.is_starter_pack END,
+                starter_pack_name = CASE WHEN excluded.starter_pack_name != '' THEN excluded.starter_pack_name ELSE filler_tracks.starter_pack_name END
         """, (
             video_id, title, artist, original_title, duration,
             genre, release_year, is_downloaded, local_path,
-            "ready" if is_downloaded else "pending", media_source
+            "ready" if is_downloaded else "pending", media_source,
+            is_starter_pack, starter_pack_name
         ))
         track_id = cursor.lastrowid
         if not track_id:

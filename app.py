@@ -677,7 +677,18 @@ class LeaveDuetRequest(BaseModel):
     singer_name: Optional[str] = None
 
 class PruneTracksRequest(BaseModel):
-    track_ids: List[int]
+    track_ids: List[int] = []
+    filler_ids: List[int] = []
+
+class EditTrackMetadataRequest(BaseModel):
+    title: str
+    artist: str
+    is_filler: bool = False
+
+class ConvertTrackTypeRequest(BaseModel):
+    target_type: str # "karaoke", "sing_along", "music_video"
+    source_type: str = "auto"
+    is_filler: bool = False
 
 class HostUpdateRecordingsPathRequest(BaseModel):
     recordings_dir: str = ""
@@ -1534,10 +1545,10 @@ async def api_get_storage_status():
     return get_storage_status()
 
 @app.get("/api/storage/cleanup-candidates")
-async def api_get_cleanup_candidates(sort_by: str = "oldest_played", limit: int = 50):
+async def api_get_cleanup_candidates(sort_by: str = "oldest_played", limit: int = 60, tab: str = "all"):
     return {
         "status": get_storage_status(),
-        "candidates": get_cleanup_candidates(sort_by=sort_by, limit=limit)
+        "candidates": get_cleanup_candidates(sort_by=sort_by, limit=limit, tab=tab)
     }
 
 @app.post("/api/storage/prune")
@@ -1547,7 +1558,10 @@ async def api_prune_tracks(req: PruneTracksRequest, request: Request):
     
     pruned_count = 0
     for tid in req.track_ids:
-        if prune_local_track(tid):
+        if prune_local_track(tid, is_filler=False):
+            pruned_count += 1
+    for fid in (req.filler_ids or []):
+        if prune_local_track(fid, is_filler=True):
             pruned_count += 1
     
     await manager.broadcast({
@@ -1559,6 +1573,34 @@ async def api_prune_tracks(req: PruneTracksRequest, request: Request):
         "pruned_count": pruned_count,
         "storage": get_storage_status()
     }
+
+@app.put("/api/host/tracks/{track_id}")
+async def api_edit_track_metadata(track_id: int, req: EditTrackMetadataRequest, request: Request):
+    if not (is_host_request(request) or is_local_request(request)):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
+    from database import edit_track_metadata
+    success = edit_track_metadata(track_id, req.title, req.artist, is_filler=req.is_filler)
+    if not success:
+        raise HTTPException(status_code=400, detail="Failed to update track metadata")
+    await manager.broadcast({
+        "type": "library_updated",
+        "queue": get_queue()
+    })
+    return {"status": "ok", "track_id": track_id, "title": req.title, "artist": req.artist}
+
+@app.put("/api/host/tracks/{track_id}/convert-type")
+async def api_convert_track_type(track_id: int, req: ConvertTrackTypeRequest, request: Request):
+    if not (is_host_request(request) or is_local_request(request)):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
+    from database import convert_track_type
+    res = convert_track_type(track_id, req.target_type, source_type=req.source_type, is_filler=req.is_filler)
+    if not res.get("success"):
+        raise HTTPException(status_code=400, detail=res.get("error", "Conversion failed"))
+    await manager.broadcast({
+        "type": "library_updated",
+        "queue": get_queue()
+    })
+    return res
 
 # Singer API
 @app.post("/api/singer/register")
@@ -2384,47 +2426,138 @@ async def api_force_play_filler(filler_id: int, request: Request):
 @app.post("/api/host/filler-tracks/finished")
 async def api_filler_finished(request: Request):
     await on_filler_track_ended()
-@app.post("/api/host/filler/install-starter")
-async def api_install_starter_crate(request: Request):
-    if not is_host_request(request):
-        raise HTTPException(status_code=403, detail="Host DJ authorization required")
-    from scripts.seed_filler_crate import STARTER_FILLER_TRACKS
-    existing = {t["video_id"]: t for t in get_filler_tracks()}
-    added = []
-    requeued = []
-    for track in STARTER_FILLER_TRACKS:
-        vid = track["video_id"]
-        ex = existing.get(vid)
-        if ex and ex.get("is_downloaded") and ex.get("local_path") and Path(ex["local_path"]).exists():
-            continue
+async def batch_stage_and_download_tracks(tracks: List[Dict[str, Any]], mode: str, pack_name: str) -> int:
+    mode = (mode or "karaoke").lower()
+    from database import (
+        save_track, get_track_by_video_id, add_filler_track, get_filler_track_by_video_id,
+        add_pending_download, get_pending_downloads
+    )
+    from downloader import enqueue_download, enqueue_filler_download
+    from search import query_youtube_karaoke, query_youtube_sing_along, query_youtube_music_videos
 
-        tid = add_filler_track(
-            video_id=vid,
-            title=track["title"],
-            artist=track["artist"],
-            original_title=f"{track['artist']} - {track['title']}",
-            duration=track["duration"],
-            genre=track["genre"],
-            release_year=track["release_year"]
-        )
-        update_filler_track_status(tid, "pending", error_message="")
-        enqueue_filler_download(tid)
-        if ex:
-            requeued.append(track)
+    enqueued_count = 0
+    is_testing = bool(os.environ.get("TIKI_TESTING"))
+
+    for t in tracks:
+        artist = t["artist"]
+        title = t["title"]
+        query = f"{artist} {title}"
+        candidate = None
+
+        if not is_testing:
+            try:
+                if mode == "music_video":
+                    results = query_youtube_music_videos(query, max_results=5)
+                    if results:
+                        candidate = results[0]
+                elif mode == "sing_along":
+                    results, _ = query_youtube_sing_along(query, limit=5)
+                    if results:
+                        candidate = results[0]
+                else: # karaoke
+                    results, _ = query_youtube_karaoke(query, limit=5)
+                    if results:
+                        candidate = results[0]
+            except Exception as e:
+                print(f"[Starter Pack Search] Error searching for {query}: {e}")
+
+        if not candidate:
+            hash_suffix = abs(hash(f"{artist}_{title}_{mode}")) % 1000000
+            candidate = {
+                "video_id": f"dyn_{mode[:2]}_{hash_suffix}",
+                "title": title,
+                "artist": artist,
+                "original_title": f"{artist} - {title}",
+                "duration": t.get("duration", 210),
+                "genre": t.get("genre", ""),
+                "release_year": t.get("release_year", 0)
+            }
+
+        if mode == "music_video":
+            ex = get_filler_track_by_video_id(candidate["video_id"])
+            if ex and ex.get("is_downloaded") and ex.get("local_path") and Path(ex["local_path"]).exists():
+                continue
+            fid = add_filler_track(
+                video_id=candidate["video_id"],
+                title=candidate.get("title", title),
+                artist=candidate.get("artist", artist),
+                original_title=candidate.get("original_title", f"{artist} - {title}"),
+                duration=candidate.get("duration", 0),
+                genre=candidate.get("genre", t.get("genre", "")),
+                release_year=candidate.get("release_year", t.get("release_year", 0)),
+                is_starter_pack=1,
+                starter_pack_name=pack_name
+            )
+            pid = add_pending_download(
+                filler_id=fid,
+                singer_id=0,
+                priority=100,
+                auto_promote=0,
+                is_starter_pack=1,
+                starter_pack_name=f"{pack_name} (Music Video)"
+            )
+            enqueue_filler_download(fid)
+            enqueued_count += 1
         else:
-            added.append(track)
+            is_sa = 1 if mode == "sing_along" else 0
+            ex = get_track_by_video_id(candidate["video_id"])
+            if ex and ex.get("is_downloaded") and ex.get("local_path") and Path(ex["local_path"]).exists():
+                continue
+            tid = save_track(
+                video_id=candidate["video_id"],
+                title=candidate.get("title", title),
+                artist=candidate.get("artist", artist),
+                original_title=candidate.get("original_title", f"{artist} - {title}"),
+                channel=candidate.get("channel", "Starter Pack"),
+                duration=candidate.get("duration", 0),
+                is_sing_along=bool(is_sa),
+                is_starter_pack=1,
+                starter_pack_name=pack_name
+            )
+            pid = add_pending_download(
+                track_id=tid,
+                singer_id=0,
+                priority=100,
+                auto_promote=0,
+                is_starter_pack=1,
+                starter_pack_name=f"{pack_name} ({'Sing-Along' if is_sa else 'Karaoke'})"
+            )
+            enqueue_download(
+                track_id=tid,
+                singer_name=pack_name,
+                title=candidate.get("title", title),
+                artist=candidate.get("artist", artist),
+                pending_id=pid,
+                priority=100
+            )
+            enqueued_count += 1
 
     await manager.broadcast({
-        "type": "filler_tracks_updated",
-        "tracks": get_filler_tracks()
+        "type": "pending_downloads_updated",
+        "pending_downloads": get_pending_downloads()
     })
-    total_queued = len(added) + len(requeued)
+    return enqueued_count
+
+@app.post("/api/host/filler/install-starter")
+async def api_install_starter_crate(request: Request):
+    if not (is_host_request(request) or is_local_request(request)):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
+    mode = "music_video"
+    try:
+        body = await request.json()
+        if isinstance(body, dict) and "mode" in body:
+            mode = body["mode"]
+    except Exception:
+        pass
+    mode = (request.query_params.get("mode") or mode).lower()
+    from scripts.seed_filler_crate import STARTER_CRATE_TRACKS
+    enqueued = await batch_stage_and_download_tracks(STARTER_CRATE_TRACKS, mode=mode, pack_name="Starter Crate")
     return {
         "status": "ok",
-        "added_count": len(added),
-        "requeued_count": len(requeued),
-        "total_queued": total_queued,
-        "tracks": added + requeued
+        "mode": mode,
+        "pack_name": "Starter Crate",
+        "total_tracks": len(STARTER_CRATE_TRACKS),
+        "enqueued": enqueued
     }
 
 def parse_karaoke_filename(filename: str) -> Tuple[str, str]:
@@ -3520,18 +3653,40 @@ async def host_get_party_packs(request: Request):
     if not (is_host_request(request) or is_local_request(request)):
         raise HTTPException(status_code=403, detail="Host DJ authorization required")
     from party_packs import PARTY_PACKS
-    from database import get_track_by_video_id
+    from database import get_db
+
+    conn = get_db()
+    downloaded_tracks = [dict(r) for r in conn.execute("SELECT title, artist, coalesce(is_sing_along, 0) as is_sing_along FROM tracks WHERE is_downloaded = 1").fetchall()]
+    downloaded_fillers = [dict(r) for r in conn.execute("SELECT title, artist FROM filler_tracks WHERE is_downloaded = 1").fetchall()]
+    conn.close()
+
+    def norm(s):
+        return re.sub(r'[^a-z0-9]', '', (s or '').lower())
+
+    downloaded_karaoke_set = {f"{norm(r['artist'])}::{norm(r['title'])}" for r in downloaded_tracks if not r.get("is_sing_along")}
+    downloaded_singalong_set = {f"{norm(r['artist'])}::{norm(r['title'])}" for r in downloaded_tracks if r.get("is_sing_along")}
+    downloaded_mv_set = {f"{norm(r['artist'])}::{norm(r['title'])}" for r in downloaded_fillers}
 
     result = []
     for pack in PARTY_PACKS:
-        downloaded_count = 0
+        k_count = 0
+        sa_count = 0
+        mv_count = 0
         for t in pack["tracks"]:
-            existing = get_track_by_video_id(t["video_id"])
-            if existing and existing.get("is_downloaded") and existing.get("local_path") and Path(existing["local_path"]).exists():
-                downloaded_count += 1
+            key = f"{norm(t['artist'])}::{norm(t['title'])}"
+            if key in downloaded_karaoke_set:
+                k_count += 1
+            if key in downloaded_singalong_set:
+                sa_count += 1
+            if key in downloaded_mv_set:
+                mv_count += 1
+
         pack_copy = dict(pack)
-        pack_copy["downloaded_count"] = downloaded_count
-        pack_copy["is_fully_downloaded"] = downloaded_count >= pack["track_count"]
+        pack_copy["karaoke_count"] = k_count
+        pack_copy["sing_along_count"] = sa_count
+        pack_copy["music_video_count"] = mv_count
+        pack_copy["downloaded_count"] = max(k_count, sa_count, mv_count)
+        pack_copy["is_fully_downloaded"] = (k_count >= pack["track_count"] or sa_count >= pack["track_count"] or mv_count >= pack["track_count"])
         result.append(pack_copy)
 
     return {"status": "ok", "packs": result}
@@ -3540,37 +3695,26 @@ async def host_get_party_packs(request: Request):
 async def host_download_party_pack(pack_id: str, request: Request):
     if not (is_host_request(request) or is_local_request(request)):
         raise HTTPException(status_code=403, detail="Host DJ authorization required")
-    from party_packs import get_party_pack_by_id
-    from database import get_track_by_video_id, save_track, update_track_download_status
-    from downloader import enqueue_download
+    mode = "karaoke"
+    try:
+        body = await request.json()
+        if isinstance(body, dict) and "mode" in body:
+            mode = body["mode"]
+    except Exception:
+        pass
+    mode = (request.query_params.get("mode") or mode).lower()
 
+    from party_packs import get_party_pack_by_id
     pack = get_party_pack_by_id(pack_id)
     if not pack:
         raise HTTPException(status_code=404, detail="Party pack not found")
 
-    enqueued = 0
-    for t in pack["tracks"]:
-        existing = get_track_by_video_id(t["video_id"])
-        if existing and existing.get("is_downloaded") and existing.get("local_path") and Path(existing["local_path"]).exists():
-            continue
-
-        track_id = save_track(
-            video_id=t["video_id"],
-            title=t["title"],
-            artist=t["artist"],
-            original_title=f"{t['artist']} - {t['title']}",
-            channel="Tiki Party Starter Pack",
-            duration=210,
-            is_sing_along=False
-        )
-        update_track_download_status(track_id, "pending")
-        enqueue_download(track_id, singer_name="Pre-Party Pack", title=t["title"], artist=t["artist"])
-        enqueued += 1
-
+    enqueued = await batch_stage_and_download_tracks(pack["tracks"], mode=mode, pack_name=pack["name"])
     return {
         "status": "ok",
         "pack_id": pack_id,
         "pack_name": pack["name"],
+        "mode": mode,
         "total_tracks": pack["track_count"],
         "enqueued": enqueued
     }
