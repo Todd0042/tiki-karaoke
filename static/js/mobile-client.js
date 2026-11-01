@@ -1940,7 +1940,6 @@ function renderSongbookList() {
         list.appendChild(card);
     });
 }
-}
 
 function loadHistory() {
     loadSongbook();
