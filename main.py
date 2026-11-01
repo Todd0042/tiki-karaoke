@@ -140,6 +140,7 @@ active_tunnel_proc = None
 launched_browser_procs: List[subprocess.Popen] = []
 is_shutting_down = False
 global_server = None
+active_hub = None
 _single_instance_lock = None
 
 def get_console_subprocess_kwargs() -> dict:
@@ -959,12 +960,28 @@ def start_tunnel_watchdog(mode: str, local_port: int, remote_port: int = 38480, 
                     active_tunnel_proc = None
 
                 time.sleep(1.0)
+                new_url = None
                 if mode == "bore":
-                    _, active_tunnel_proc = start_permanent_tunnel(local_port, remote_port)
+                    new_url, active_tunnel_proc = start_permanent_tunnel(local_port, remote_port)
                 elif mode in ("cloudflare", "cloudflare_quick"):
-                    _, active_tunnel_proc = start_cloudflare_quick_tunnel(local_port)
+                    new_url, active_tunnel_proc = start_cloudflare_quick_tunnel(local_port)
                 elif mode == "cloudflare_named":
-                    _, active_tunnel_proc = start_cloudflare_named_tunnel(token, custom_domain)
+                    new_url, active_tunnel_proc = start_cloudflare_named_tunnel(token, custom_domain)
+
+                if new_url:
+                    clean_host = new_url.replace("https://", "").replace("http://", "").rstrip("/")
+                    os.environ["TIKI_PUBLIC_HOST"] = clean_host
+                    if new_url.startswith("https://"):
+                        os.environ["TIKI_USE_HTTPS"] = "1"
+                    from config import refresh_globals
+                    refresh_globals()
+                    if active_hub:
+                        host_param = f"?token={HOST_TOKEN}" if HOST_TOKEN else ""
+                        active_hub.update_network_urls({
+                            "public": new_url,
+                            "join": f"{new_url}/join",
+                            "host_remote": f"{new_url}/host{host_param}"
+                        })
 
     tunnel_watchdog_thread = threading.Thread(target=_watchdog_loop, daemon=True)
     tunnel_watchdog_thread.start()
@@ -1185,6 +1202,7 @@ def main():
 
     register_shutdown_trigger(trigger_server_shutdown)
 
+    global active_hub
     active_hub = None
 
     def show_active_hub():
@@ -1238,6 +1256,8 @@ def main():
             hub_urls = {
                 "stage": local_stage_url,
                 "host": local_host_url,
+                "host_remote": host_url,
+                "host_token": HOST_TOKEN,
                 "join": join_url,
                 "setup": local_setup_url,
                 "public": public_url or join_url,

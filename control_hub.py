@@ -53,6 +53,11 @@ class TikiControlHub:
         self.root: Optional[tk.Tk] = None
         self._is_closing = False
         self._qr_images = []  # keep references to prevent GC
+        self.url_lbl: Optional[tk.Label] = None
+        self.s_img_lbl: Optional[tk.Label] = None
+        self.h_img_lbl: Optional[tk.Label] = None
+        self.singer_photo = None
+        self.host_photo = None
 
     def start(self):
         """Starts the Tkinter main event loop on the calling thread."""
@@ -149,7 +154,7 @@ class TikiControlHub:
         url_frame.pack(fill="x", pady=(8, 0))
 
         clean_url = pub_url.replace("http://", "").replace("https://", "")
-        url_lbl = tk.Label(
+        self.url_lbl = tk.Label(
             url_frame,
             text=f"🔗 {pub_url}",
             font=("Helvetica", 8, "bold"),
@@ -158,7 +163,7 @@ class TikiControlHub:
             pady=4,
             padx=8
         )
-        url_lbl.pack(side="left")
+        self.url_lbl.pack(side="left")
 
     def _build_qr_panel(self):
         panel = tk.Frame(self.root, bg="#130d1f", highlightbackground="#2a1b40", highlightthickness=1)
@@ -176,28 +181,28 @@ class TikiControlHub:
         singer_title.pack(pady=(0, 4))
 
         join_url = self.urls.get("join", "http://127.0.0.1:8000/join")
-        singer_photo = self._generate_qr_photo(join_url, size=135)
-        if singer_photo:
-            self._qr_images.append(singer_photo)
-            s_img_lbl = tk.Label(singer_box, image=singer_photo, bg="#ffffff", relief="ridge", borderwidth=1)
-            s_img_lbl.pack()
+        self.singer_photo = self._generate_qr_photo(join_url, size=135)
+        if self.singer_photo:
+            self._qr_images.append(self.singer_photo)
+            self.s_img_lbl = tk.Label(singer_box, image=self.singer_photo, bg="#ffffff", relief="ridge", borderwidth=1)
+            self.s_img_lbl.pack()
 
         s_hint = tk.Label(singer_box, text="Scan with Phone Camera", font=("Helvetica", 7), fg="#94a3b8", bg="#130d1f")
         s_hint.pack(pady=(4, 0))
 
-        # Host QR
+        # Host QR (uses network/public host_remote URL, not 127.0.0.1)
         host_box = tk.Frame(col_frame, bg="#130d1f")
         host_box.pack(side="right", expand=True, fill="both")
 
         host_title = tk.Label(host_box, text="👑 HOST DJ REMOTE", font=("Helvetica", 9, "bold"), fg="#ff2a85", bg="#130d1f")
         host_title.pack(pady=(0, 4))
 
-        host_url = self.urls.get("host", "http://127.0.0.1:8000/host")
-        host_photo = self._generate_qr_photo(host_url, size=135)
-        if host_photo:
-            self._qr_images.append(host_photo)
-            h_img_lbl = tk.Label(host_box, image=host_photo, bg="#ffffff", relief="ridge", borderwidth=1)
-            h_img_lbl.pack()
+        host_url = self.urls.get("host_remote") or self.urls.get("host", "http://127.0.0.1:8000/host")
+        self.host_photo = self._generate_qr_photo(host_url, size=135)
+        if self.host_photo:
+            self._qr_images.append(self.host_photo)
+            self.h_img_lbl = tk.Label(host_box, image=self.host_photo, bg="#ffffff", relief="ridge", borderwidth=1)
+            self.h_img_lbl.pack()
 
         h_hint = tk.Label(host_box, text=f"PIN: {self.host_pin} (Pre-Paired)", font=("Helvetica", 7, "bold"), fg="#ffd166", bg="#130d1f")
         h_hint.pack(pady=(4, 0))
@@ -514,9 +519,59 @@ class TikiControlHub:
         if not self._is_closing and self.root:
             self.root.after(3000, self._poll_live_state)
 
+    def update_network_urls(self, new_urls: Dict[str, str]):
+        """Thread-safely updates network URLs and regenerates QR codes in the Control Hub UI."""
+        self.urls.update(new_urls)
+        if not HAS_GUI or not self.root:
+            return
+
+        def _apply():
+            port = self.urls.get("port", "8000")
+            pub_url = self.urls.get("public") or self.urls.get("join") or f"http://127.0.0.1:{port}"
+
+            # 1. Update public URL pill
+            if hasattr(self, "url_lbl") and self.url_lbl and self.url_lbl.winfo_exists():
+                self.url_lbl.config(text=f"🔗 {pub_url}")
+
+            # 2. Update Singer QR
+            join_url = self.urls.get("join", f"http://127.0.0.1:{port}/join")
+            new_s_photo = self._generate_qr_photo(join_url, size=135)
+            if new_s_photo and hasattr(self, "s_img_lbl") and self.s_img_lbl and self.s_img_lbl.winfo_exists():
+                self._qr_images.append(new_s_photo)
+                self.s_img_lbl.config(image=new_s_photo)
+                self.singer_photo = new_s_photo
+
+            # 3. Update Host Remote QR
+            host_url = self.urls.get("host_remote") or self.urls.get("host", f"http://127.0.0.1:{port}/host")
+            new_h_photo = self._generate_qr_photo(host_url, size=135)
+            if new_h_photo and hasattr(self, "h_img_lbl") and self.h_img_lbl and self.h_img_lbl.winfo_exists():
+                self._qr_images.append(new_h_photo)
+                self.h_img_lbl.config(image=new_h_photo)
+                self.host_photo = new_h_photo
+
+        try:
+            self.root.after(0, _apply)
+        except Exception as e:
+            print(f"[Control Hub] Failed to dispatch URL update: {e}")
+
     def _apply_state(self, state: dict):
         if not self.root or self._is_closing:
             return
+
+        # Check if server's network base_url changed (e.g. tunnel connected or changed)
+        net = state.get("network") or {}
+        new_base = net.get("base_url")
+        if new_base:
+            current_pub = self.urls.get("public") or ""
+            if new_base.rstrip("/") != current_pub.rstrip("/"):
+                host_tok = self.urls.get("host_token", "")
+                host_param = f"?token={host_tok}" if host_tok else f"?token={self.host_pin}"
+                self.update_network_urls({
+                    "public": new_base,
+                    "join": f"{new_base}/join",
+                    "host_remote": f"{new_base}/host{host_param}"
+                })
+
         track = state.get("current_track")
         q_count = len(state.get("queue", []))
 

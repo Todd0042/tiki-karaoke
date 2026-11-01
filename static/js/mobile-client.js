@@ -25,7 +25,6 @@ document.addEventListener("DOMContentLoaded", () => {
     setupSearch();
     loadLiveQueue();
     loadLibraryTracks();
-    loadHostStrictMode();
 });
 
 function initSingAlongMode() {

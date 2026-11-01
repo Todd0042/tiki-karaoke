@@ -771,7 +771,7 @@ async def api_auth_pin(req: PinAuthRequest, request: Request):
     if provided_pin == expected_pin:
         failed_pin_attempts.pop(client_ip, None)
         response = JSONResponse({"status": "ok", "is_host": True})
-        response.set_cookie("tiki_host", HOST_TOKEN, max_age=86400 * 30, httponly=False)
+        response.set_cookie("tiki_host", HOST_TOKEN, max_age=86400 * 30, httponly=False, samesite="lax")
         return response
     else:
         attempts.append(now)
@@ -1357,6 +1357,18 @@ async def api_save_setup(payload: Dict[str, Any], request: Request, response: Re
             httponly=False,
             samesite="lax"
         )
+
+        # Broadcast updated network info to any connected displays/clients
+        try:
+            await manager.broadcast({
+                "type": "network_updated",
+                "base_url": get_base_url(),
+                "join_url": f"{get_base_url()}/join",
+                "host_url": f"{get_base_url()}/host?token={HOST_TOKEN}"
+            })
+        except Exception:
+            pass
+
         return {"status": "ok", "redirect": f"/host?token={HOST_TOKEN}", "config": cfg}
     except Exception as e:
         import traceback
@@ -1416,7 +1428,7 @@ async def stage_page(request: Request, token: str = ""):
     })
     response.set_cookie("tiki_stage", STAGE_TOKEN, max_age=86400 * 30, httponly=False)
     if (token and token == HOST_TOKEN) or is_host_request(request) or is_local_request(request):
-        response.set_cookie("tiki_host", HOST_TOKEN, max_age=86400 * 30, httponly=False)
+        response.set_cookie("tiki_host", HOST_TOKEN, max_age=86400 * 30, httponly=False, samesite="lax")
     return response
 
 @app.get("/host")
@@ -1427,7 +1439,7 @@ async def host_pair_route(request: Request, token: str = ""):
         q_params["tab"] = "host"
         redirect_url = f"/?{urlencode(q_params)}"
         response = RedirectResponse(url=redirect_url)
-        response.set_cookie("tiki_host", HOST_TOKEN, max_age=86400 * 7, httponly=False)
+        response.set_cookie("tiki_host", HOST_TOKEN, max_age=86400 * 7, httponly=False, samesite="lax")
         return response
     return HTMLResponse("<h3>Invalid Host Token!</h3><p>Scan the Host QR code from the main TV screen or enter the Host PIN on the singer screen.</p>", status_code=403)
 
@@ -1483,7 +1495,7 @@ async def wifi_qr():
 
 @app.get("/qr/host")
 async def host_qr(request: Request):
-    if not is_host_request(request):
+    if not (is_host_request(request) or is_stage_request(request) or is_local_request(request)):
         raise HTTPException(status_code=403, detail="Host DJ authorization required to view host QR code.")
     url = f"{get_base_url()}/host?token={HOST_TOKEN}"
     img = qrcode.make(url)
