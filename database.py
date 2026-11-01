@@ -1217,37 +1217,6 @@ def find_existing_downloaded_track(artist: str, title: str, mode: str = "karaoke
     return match
 
 
-def get_starter_crate_status() -> Dict[str, Any]:
-    """
-    Returns installation status and counts for Starter Crate tracks across the 3 flavors.
-    """
-    from scripts.seed_filler_crate import STARTER_CRATE_TRACKS
-    total = len(STARTER_CRATE_TRACKS)
-    mv_count = 0
-    k_count = 0
-    sa_count = 0
-
-    for t in STARTER_CRATE_TRACKS:
-        art = t.get("artist", "")
-        tit = t.get("title", "")
-        if find_existing_downloaded_track(art, tit, "music_video"):
-            mv_count += 1
-        if find_existing_downloaded_track(art, tit, "karaoke"):
-            k_count += 1
-        if find_existing_downloaded_track(art, tit, "sing_along"):
-            sa_count += 1
-
-    return {
-        "total_tracks": total,
-        "music_video_count": mv_count,
-        "karaoke_count": k_count,
-        "sing_along_count": sa_count,
-        "is_installed_mv": mv_count >= total,
-        "is_installed_k": k_count >= total,
-        "is_installed_sa": sa_count >= total,
-        "is_fully_installed": (k_count >= total or sa_count >= total or mv_count >= total)
-    }
-
 def update_pending_download_progress(
     pending_id: int,
     progress: float,

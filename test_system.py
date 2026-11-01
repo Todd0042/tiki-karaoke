@@ -413,16 +413,6 @@ class TestTikiKaraoke(unittest.TestCase):
         self.assertEqual(pick["artist"], "Queen")
         self.assertEqual(pick["title"], "Bohemian Rhapsody")
 
-    def test_starter_filler_crate_manifest(self):
-        from scripts.seed_filler_crate import STARTER_FILLER_TRACKS
-        self.assertEqual(len(STARTER_FILLER_TRACKS), 15)
-        for t in STARTER_FILLER_TRACKS:
-            self.assertTrue(t["video_id"])
-            self.assertTrue(t["artist"])
-            self.assertTrue(t["title"])
-            self.assertTrue(t["genre"])
-            self.assertGreater(t["release_year"], 1960)
-
     def test_ytdlp_status_endpoint(self):
         from app import host_get_ytdlp_status
         from config import HOST_TOKEN

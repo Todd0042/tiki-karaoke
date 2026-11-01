@@ -724,21 +724,6 @@
                             🛡️ <strong>Dual-Routing Active:</strong> Hotspot runs local-only. Connected guests retain 5G/LTE mobile data for emergency calls and text messages!
                         </div>
                     </div>
-
-                    <!-- Pre-Party Starter Packs (Offline Pack Downloader) -->
-                    <div class="tiki-card" style="margin-bottom: 14px; padding: 14px; border-left: 4px solid var(--neon-cyan);">
-                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-                            <span style="font-weight: 700; font-size: 0.88rem; color: #fff;">📦 Pre-Party Starter Packs</span>
-                            <span style="font-size: 0.72rem; color: var(--neon-cyan); font-weight: 700;">Offline Crate</span>
-                        </div>
-                        <p style="font-size: 0.74rem; color: var(--text-muted); margin: 0 0 10px 0; line-height: 1.4;">
-                            Heading somewhere with no internet? Bulk download curated packs into your local library before you go!
-                        </p>
-                        <div id="partyPacksContainer" style="display: flex; flex-direction: column; gap: 8px;">
-                            <div style="font-size: 0.74rem; color: var(--text-muted); text-align: center; padding: 10px;">Loading packs...</div>
-                        </div>
-                    </div>
-
                     <!-- Storage Monitoring Banner -->
                     <div id="hostStorageBanner" class="tiki-card" style="margin-bottom: 14px; padding: 12px 14px; border-left: 4px solid var(--neon-lime);">
                         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
@@ -915,29 +900,6 @@
                         </div>
                     </div>
                 </div>
-
-                <!-- Starter Crate Seed Action (3-Button Bar) -->
-                <div style="margin-bottom: 14px; background: rgba(16, 28, 45, 0.85); border: 1px solid rgba(255,183,3,0.3); border-radius: 12px; padding: 12px;">
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-                        <span style="font-size: 0.82rem; font-weight: 700; color: #fff;">🌴 Starter Crate (15 Party Classics)</span>
-                        <span id="starterCrateBadge" style="font-size: 0.7rem; color: var(--neon-gold); font-weight: 700;">Dynamic Auto-Matching</span>
-                    </div>
-                    <div style="font-size: 0.72rem; color: var(--text-muted); margin-bottom: 8px;">
-                        Instant crowd-pleasers across 70s-2010s. Choose your desired flavor to download:
-                    </div>
-                    <div style="display: flex; gap: 6px; flex-wrap: wrap;">
-                        <button type="button" onclick="installStarterCrate('music_video')" id="btnCrate_mv" class="btn-ghost" style="flex: 1; min-width: 95px; padding: 6px 8px; font-size: 0.74rem; border-color: var(--neon-cyan); color: var(--neon-cyan); font-weight: 700;">
-                            🎬 Music Video
-                        </button>
-                        <button type="button" onclick="installStarterCrate('karaoke')" id="btnCrate_k" class="btn-ghost" style="flex: 1; min-width: 95px; padding: 6px 8px; font-size: 0.74rem; border-color: var(--neon-lime); color: var(--neon-lime); font-weight: 700;">
-                            🎤 Karaoke
-                        </button>
-                        <button type="button" onclick="installStarterCrate('sing_along')" id="btnCrate_sa" class="btn-ghost" style="flex: 1; min-width: 95px; padding: 6px 8px; font-size: 0.74rem; border-color: var(--neon-gold); color: var(--neon-gold); font-weight: 700;">
-                            🎙️ Sing-Along
-                        </button>
-                    </div>
-                </div>
-
                 <!-- Batch Actions Banner -->
                 <div id="fillerBatchBanner" style="display: none; margin-bottom: 14px; background: rgba(0, 240, 255, 0.12); border: 1px solid var(--neon-cyan); padding: 12px 14px; border-radius: 12px; justify-content: space-between; align-items: center;">
                     <div>
@@ -1131,12 +1093,6 @@
             <p style="color: var(--text-muted); font-size: 0.78rem; margin: 0 0 10px 0;">
                 Preview tracks, fix misparsed names, switch song types, or prune files to free drive space.
             </p>
-
-            <!-- Storage Source Tabs -->
-            <div style="display: flex; gap: 6px; margin-bottom: 10px;">
-                <button type="button" id="cleanTabAll" onclick="setCleanupTab('all')" class="btn-ghost" style="flex: 1; padding: 6px; font-size: 0.78rem; border-color: var(--neon-cyan); color: var(--neon-cyan); font-weight: 700;">🎵 All Songs</button>
-                <button type="button" id="cleanTabStarter" onclick="setCleanupTab('starter_packs')" class="btn-ghost" style="flex: 1; padding: 6px; font-size: 0.78rem;">📦 Starter Packs / Crate</button>
-            </div>
 
             <!-- Cleanup Sort Toggle -->
             <div style="display: flex; gap: 8px; margin-bottom: 10px;">

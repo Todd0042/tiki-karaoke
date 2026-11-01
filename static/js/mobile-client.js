@@ -149,7 +149,6 @@ function checkRole() {
                 checkHostHealth();
                 loadHostStrictMode();
                 loadHostNetworkStatus();
-                loadPartyPacks();
 
                 const urlParams = new URLSearchParams(window.location.search);
                 const reqTab = urlParams.get("tab");
@@ -621,7 +620,6 @@ function initWebSocket() {
                 loadLibraryTracks();
                 if (isHost) {
                     loadHostStorageStatus();
-                    loadPartyPacks();
                 }
             } else if (data.type === "filler_tracks_updated" || data.type === "filler_track_updated") {
                 if (isHost) {
@@ -749,7 +747,6 @@ function setupNavigation() {
                 loadHostDefaultPaths();
                 loadHostStrictMode();
                 loadHostNetworkStatus();
-                loadPartyPacks();
             }
             if (target === "fillerCrateTab") {
                 loadFillerTracks();
@@ -1943,47 +1940,6 @@ function renderSongbookList() {
         list.appendChild(card);
     });
 }
-
-function installStarterCrate(mode = 'music_video') {
-    if (typeof mode !== 'string') mode = 'music_video';
-    const btnId = mode === 'music_video' ? 'btnCrate_mv' : (mode === 'karaoke' ? 'btnCrate_k' : 'btnCrate_sa');
-    const btn = document.getElementById(btnId) || document.getElementById("installStarterBtn");
-    const oldText = btn ? btn.innerText : "";
-    if (btn) {
-        btn.disabled = true;
-        btn.innerText = "⏳ Enqueuing...";
-    }
-    const modeLabel = mode === 'music_video' ? 'Music Videos' : (mode === 'karaoke' ? 'Karaoke Tracks' : 'Sing-Alongs');
-    showCustomToast(`🌴 Queueing 15 starter ${modeLabel}...`);
-    fetch("/api/host/filler/install-starter", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode: mode })
-    })
-    .then(async res => {
-        if (!res.ok) {
-            const errData = await res.json().catch(() => ({}));
-            throw new Error(errData.detail || `Server returned error (${res.status})`);
-        }
-        return res.json();
-    })
-    .then(data => {
-        const count = data.enqueued !== undefined ? data.enqueued : 15;
-        const instMsg = data.already_installed ? ` (${data.already_installed} already installed)` : '';
-        showCustomToast(`🌴 Queued ${count} starter ${modeLabel}${instMsg}!`);
-        if (typeof loadPartyPacks === 'function') loadPartyPacks();
-        if (typeof loadFillerTracks === 'function') loadFillerTracks();
-        if (typeof loadLibraryTracks === 'function') loadLibraryTracks();
-    })
-    .catch(err => {
-        showCustomToast("⚠️ Error installing starter crate: " + err.message);
-    })
-    .finally(() => {
-        if (btn) {
-            btn.disabled = false;
-            btn.innerText = oldText || "🌴 Done";
-        }
-    });
 }
 
 function loadHistory() {
@@ -3286,34 +3242,8 @@ function closeCleanupModal() {
     const modal = document.getElementById("cleanupModal");
     if (modal) modal.style.display = "none";
 }
-
 function setCleanupTab(tab) {
-    currentCleanupTab = tab;
-    const btnAll = document.getElementById("cleanTabAll");
-    const btnStarter = document.getElementById("cleanTabStarter");
-    if (tab === "all") {
-        if (btnAll) {
-            btnAll.style.borderColor = "var(--neon-cyan)";
-            btnAll.style.color = "var(--neon-cyan)";
-            btnAll.style.fontWeight = "700";
-        }
-        if (btnStarter) {
-            btnStarter.style.borderColor = "rgba(255,255,255,0.2)";
-            btnStarter.style.color = "#fff";
-            btnStarter.style.fontWeight = "normal";
-        }
-    } else {
-        if (btnStarter) {
-            btnStarter.style.borderColor = "var(--neon-gold)";
-            btnStarter.style.color = "var(--neon-gold)";
-            btnStarter.style.fontWeight = "700";
-        }
-        if (btnAll) {
-            btnAll.style.borderColor = "rgba(255,255,255,0.2)";
-            btnAll.style.color = "#fff";
-            btnAll.style.fontWeight = "normal";
-        }
-    }
+    currentCleanupTab = tab || "all";
     selectedCleanupTrackIds.clear();
     selectedCleanupFillerIds.clear();
     loadCleanupCandidates();
@@ -4993,142 +4923,6 @@ function closeWifiQrModal() {
     const modal = document.getElementById("wifiQrModal");
     if (modal) {
         modal.style.display = "none";
-    }
-}
-
-// -------------------------------------------------------------
-// Pre-Party Starter Packs (Offline Party Preparation)
-// -------------------------------------------------------------
-async function loadPartyPacks() {
-    const container = document.getElementById("partyPacksContainer");
-
-    try {
-        const res = await fetch("/api/host/party-packs");
-        if (!res.ok) return;
-        const data = await res.json();
-        const packs = data.packs || [];
-        if (container) renderPartyPacks(packs);
-        if (data.starter_crate) {
-            renderStarterCrateButtons(data.starter_crate);
-        }
-    } catch (e) {
-        console.error("[Host] Error loading party packs:", e);
-    }
-}
-
-function renderStarterCrateButtons(c) {
-    const total = c.total_tracks || 15;
-    const btnMv = document.getElementById('btnCrate_mv');
-    const btnK = document.getElementById('btnCrate_k');
-    const btnSa = document.getElementById('btnCrate_sa');
-    const badge = document.getElementById('starterCrateBadge');
-
-    if (btnMv) {
-        btnMv.innerHTML = c.is_installed_mv ? `✅ Music Video (${c.music_video_count}/${total})` : `🎬 Music Video (${c.music_video_count}/${total})`;
-        btnMv.style.borderColor = c.is_installed_mv ? 'var(--neon-lime)' : 'var(--neon-cyan)';
-        btnMv.style.color = c.is_installed_mv ? 'var(--neon-lime)' : 'var(--neon-cyan)';
-    }
-    if (btnK) {
-        btnK.innerHTML = c.is_installed_k ? `✅ Karaoke (${c.karaoke_count}/${total})` : `🎤 Karaoke (${c.karaoke_count}/${total})`;
-        btnK.style.borderColor = c.is_installed_k ? 'var(--neon-lime)' : 'var(--neon-lime)';
-        btnK.style.color = 'var(--neon-lime)';
-    }
-    if (btnSa) {
-        btnSa.innerHTML = c.is_installed_sa ? `✅ Sing-Along (${c.sing_along_count}/${total})` : `🎙️ Sing-Along (${c.sing_along_count}/${total})`;
-        btnSa.style.borderColor = c.is_installed_sa ? 'var(--neon-lime)' : 'var(--neon-gold)';
-        btnSa.style.color = c.is_installed_sa ? 'var(--neon-lime)' : 'var(--neon-gold)';
-    }
-    if (badge) {
-        badge.innerHTML = c.is_fully_installed ? '✅ Crate Installed' : 'Dynamic Auto-Matching';
-        badge.style.color = c.is_fully_installed ? 'var(--neon-lime)' : 'var(--neon-gold)';
-    }
-}
-
-function renderPartyPacks(packs) {
-    const container = document.getElementById("partyPacksContainer");
-    if (!container) return;
-
-    if (!packs || packs.length === 0) {
-        container.innerHTML = `<div style="font-size:0.75rem; color:var(--text-muted); text-align:center; padding:10px;">No starter packs available.</div>`;
-        return;
-    }
-
-    container.innerHTML = packs.map(p => {
-        const mvCount = p.music_video_count || 0;
-        const kCount = p.karaoke_count || 0;
-        const saCount = p.sing_along_count || 0;
-        const total = p.track_count || 15;
-
-        const isMvInstalled = mvCount >= total;
-        const isKInstalled = kCount >= total;
-        const isSaInstalled = saCount >= total;
-        const isAnyInstalled = isMvInstalled || isKInstalled || isSaInstalled;
-
-        const badgeHtml = isAnyInstalled
-            ? `<span style="font-size: 0.7rem; font-weight: 700; padding: 2px 6px; border-radius: 6px; color: var(--neon-lime); background: rgba(57,255,20,0.15); border: 1px solid var(--neon-lime);">✅ Installed (${total} Tracks)</span>`
-            : `<span style="font-size: 0.7rem; font-weight: 700; padding: 2px 6px; border-radius: 6px; color: var(--neon-gold); background: rgba(255,183,3,0.15);">${total} Tracks</span>`;
-
-        return `
-            <div style="background: rgba(16, 28, 45, 0.85); border: 1px solid ${isAnyInstalled ? 'rgba(57,255,20,0.4)' : 'rgba(0, 240, 255, 0.25)'}; border-radius: 10px; padding: 10px 12px; margin-bottom: 8px;">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-                    <div style="font-weight: 700; font-size: 0.84rem; color: #fff;">${escapeHtml(p.name)}</div>
-                    ${badgeHtml}
-                </div>
-                <div style="font-size: 0.72rem; color: var(--text-muted); margin-bottom: 8px; line-height: 1.3;">
-                    ${escapeHtml(p.description)}
-                </div>
-                <div style="display: flex; gap: 6px; flex-wrap: wrap;">
-                    <button type="button" onclick="downloadPartyPack('${p.id}', 'music_video')" id="btnPack_${p.id}_mv" class="btn-ghost" style="flex: 1; min-width: 95px; padding: 6px 8px; font-size: 0.72rem; border-color: ${isMvInstalled ? 'var(--neon-lime)' : 'var(--neon-cyan)'}; color: ${isMvInstalled ? 'var(--neon-lime)' : 'var(--neon-cyan)'}; font-weight: 700;">
-                        ${isMvInstalled ? `✅ Music Video (${mvCount}/${total})` : `🎬 Music Video (${mvCount}/${total})`}
-                    </button>
-                    <button type="button" onclick="downloadPartyPack('${p.id}', 'karaoke')" id="btnPack_${p.id}_k" class="btn-ghost" style="flex: 1; min-width: 95px; padding: 6px 8px; font-size: 0.72rem; border-color: var(--neon-lime); color: var(--neon-lime); font-weight: 700;">
-                        ${isKInstalled ? `✅ Karaoke (${kCount}/${total})` : `🎤 Karaoke (${kCount}/${total})`}
-                    </button>
-                    <button type="button" onclick="downloadPartyPack('${p.id}', 'sing_along')" id="btnPack_${p.id}_sa" class="btn-ghost" style="flex: 1; min-width: 95px; padding: 6px 8px; font-size: 0.72rem; border-color: ${isSaInstalled ? 'var(--neon-lime)' : 'var(--neon-gold)'}; color: ${isSaInstalled ? 'var(--neon-lime)' : 'var(--neon-gold)'}; font-weight: 700;">
-                        ${isSaInstalled ? `✅ Sing-Along (${saCount}/${total})` : `🎙️ Sing-Along (${saCount}/${total})`}
-                    </button>
-                </div>
-            </div>
-        `;
-    }).join("");
-}
-
-async function downloadPartyPack(packId, mode = 'karaoke') {
-    const btnId = mode === 'music_video' ? `btnPack_${packId}_mv` : (mode === 'karaoke' ? `btnPack_${packId}_k` : `btnPack_${packId}_sa`);
-    const btn = document.getElementById(btnId);
-    const oldText = btn ? btn.innerText : "";
-    if (btn) {
-        btn.disabled = true;
-        btn.innerText = "⏳ Enqueuing...";
-    }
-
-    const modeLabel = mode === 'music_video' ? 'Music Videos' : (mode === 'karaoke' ? 'Karaoke Tracks' : 'Sing-Alongs');
-    showCustomToast(`🚀 Queueing pack for ${modeLabel}...`);
-
-    try {
-        const res = await fetch(`/api/host/party-packs/${encodeURIComponent(packId)}/download`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ mode: mode })
-        });
-        if (res.ok) {
-            const data = await res.json();
-            const instMsg = data.already_installed ? ` (${data.already_installed} already installed)` : '';
-            showCustomToast(`🚀 ${data.enqueued} songs enqueued${instMsg}! 🌺`);
-            loadPartyPacks();
-            if (typeof loadLibraryTracks === 'function') loadLibraryTracks();
-            if (typeof loadFillerTracks === 'function') loadFillerTracks();
-        } else {
-            showCustomToast("⚠️ Failed to enqueue party pack");
-        }
-    } catch (e) {
-        console.error("[Host] Error downloading pack:", e);
-        showCustomToast("⚠️ Network error starting pack download");
-    } finally {
-        if (btn) {
-            btn.disabled = false;
-            btn.innerText = oldText;
-        }
     }
 }
 
