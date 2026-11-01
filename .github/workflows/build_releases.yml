@@ -1,0 +1,237 @@
+name: Multi-Platform Automated Release Pipeline
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version tag (e.g. 1.0.6, leave empty to read from git/tag)'
+        required: false
+        default: ''
+      publish_release:
+        description: 'Publish release assets to GitHub Releases'
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    name: Pre-Flight Safety Tests (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Run Unit Tests
+        run: |
+          python -m unittest test_api.py test_system.py test_cdg.py
+
+  build-linux:
+    name: Build Linux (${{ matrix.edition }})
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - edition: Pro
+            ref: main
+          - edition: Free
+            ref: ugh-ads
+
+    steps:
+      - name: Determine Version
+        id: ver
+        shell: bash
+        run: |
+          RAW_TAG="${{ github.ref_name }}"
+          INPUT_VER="${{ github.event.inputs.version }}"
+          if [ -n "$INPUT_VER" ]; then
+            V="$INPUT_VER"
+          elif [[ "$RAW_TAG" =~ ^v[0-9] ]]; then
+            V="${RAW_TAG#v}"
+          else
+            V="1.0.5"
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout ${{ matrix.edition }} Branch (${{ matrix.ref }})
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
+
+      - name: Ensure Executable Permissions
+        run: |
+          chmod +x build_appimage.sh
+          if [ -d bin ]; then chmod +x bin/* 2>/dev/null || true; fi
+
+      - name: Compile Universal AppImage
+        env:
+          TIKI_VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          ./build_appimage.sh
+
+      - name: Upload Linux Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.edition }}-appimage
+          path: dist/*.AppImage
+          retention-days: 7
+
+  build-windows:
+    name: Build Windows (${{ matrix.edition }})
+    needs: test
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - edition: Pro
+            ref: main
+          - edition: Free
+            ref: ugh-ads
+
+    steps:
+      - name: Determine Version
+        id: ver
+        shell: bash
+        run: |
+          RAW_TAG="${{ github.ref_name }}"
+          INPUT_VER="${{ github.event.inputs.version }}"
+          if [ -n "$INPUT_VER" ]; then
+            V="$INPUT_VER"
+          elif [[ "$RAW_TAG" =~ ^v[0-9] ]]; then
+            V="${RAW_TAG#v}"
+          else
+            V="1.0.5"
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout ${{ matrix.edition }} Branch (${{ matrix.ref }})
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
+
+      - name: Setup Inno Setup Compiler
+        run: |
+          choco install innosetup --no-progress -y
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Build Windows Standalone & Installer
+        shell: powershell
+        run: |
+          & packaging\windows\build_windows.ps1 -Edition ${{ matrix.edition }}
+
+      - name: Upload Windows Installer Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-${{ matrix.edition }}-installer
+          path: packaging/windows/dist_installer/*.exe
+          retention-days: 7
+
+      - name: Upload Windows Portable Zip Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-${{ matrix.edition }}-portable
+          path: packaging/windows/dist/*.zip
+          retention-days: 7
+
+  publish-github-release:
+    name: Publish GitHub Release
+    needs: [build-linux, build-windows]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.publish_release == 'true'
+    steps:
+      - name: Download All Release Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release_assets/
+
+      - name: Consolidate Release Assets
+        shell: bash
+        run: |
+          mkdir -p final_assets/
+          find release_assets/ -type f \( -name "*.AppImage" -o -name "*.exe" -o -name "*.zip" \) -exec cp -v {} final_assets/ \;
+          ls -la final_assets/
+
+      - name: Determine Release Tag
+        id: rel_tag
+        shell: bash
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            TAG="v${{ github.event.inputs.version }}"
+          else
+            TAG="${{ github.ref_name }}"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Create or Update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.rel_tag.outputs.tag }}
+          name: Tiki Karaoke Lounge ${{ steps.rel_tag.outputs.tag }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: final_assets/*
+
+  itch-deploy:
+    name: Deploy to Itch.io (Butler)
+    needs: publish-github-release
+    runs-on: ubuntu-latest
+    env:
+      BUTLER_KEY: ${{ secrets.BUTLER_API_KEY }}
+    steps:
+      - name: Check Butler Credentials
+        id: check_auth
+        shell: bash
+        run: |
+          if [ -z "$BUTLER_KEY" ]; then
+            echo "::notice ::BUTLER_API_KEY secret is not set. Skipping Itch.io deployment."
+            echo "has_key=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_key=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download Artifacts
+        if: steps.check_auth.outputs.has_key == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          path: itch_artifacts/
+
+      - name: Setup Butler
+        if: steps.check_auth.outputs.has_key == 'true'
+        uses: josephp91/action-butler@v1.1.0
+        with:
+          version: '15.21.0'
+
+      - name: Push to Itch.io Channels
+        if: steps.check_auth.outputs.has_key == 'true'
+        shell: bash
+        run: |
+          echo "Deploying to Itch.io..."
+          # Customize these targets to match your exact Itch.io slugs when ready:
+          # butler push itch_artifacts/windows-Pro-installer/*.exe todd0042/tiki-karaoke-pro:windows --userversion ${{ github.ref_name }}
+          # butler push itch_artifacts/linux-Pro-appimage/*.AppImage todd0042/tiki-karaoke-pro:linux --userversion ${{ github.ref_name }}
+          # butler push itch_artifacts/windows-Free-installer/*.exe todd0042/tiki-karaoke-free:windows --userversion ${{ github.ref_name }}
+          # butler push itch_artifacts/linux-Free-appimage/*.AppImage todd0042/tiki-karaoke-free:linux --userversion ${{ github.ref_name }}

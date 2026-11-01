@@ -51,8 +51,12 @@ Thumbs.db
 traffic_stats*.json
 screenshots/
 
-# Packaging folder (commercial build scripts live in sibling repo)
-packaging/
+# Windows packaging build artifacts
+packaging/windows/dist/
+packaging/windows/build/
+packaging/windows/dist_installer/
+packaging/windows/bin/
+packaging/windows/portable_python/
 dist/
 *.AppImage
 # Research & design notes
