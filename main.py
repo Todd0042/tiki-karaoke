@@ -928,6 +928,8 @@ def start_tunnel_watchdog(mode: str, local_port: int, remote_port: int = 38480, 
         # Wait for initial server and tunnel launch
         time.sleep(12)
         probe_counter = 0
+        cf_probe_counter = 0
+        cf_fail_counter = 0
 
         while not is_shutting_down:
             time.sleep(5)
@@ -953,6 +955,33 @@ def start_tunnel_watchdog(mode: str, local_port: int, remote_port: int = 38480, 
                 except (ConnectionRefusedError, socket.timeout, OSError) as e:
                     print(f"\n[Tunnel Watchdog] ⚠️ bore.pub:{remote_port} connection refused or timed out ({e}). Auto-healing tunnel...")
                     needs_restart = True
+
+            # 3. Active Cloudflare Quick Tunnel Keepalive (prevents idle edge drop)
+            cf_probe_counter += 5
+            if not needs_restart and mode in ("cloudflare", "cloudflare_quick") and cf_probe_counter >= 20:
+                cf_probe_counter = 0
+                pub_host = os.environ.get("TIKI_PUBLIC_HOST", "").strip()
+                if pub_host and "trycloudflare.com" in pub_host:
+                    try:
+                        import urllib.request
+                        req = urllib.request.Request(
+                            f"https://{pub_host}/api/state",
+                            headers={"User-Agent": "TikiTunnelKeepalive/1.0"}
+                        )
+                        with urllib.request.urlopen(req, timeout=4.0) as resp:
+                            if resp.status == 200:
+                                cf_fail_counter = 0
+                            else:
+                                cf_fail_counter += 1
+                    except Exception as e:
+                        cf_fail_counter += 1
+                        if cf_fail_counter >= 2:
+                            print(f"\n[Tunnel Watchdog] ⚠️ Cloudflare keepalive probe failed ({cf_fail_counter}/3): {e}")
+
+                    if cf_fail_counter >= 3:
+                        print(f"\n[Tunnel Watchdog] ⚠️ Cloudflare tunnel unresponsive after 3 probes. Auto-healing tunnel...")
+                        needs_restart = True
+                        cf_fail_counter = 0
 
             if needs_restart and not is_shutting_down:
                 if active_tunnel_proc:
@@ -982,6 +1011,12 @@ def start_tunnel_watchdog(mode: str, local_port: int, remote_port: int = 38480, 
                             "join": f"{new_url}/join",
                             "host_remote": f"{new_url}/host{host_param}"
                         })
+                    try:
+                        import app as app_module
+                        if hasattr(app_module, "broadcast_network_update_sync"):
+                            app_module.broadcast_network_update_sync()
+                    except Exception as e:
+                        print(f"[Tunnel Watchdog] Could not broadcast network update: {e}")
 
     tunnel_watchdog_thread = threading.Thread(target=_watchdog_loop, daemon=True)
     tunnel_watchdog_thread.start()

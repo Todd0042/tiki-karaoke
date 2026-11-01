@@ -4883,6 +4883,11 @@ function updateHostNetworkUI(data) {
     if (modalAppUrlText) modalAppUrlText.innerText = data.join_url ? new URL(data.join_url).pathname : "/join";
     if (modalWifiSsidDetail) modalWifiSsidDetail.innerText = data.hotspot_ssid || "";
     if (modalWifiPassDetail) modalWifiPassDetail.innerText = data.hotspot_password || "";
+
+    document.querySelectorAll('img[src*="/qr/"]').forEach(img => {
+        const base = img.src.split('?')[0];
+        img.src = `${base}?t=${t}`;
+    });
 }
 
 async function saveHotspotConfig() {

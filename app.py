@@ -184,6 +184,35 @@ class ConnectionManager:
                 self.disconnect(connection)
 
 manager = ConnectionManager()
+main_event_loop: Optional[asyncio.AbstractEventLoop] = None
+
+def broadcast_network_update_sync():
+    """Thread-safe synchronous helper to broadcast network_updated event across all connected WebSockets."""
+    global main_event_loop
+    if not main_event_loop or not main_event_loop.is_running():
+        return
+    effective_port = int(os.getenv("TIKI_PORT", str(PORT)))
+    ip = network_helper.get_best_local_ip()
+    is_hotspot = network_helper.is_hotspot_ip(ip)
+    is_net = network_helper.is_internet_available()
+    show_wifi_card = network_helper.is_hotspot_enabled()
+    base_url = get_base_url()
+    join_url = f"{base_url}/join"
+    payload = {
+        "type": "network_updated",
+        "local_ip": ip,
+        "port": effective_port,
+        "base_url": base_url,
+        "join_url": join_url,
+        "is_internet_connected": is_net,
+        "is_hotspot": is_hotspot,
+        "hotspot_enabled": show_wifi_card,
+        "hotspot_ssid": get_setting("hotspot_ssid", ""),
+        "hotspot_password": get_setting("hotspot_password", ""),
+        "show_wifi_card": show_wifi_card
+    }
+    asyncio.run_coroutine_threadsafe(manager.broadcast(payload), main_event_loop)
+
 current_intermission_end: Optional[float] = None
 
 # BGM Filler Video State
@@ -591,6 +620,8 @@ async def background_metadata_enricher():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global main_event_loop
+    main_event_loop = asyncio.get_running_loop()
     init_db()
     clear_queue_on_startup()
     # Restore persisted monitoring mode before any connections arrive
