@@ -1,3 +1,4 @@
+import os
 import re
 from typing import List, Dict, Any, Tuple
 import yt_dlp
@@ -400,9 +401,9 @@ def tiered_search(query: str, force_online: bool = False, sing_along: bool = Fal
 
     local_matches = search_local_tracks(query_str, limit=25, sing_along_only=sing_along) if page == 1 else []
     
-    # Check internet connectivity for offline hotspot parties
+    # Check internet connectivity for offline hotspot parties, or testing mode
     online = is_internet_available()
-    if not online and not force_online:
+    if (not online or os.environ.get("TIKI_TESTING")) and not force_online:
         return {
             "local_results": local_matches,
             "youtube_results": [],

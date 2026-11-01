@@ -133,6 +133,9 @@ def fetch_track_metadata(artist: str, title: str) -> Dict[str, Any]:
     Enriches track with genre and release year.
     Tries iTunes API first, falls back to Wikipedia, defaults to ('Pop', 0).
     """
+    if os.environ.get("TIKI_TESTING"):
+        return {"genre": "Pop", "release_year": 2000, "source": "test"}
+
     # 1. Try iTunes
     itunes_res = fetch_itunes_metadata(artist, title)
     if itunes_res:

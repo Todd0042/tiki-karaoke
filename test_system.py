@@ -553,8 +553,8 @@ class TestTikiKaraoke(unittest.TestCase):
         # Page 1: Returns local matches and indicates online results are available
         from unittest.mock import patch
         mock_online_payload = ([{"id": "yt_queen_1", "title": "Somebody to Love (Karaoke)", "artist": "Queen"}], True)
-        with patch("search.search_online_karaoke", return_value=mock_online_payload):
-            res_page1 = tiered_search("Somebody to Love", page=1)
+        with patch("search.query_youtube_karaoke", return_value=mock_online_payload):
+            res_page1 = tiered_search("Somebody to Love", page=1, force_online=True)
             self.assertIn("local_results", res_page1)
             self.assertEqual(res_page1["page"], 1)
             self.assertTrue(res_page1["has_more"])
