@@ -704,19 +704,22 @@ class TestAPIEndpoints(unittest.TestCase):
         self.assertIn("over 10 minutes long", r_long.json().get("detail", ""))
 
         # 7. Search rate limit (20/min per IP)
+        from unittest.mock import patch
         search_requests_by_ip.clear()
-        for _ in range(20):
-            r = self.client.get("/api/search?q=queen")
-            self.assertEqual(r.status_code, 200)
+        dummy_search_res = {"local_results": [], "youtube_results": [], "page": 1, "has_more": False}
+        with patch("app.tiered_search", return_value=dummy_search_res):
+            for _ in range(20):
+                r = self.client.get("/api/search?q=queen")
+                self.assertEqual(r.status_code, 200)
 
-        # 21st search triggers 429
-        r21 = self.client.get("/api/search?q=queen")
-        self.assertEqual(r21.status_code, 429)
-        self.assertIn("Search rate limit reached", r21.json().get("detail", ""))
+            # 21st search triggers 429
+            r21 = self.client.get("/api/search?q=queen")
+            self.assertEqual(r21.status_code, 429)
+            self.assertIn("Search rate limit reached", r21.json().get("detail", ""))
 
-        # Host bypasses search rate limit
-        r_host_search = self.client.get("/api/search?q=queen", headers={"X-Host-Token": HOST_TOKEN})
-        self.assertEqual(r_host_search.status_code, 200)
+            # Host bypasses search rate limit
+            r_host_search = self.client.get("/api/search?q=queen", headers={"X-Host-Token": HOST_TOKEN})
+            self.assertEqual(r_host_search.status_code, 200)
 
     def test_bgm_filler_and_vibe_engine(self):
         """Test BGM filler track staging, settings, and vibe matching engine."""
