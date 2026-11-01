@@ -16,7 +16,7 @@ import webbrowser
 import threading
 from pathlib import Path
 from typing import Optional, Callable, Dict, Any
-from config import open_url_in_preferred_browser
+from config import open_url_in_preferred_browser, APP_VERSION
 
 HAS_GUI = False
 _gui_import_error = ""
@@ -145,7 +145,7 @@ class TikiControlHub:
 
         port = self.urls.get("port", "8000")
         pub_url = self.urls.get("public") or self.urls.get("join") or f"http://127.0.0.1:{port}"
-        status_text = f" Server Online on :{port}  •  v1.0.5"
+        status_text = f" Server Online on :{port}  •  v{APP_VERSION}"
         txt_lbl = tk.Label(status_frame, text=status_text, font=("Helvetica", 9), fg="#94a3b8", bg="#0d0814")
         txt_lbl.pack(side="left")
 

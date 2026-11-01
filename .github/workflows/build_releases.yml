@@ -43,7 +43,7 @@ jobs:
           elif [[ "$RAW_TAG" =~ ^v[0-9] ]]; then
             V="${RAW_TAG#v}"
           else
-            V="1.0.5"
+            V="1.0.6"
           fi
           echo "version=$V" >> "$GITHUB_OUTPUT"
 
@@ -94,7 +94,7 @@ jobs:
           elif [[ "$RAW_TAG" =~ ^v[0-9] ]]; then
             V="${RAW_TAG#v}"
           else
-            V="1.0.5"
+            V="1.0.6"
           fi
           echo "version=$V" >> "$GITHUB_OUTPUT"
 
@@ -116,7 +116,7 @@ jobs:
       - name: Build Windows Standalone & Installer
         shell: powershell
         run: |
-          & packaging\windows\build_windows.ps1 -Edition ${{ matrix.edition }}
+          & packaging\windows\build_windows.ps1 -Edition ${{ matrix.edition }} -Version ${{ steps.ver.outputs.version }}
 
       - name: Upload Windows Installer Artifact
         uses: actions/upload-artifact@v4

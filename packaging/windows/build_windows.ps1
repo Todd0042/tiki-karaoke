@@ -1,5 +1,6 @@
 param(
-    [string]$Edition = ""
+    [string]$Edition = "",
+    [string]$Version = ""
 )
 # Tiki Karaoke - Windows Standalone Build Script (PowerShell)
 $ErrorActionPreference = "Continue"
@@ -192,14 +193,22 @@ if (-not $Edition) {
 }
 Write-Host "Target Edition: $Edition" -ForegroundColor Cyan
 
-# Parse version from installer.iss
-$AppVersion = "1.0.5"
-if (Test-Path "$ScriptDir\installer.iss") {
+# Parse version from parameter, environment, or installer.iss fallback
+$AppVersion = ""
+if ($Version) {
+    $AppVersion = $Version.TrimStart('v')
+} elseif ($env:TIKI_VERSION) {
+    $AppVersion = $env:TIKI_VERSION.TrimStart('v')
+} elseif (Test-Path "$ScriptDir\installer.iss") {
     $match = Select-String -Path "$ScriptDir\installer.iss" -Pattern '#define MyAppVersion "([^"]+)"'
     if ($match -and $match.Matches.Groups[1].Value) {
         $AppVersion = $match.Matches.Groups[1].Value
     }
 }
+if (-not $AppVersion) {
+    $AppVersion = "1.0.6"
+}
+Write-Host "Target Version: $AppVersion" -ForegroundColor Cyan
 
 # Always generate the turnkey Portable release ZIP
 $ZipSrc = if (Test-Path "$LocalDist\TikiKaraoke") { "$LocalDist\TikiKaraoke\*" } else { "$ScriptDir\dist\TikiKaraoke\*" }
@@ -222,7 +231,7 @@ if (-not (Test-Path $Iscc)) {
 
 if (Test-Path $Iscc) {
     Write-Host "`nCompiling Windows setup installer via Inno Setup ($Iscc)..." -ForegroundColor Green
-    & $Iscc "/DMyAppEdition=$Edition" "$ScriptDir\installer.iss"
+    & $Iscc "/DMyAppEdition=$Edition" "/DMyAppVersion=$AppVersion" "$ScriptDir\installer.iss"
     Write-Host "`n[OK] Setup installer generated at:" -ForegroundColor Green
     Get-ChildItem "$ScriptDir\dist_installer\*.exe" | ForEach-Object { Write-Host "   - $($_.FullName)" }
 } else {

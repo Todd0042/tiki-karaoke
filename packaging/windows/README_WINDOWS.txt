@@ -1,5 +1,5 @@
 ================================================================================
-🌴 TIKI KARAOKE LOUNGE — WINDOWS HOME & PARTY EDITION (v1.0.5) 🍹
+🌴 TIKI KARAOKE LOUNGE — WINDOWS HOME & PARTY EDITION (v1.0.6) 🍹
 ================================================================================
 
 Aloha! Welcome to Tiki Karaoke Lounge, the turnkey, full-venue karaoke 
@@ -9,12 +9,12 @@ and party entertainment system for Windows.
 1. QUICK START GUIDE
 --------------------------------------------------------------------------------
 
-A. INSTALLER EDITION (TikiKaraokeSetup-v1.0.5.exe):
-   1. Double-click TikiKaraokeSetup-v1.0.5.exe to install.
+A. INSTALLER EDITION (TikiKaraokeSetup-Pro-1.0.6.exe / Free):
+   1. Double-click the installer executable to install.
    2. Launch "Tiki Karaoke Lounge" from your Desktop or Start Menu.
    3. The desktop Control Hub and setup wizard will open automatically.
 
-B. PORTABLE ZIP EDITION (TikiKaraoke-Windows-v1.0.5-Portable.zip):
+B. PORTABLE ZIP EDITION (TikiKaraoke-Pro-Windows-v1.0.6-Portable.zip):
    1. Extract the ZIP folder anywhere on your computer (e.g., C:\TikiKaraoke).
    2. Double-click TikiKaraoke.exe to launch. No administrative installation required!
 
