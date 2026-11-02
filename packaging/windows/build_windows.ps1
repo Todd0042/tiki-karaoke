@@ -211,9 +211,23 @@ if (-not $AppVersion) {
 Write-Host "Target Version: $AppVersion" -ForegroundColor Cyan
 
 # Always generate the turnkey Portable release ZIP
-$ZipSrc = if (Test-Path "$LocalDist\TikiKaraoke") { "$LocalDist\TikiKaraoke\*" } else { "$ScriptDir\dist\TikiKaraoke\*" }
+$ZipSrcDir = if (Test-Path "$LocalDist\TikiKaraoke") { "$LocalDist\TikiKaraoke" } else { "$ScriptDir\dist\TikiKaraoke" }
 $ZipDst = "$ScriptDir\dist\TikiKaraoke-$Edition-Windows-v$AppVersion-Portable.zip"
-Compress-Archive -Path $ZipSrc -DestinationPath $ZipDst -Force
+if (Test-Path $ZipDst) { Remove-Item $ZipDst -Force }
+
+$sevenZip = "C:\Program Files\7-Zip\7z.exe"
+if (-not (Test-Path $sevenZip)) {
+    $cmd7z = Get-Command 7z -ErrorAction SilentlyContinue
+    if ($cmd7z) { $sevenZip = $cmd7z.Source }
+}
+
+if (Test-Path $sevenZip) {
+    Write-Host "Creating portable ZIP via 7-Zip ($sevenZip)..." -ForegroundColor Cyan
+    & $sevenZip a -tzip "$ZipDst" "$ZipSrcDir\*"
+} else {
+    Write-Host "Creating portable ZIP via Compress-Archive..." -ForegroundColor Cyan
+    Compress-Archive -Path "$ZipSrcDir\*" -DestinationPath $ZipDst -Force
+}
 Write-Host "[OK] Portable ZIP created at: $ZipDst" -ForegroundColor Green
 
 # Check for Inno Setup compiler to also generate Setup Installer EXE

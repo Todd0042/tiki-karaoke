@@ -225,11 +225,19 @@ jobs:
           echo "--- Pro Edition: todd0042/tiki-karaoke-lounge ---"
           butler push itch_artifacts/linux-Pro-appimage/*.AppImage todd0042/tiki-karaoke-lounge:linux --userversion "$REL_VER"
           butler push itch_artifacts/windows-Pro-installer/*.exe todd0042/tiki-karaoke-lounge:windows --userversion "$REL_VER"
-          butler push itch_artifacts/windows-Pro-portable/*.zip todd0042/tiki-karaoke-lounge:windows-portable --userversion "$REL_VER"
+
+          mkdir -p itch_artifacts/pro-portable-dir
+          unzip -qo itch_artifacts/windows-Pro-portable/*.zip -d itch_artifacts/pro-portable-dir || true
+          chmod -R u+rwX itch_artifacts/pro-portable-dir
+          butler push itch_artifacts/pro-portable-dir todd0042/tiki-karaoke-lounge:windows-portable --userversion "$REL_VER"
 
           echo "--- Free Edition: todd0042/tiki-karaoke-lounge-ad-based ---"
           butler push itch_artifacts/linux-Free-appimage/*.AppImage todd0042/tiki-karaoke-lounge-ad-based:linux --userversion "$REL_VER"
           butler push itch_artifacts/windows-Free-installer/*.exe todd0042/tiki-karaoke-lounge-ad-based:windows --userversion "$REL_VER"
-          butler push itch_artifacts/windows-Free-portable/*.zip todd0042/tiki-karaoke-lounge-ad-based:windows-portable --userversion "$REL_VER"
+
+          mkdir -p itch_artifacts/free-portable-dir
+          unzip -qo itch_artifacts/windows-Free-portable/*.zip -d itch_artifacts/free-portable-dir || true
+          chmod -R u+rwX itch_artifacts/free-portable-dir
+          butler push itch_artifacts/free-portable-dir todd0042/tiki-karaoke-lounge-ad-based:windows-portable --userversion "$REL_VER"
 
           echo "Itch.io deployments completed successfully!"
