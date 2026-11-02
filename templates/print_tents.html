@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>{{ bar_name }} - Printable QR Table Tents</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        }
+
+        body {
+            background: #f1f5f9;
+            color: #0f172a;
+            padding: 20px;
+        }
+
+        /* Screen-only Toolbar */
+        .toolbar {
+            max-width: 800px;
+            margin: 0 auto 20px auto;
+            background: #fff;
+            padding: 16px 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.08);
+            display: flex;
+            flex-wrap: wrap;
+            gap: 14px;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .toolbar-fields {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+
+        .toolbar input {
+            padding: 8px 12px;
+            border: 1px solid #cbd5e1;
+            border-radius: 6px;
+            font-size: 0.9rem;
+        }
+
+        .print-btn {
+            background: #0284c7;
+            color: #fff;
+            border: none;
+            padding: 10px 20px;
+            font-size: 1rem;
+            font-weight: 700;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .print-btn:hover {
+            background: #0369a1;
+        }
+
+        /* Printable Sheet */
+        .page-sheet {
+            width: 8.5in;
+            min-height: 11in;
+            background: #fff;
+            margin: 0 auto;
+            padding: 0.4in;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.4in;
+        }
+
+        /* Table Tent Card */
+        .tent-card {
+            border: 2px dashed #94a3b8;
+            border-radius: 8px;
+            padding: 12px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            position: relative;
+            background: #ffffff;
+            page-break-inside: avoid;
+        }
+
+        /* Top Half (Inverted for triangular tent fold) */
+        .tent-panel {
+            text-align: center;
+            padding: 14px 10px;
+            border-radius: 6px;
+            background: #fafafa;
+        }
+
+        .tent-panel.inverted {
+            transform: rotate(180deg);
+            border-bottom: 2px solid #e2e8f0;
+        }
+
+        .tent-fold-line {
+            border-top: 1px dashed #64748b;
+            margin: 12px 0;
+            position: relative;
+            text-align: center;
+        }
+
+        .tent-fold-line::after {
+            content: "✂️ FOLD HERE FOR TRIANGLE TABLE TENT ✂️";
+            position: absolute;
+            top: -9px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #fff;
+            padding: 0 8px;
+            font-size: 0.65rem;
+            color: #64748b;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+        }
+
+        .tent-title {
+            font-size: 1.15rem;
+            font-weight: 800;
+            color: #0f172a;
+            margin-bottom: 4px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .tent-subtitle {
+            font-size: 0.78rem;
+            color: #64748b;
+            font-weight: 600;
+            margin-bottom: 10px;
+        }
+
+        .qr-image {
+            width: 140px;
+            height: 140px;
+            display: block;
+            margin: 0 auto 8px auto;
+            border: 3px solid #0f172a;
+            border-radius: 8px;
+            padding: 4px;
+            background: #fff;
+        }
+
+        .scan-cta {
+            font-size: 0.82rem;
+            font-weight: 800;
+            color: #0284c7;
+            margin-bottom: 6px;
+        }
+
+        .wifi-box {
+            font-size: 0.75rem;
+            color: #334155;
+            background: #f1f5f9;
+            padding: 6px 8px;
+            border-radius: 6px;
+            display: inline-block;
+            margin-top: 4px;
+            border: 1px solid #e2e8f0;
+        }
+
+        @media print {
+            body {
+                background: none;
+                padding: 0;
+            }
+
+            .toolbar {
+                display: none !important;
+            }
+
+            .page-sheet {
+                box-shadow: none;
+                margin: 0;
+                width: 100%;
+                min-height: 100%;
+                padding: 0.25in;
+                gap: 0.3in;
+            }
+
+            .tent-card {
+                border: 1px dashed #64748b;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Screen Toolbar -->
+    <div class="toolbar">
+        <div>
+            <h3 style="margin-bottom: 4px;">🌴 {{ bar_name }} Table Tents</h3>
+            <p style="font-size: 0.8rem; color: #64748b; margin: 0;">Fill in Wi-Fi info below and click Print. Fold cards into 3D table tents!</p>
+        </div>
+        <div class="toolbar-fields">
+            <input type="text" id="wifiSsidInput" placeholder="Wi-Fi Network Name" oninput="updateWifi()">
+            <input type="text" id="wifiPassInput" placeholder="Wi-Fi Password" oninput="updateWifi()">
+            <button class="print-btn" onclick="window.print()">🖨️ Print Tents</button>
+        </div>
+    </div>
+
+    <!-- 4 Tents Sheet (Standard 8.5x11 / A4) -->
+    <div class="page-sheet">
+        {% for i in range(4) %}
+        <div class="tent-card">
+            <!-- Inverted Side (Faces opposite side of the table when folded) -->
+            <div class="tent-panel inverted">
+                <div class="tent-title">🌴 {{ bar_name }} 🎤</div>
+                <div class="tent-subtitle">SCAN TO JOIN THE STAGE & PICK SONGS</div>
+                <img src="/qr/public" class="qr-image" alt="Karaoke QR Code">
+                <div class="scan-cta">👉 NO APP NEEDED • SCAN & SING</div>
+                <div class="wifi-box">
+                    <span>Wi-Fi: <strong class="wifi-ssid-val">Ask Host</strong></span> • 
+                    <span>Pass: <strong class="wifi-pass-val">None</strong></span>
+                </div>
+            </div>
+
+            <!-- Fold Guide -->
+            <div class="tent-fold-line"></div>
+
+            <!-- Normal Side (Faces near side of the table) -->
+            <div class="tent-panel">
+                <div class="tent-title">🌴 {{ bar_name }} 🎤</div>
+                <div class="tent-subtitle">SCAN TO JOIN THE STAGE & PICK SONGS</div>
+                <img src="/qr/public" class="qr-image" alt="Karaoke QR Code">
+                <div class="scan-cta">👉 NO APP NEEDED • SCAN & SING</div>
+                <div class="wifi-box">
+                    <span>Wi-Fi: <strong class="wifi-ssid-val">Ask Host</strong></span> • 
+                    <span>Pass: <strong class="wifi-pass-val">None</strong></span>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <script>
+        function updateWifi() {
+            const ssid = document.getElementById('wifiSsidInput').value.trim() || 'Ask Host';
+            const pass = document.getElementById('wifiPassInput').value.trim() || 'None';
+            document.querySelectorAll('.wifi-ssid-val').forEach(el => el.innerText = ssid);
+            document.querySelectorAll('.wifi-pass-val').forEach(el => el.innerText = pass);
+        }
+    </script>
+</body>
+</html>

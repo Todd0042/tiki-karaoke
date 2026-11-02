@@ -1,0 +1,51 @@
+# Maintainer: Todd <https://github.com/Todd0042>
+pkgname=tiki-karaoke-bin
+pkgver=1.0.9
+pkgrel=1
+pkgdesc="Turnkey Dual-Screen Karaoke Party Server & Host DJ Engine with Web Audio DSP, Live QR Queue, and Cloudflare SSL"
+arch=('x86_64')
+url="https://github.com/Todd0042/tiki-karaoke"
+license=('custom:PolyForm-Noncommercial-1.0.0')
+depends=('fuse2' 'ffmpeg')
+optdepends=(
+    'pipewire-pulse: for PipeWire audio routing'
+    'pulseaudio: for legacy PulseAudio routing'
+)
+provides=('tiki-karaoke')
+conflicts=('tiki-karaoke')
+source=(
+    "${pkgname}-${pkgver}.AppImage::https://github.com/Todd0042/tiki-karaoke/releases/download/v${pkgver}/TikiKaraoke-Pro-v${pkgver}-x86_64.AppImage"
+    "tiki-karaoke.desktop"
+)
+sha256sums=(
+    '817961820f5fae7080e57453a4e001876b6a751bb9f1c8822646b63e5e442582'
+    'SKIP'
+)
+
+prepare() {
+    chmod +x "${pkgname}-${pkgver}.AppImage"
+    ./"${pkgname}-${pkgver}.AppImage" --appimage-extract static/tiki-icon.png 2>/dev/null || true
+    ./"${pkgname}-${pkgver}.AppImage" --appimage-extract LICENSE 2>/dev/null || true
+}
+
+package() {
+    # Install binary AppImage
+    install -Dm755 "${srcdir}/${pkgname}-${pkgver}.AppImage" "${pkgdir}/opt/tiki-karaoke/tiki-karaoke.AppImage"
+
+    # Symlink to /usr/bin
+    install -d "${pkgdir}/usr/bin"
+    ln -s "/opt/tiki-karaoke/tiki-karaoke.AppImage" "${pkgdir}/usr/bin/tiki-karaoke"
+
+    # Install desktop launcher
+    install -Dm644 "${srcdir}/tiki-karaoke.desktop" "${pkgdir}/usr/share/applications/tiki-karaoke.desktop"
+
+    # Install application icon
+    if [ -f "${srcdir}/squashfs-root/static/tiki-icon.png" ]; then
+        install -Dm644 "${srcdir}/squashfs-root/static/tiki-icon.png" "${pkgdir}/usr/share/icons/hicolor/512x512/apps/tiki-karaoke.png"
+    fi
+
+    # Install license
+    if [ -f "${srcdir}/squashfs-root/LICENSE" ]; then
+        install -Dm644 "${srcdir}/squashfs-root/LICENSE" "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+    fi
+}

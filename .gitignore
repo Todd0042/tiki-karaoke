@@ -1,0 +1,71 @@
+# Virtual environments
+venv/
+env/
+.venv/
+ENV/
+
+# Python byte-code and caches
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# Databases, PID and runtime session secrets
+data/*.db
+data/*.db-wal
+data/*.db-shm
+data/*.pid
+data/host_token.txt
+*.db
+
+# Downloaded platform binaries & build metadata
+bin/
+.crates.toml
+.crates2.json
+
+# Local downloaded media files (keep folder structure via .gitkeep)
+karaoke_library/tracks/*
+!karaoke_library/tracks/.gitkeep
+karaoke_library/playlists_m3u/*
+!karaoke_library/playlists_m3u/.gitkeep
+karaoke_library/filler/*
+!karaoke_library/filler/.gitkeep
+
+# Backup folders
+_backup_karaoke_data/
+_backup*/
+
+# User runtime configuration
+config.json
+cdg_cache/
+data/
+BETA_ANNOUNCEMENT_POST.md
+social_post*.md
+
+# Environment and OS files
+.env
+.DS_Store
+Thumbs.db
+# User analytics and traffic snapshots
+traffic_stats*.json
+screenshots/automated_run/
+
+# Windows packaging build artifacts
+packaging/windows/dist/
+packaging/windows/build/
+packaging/windows/dist_installer/
+packaging/windows/bin/
+packaging/windows/portable_python/
+dist/
+*.AppImage
+
+# Internal developer notes and scratch docs
+docs/dev/
+DEVLOG*.md
+TUNNEL_OPTIONS_PLAN.md
+VOCAL_AUTOTUNE_RESEARCH.md
+VOCAL_PROFILE.md
+vocal_profile*.md
+GEMINI.md
+

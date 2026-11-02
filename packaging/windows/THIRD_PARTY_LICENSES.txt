@@ -1,0 +1,68 @@
+================================================================================
+TIKI KARAOKE LOUNGE — THIRD-PARTY OPEN-SOURCE LICENSES & ATTRIBUTIONS
+================================================================================
+Tiki Karaoke Lounge bundles or integrates several third-party open-source 
+libraries and standalone executables. The respective copyrights, licenses, 
+and disclaimers are set forth below.
+
+--------------------------------------------------------------------------------
+1. FFmpeg & FFprobe (https://ffmpeg.org)
+--------------------------------------------------------------------------------
+FFmpeg is licensed under the GNU Lesser General Public License (LGPL) version 2.1 
+or later, or the GNU General Public License (GPL) version 2 or later, depending 
+on build configuration. 
+Tiki Karaoke executes FFmpeg and FFprobe as standalone, independent executables 
+at arm's length via standard operating system process interfaces. 
+Tiki Karaoke does not modify FFmpeg source code.
+FFmpeg source code, build instructions, and full license text are available at:
+https://ffmpeg.org and https://ffmpeg.org/legal.html
+
+--------------------------------------------------------------------------------
+2. Cloudflare Tunnel / cloudflared (https://github.com/cloudflare/cloudflared)
+--------------------------------------------------------------------------------
+Licensed under the Apache License, Version 2.0 (the "License"):
+Copyright (c) Cloudflare, Inc.
+Licensed under the Apache License, Version 2.0 (the "License"); you may not use 
+this file except in compliance with the License. You may obtain a copy of the 
+License at: http://www.apache.org/licenses/LICENSE-2.0
+
+--------------------------------------------------------------------------------
+3. Bore Tunnel (https://github.com/ekzhang/bore)
+--------------------------------------------------------------------------------
+Licensed under the MIT License:
+Copyright (c) 2022 Eric Zhang
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+--------------------------------------------------------------------------------
+4. yt-dlp (https://github.com/yt-dlp/yt-dlp)
+--------------------------------------------------------------------------------
+This is free and unencumbered software released into the public domain under 
+The Unlicense.
+Anyone is free to copy, modify, publish, use, compile, sell, or distribute this 
+software, either in source code form or as a compiled binary, for any purpose, 
+commercial or non-commercial, and by any means.
+
+--------------------------------------------------------------------------------
+5. Python Software Foundation License (https://www.python.org)
+--------------------------------------------------------------------------------
+Copyright (c) 2001-2026 Python Software Foundation. All rights reserved.
+PSF License Agreement for Python applies to the bundled Python runtime.
+
+--------------------------------------------------------------------------------
+6. FastAPI & Starlette (https://fastapi.tiangolo.com)
+--------------------------------------------------------------------------------
+Copyright (c) 2018-2026 Sebastián Ramírez
+Licensed under the MIT License.
+
+--------------------------------------------------------------------------------
+7. Pystray (https://github.com/moses-palmer/pystray)
+--------------------------------------------------------------------------------
+Licensed under the GNU Lesser General Public License version 3 or later.
+================================================================================

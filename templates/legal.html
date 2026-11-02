@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover">
+    <title>About & Bring-Your-Own-Media Guide — Tiki Karaoke Lounge</title>
+    <link rel="icon" type="image/x-icon" href="/favicon.ico">
+    <link rel="stylesheet" href="/static/css/tiki-theme.css">
+    <style>
+        body {
+            background: #090e17;
+            color: #e2e8f0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            margin: 0;
+            padding: 16px 12px 60px;
+            line-height: 1.5;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+        }
+
+        .top-nav {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .intro-card {
+            background: rgba(14, 22, 38, 0.95);
+            border: 1px solid rgba(0, 240, 255, 0.3);
+            border-left: 5px solid var(--neon-cyan);
+            border-radius: 12px;
+            padding: 18px 20px;
+            margin-bottom: 24px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+        }
+
+        .section-card {
+            background: rgba(16, 26, 44, 0.9);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+
+        .resource-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+            gap: 14px;
+            margin-top: 14px;
+        }
+
+        .resource-card {
+            background: rgba(22, 36, 60, 0.8);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 10px;
+            padding: 14px;
+            text-decoration: none;
+            display: block;
+            color: inherit;
+            transition: all 0.2s ease;
+        }
+
+        .resource-card:hover {
+            border-color: var(--neon-cyan);
+            transform: translateY(-2px);
+            box-shadow: 0 6px 18px rgba(0, 240, 255, 0.18);
+        }
+
+        .card-title {
+            font-size: 0.95rem;
+            font-weight: 700;
+            color: var(--neon-cyan);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 6px;
+        }
+
+        .card-desc {
+            font-size: 0.8rem;
+            color: #94a3b8;
+            line-height: 1.4;
+        }
+
+        .badge {
+            font-size: 0.65rem;
+            font-weight: 700;
+            padding: 2px 7px;
+            border-radius: 4px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            background: rgba(0, 240, 255, 0.15);
+            color: var(--neon-cyan);
+            border: 1px solid rgba(0, 240, 255, 0.35);
+        }
+
+        .disclaimer-box {
+            background: rgba(11, 17, 30, 0.9);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 10px;
+            padding: 16px;
+            font-size: 0.78rem;
+            color: #64748b;
+            line-height: 1.5;
+            margin-top: 28px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Top Navigation -->
+        <div class="top-nav">
+            <a href="/" style="color: var(--neon-cyan); text-decoration: none; font-size: 0.88rem; font-weight: 600; display: flex; align-items: center; gap: 6px;">
+                <span>←</span> Back to Singer Screen
+            </a>
+            <span style="font-size: 0.8rem; color: var(--text-muted);">
+                Tiki Karaoke Lounge • Home & Party Edition
+            </span>
+        </div>
+
+        <!-- Page Header -->
+        <div style="text-align: center; margin-bottom: 24px;">
+            <h1 class="font-tiki neon-cyan" style="font-size: 1.8rem; margin: 0 0 6px 0;">
+                🌴 About Tiki Karaoke & Media Guide
+            </h1>
+            <p style="margin: 0; color: var(--text-muted); font-size: 0.88rem;">
+                Turnkey Bring-Your-Own-Media player and party coordination system.
+            </p>
+        </div>
+
+        <!-- Explanatory Overview Card -->
+        <div class="intro-card">
+            <div style="font-weight: 800; color: var(--neon-cyan); font-size: 1rem; margin-bottom: 6px;">
+                🌺 Bring Your Own Media (BYOM) Architecture
+            </div>
+            <p style="margin: 0 0 10px 0; font-size: 0.86rem; color: #cbd5e1;">
+                Tiki Karaoke Lounge is an independent media player designed for private living room entertainment, family parties, and friendly sing-alongs. The application itself <strong>does not host, bundle, or distribute any copyrighted music files</strong>.
+            </p>
+            <p style="margin: 0; font-size: 0.84rem; color: #94a3b8;">
+                You bring your personal tracks, and Tiki Karaoke provides dynamic singer queueing, real-time stage lyrics, interactive smartphone song requests via QR code, and retro tropical synthwave visuals.
+            </p>
+        </div>
+
+        <!-- Supported Formats Section -->
+        <div class="section-card">
+            <h2 style="font-size: 1.05rem; font-weight: 700; color: var(--neon-gold); margin: 0 0 12px 0; display: flex; align-items: center; gap: 8px;">
+                <span>📂</span> Supported Media Formats
+            </h2>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px;">
+                <div style="background: rgba(0, 0, 0, 0.25); padding: 12px; border-radius: 8px; border-left: 3px solid var(--neon-cyan);">
+                    <div style="font-weight: 700; color: #f1f5f9; font-size: 0.88rem; margin-bottom: 4px;">🎬 Video Karaoke</div>
+                    <div style="font-size: 0.78rem; color: #94a3b8;"><code>.mp4</code>, <code>.mkv</code>, <code>.webm</code> video files with embedded audio and synchronized on-screen lyric text.</div>
+                </div>
+                <div style="background: rgba(0, 0, 0, 0.25); padding: 12px; border-radius: 8px; border-left: 3px solid var(--neon-pink);">
+                    <div style="font-weight: 700; color: #f1f5f9; font-size: 0.88rem; margin-bottom: 4px;">📀 Karaoke CD (CDG)</div>
+                    <div style="font-size: 0.78rem; color: #94a3b8;">Classic <code>.cdg</code> subcode graphics paired with <code>.mp3</code> audio, or packaged inside <code>.zip</code> archives.</div>
+                </div>
+                <div style="background: rgba(0, 0, 0, 0.25); padding: 12px; border-radius: 8px; border-left: 3px solid #10b981;">
+                    <div style="font-weight: 700; color: #f1f5f9; font-size: 0.88rem; margin-bottom: 4px;">🎤 Sing-Along & BGM</div>
+                    <div style="font-size: 0.78rem; color: #94a3b8;">Music videos and sing-along tracks for automatic intermission playback when the singer queue is idle.</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Where to Obtain Karaoke Tracks -->
+        <div class="section-card">
+            <h2 style="font-size: 1.05rem; font-weight: 700; color: var(--neon-cyan); margin: 0 0 6px 0; display: flex; align-items: center; gap: 8px;">
+                <span>🛒</span> Where to Buy & Download Legal Karaoke Tracks
+            </h2>
+            <div style="font-size: 0.82rem; color: #94a3b8; margin-bottom: 12px;">
+                Independent third-party music download stores where users can purchase high-quality karaoke backing tracks for personal libraries:
+            </div>
+
+            <div class="resource-grid">
+                <a href="https://www.karaoke-version.com" target="_blank" rel="noopener noreferrer" class="resource-card">
+                    <div class="card-title">
+                        <span>Karaoke-Version</span>
+                        <span class="badge">MP4 & MP3</span>
+                    </div>
+                    <div class="card-desc">
+                        Massive catalog of backing tracks with on-screen scrolling lyrics and customizable backing vocal stems.
+                    </div>
+                </a>
+
+                <a href="https://www.sunflykaraoke.com" target="_blank" rel="noopener noreferrer" class="resource-card">
+                    <div class="card-title">
+                        <span>Sunfly Karaoke</span>
+                        <span class="badge">MP4 & CDG</span>
+                    </div>
+                    <div class="card-desc">
+                        Long-running karaoke producer offering digital download tracks and album packs across classic rock, pop, and modern charts.
+                    </div>
+                </a>
+
+                <a href="https://www.buykaraokedownloads.com" target="_blank" rel="noopener noreferrer" class="resource-card">
+                    <div class="card-title">
+                        <span>BuyKaraokeDownloads</span>
+                        <span class="badge">MP3+CDG</span>
+                    </div>
+                    <div class="card-desc">
+                        Extensive digital library powered by TriceraSoft with individual track purchases and instant ZIP downloads.
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        <!-- Open Source & Support -->
+        <div class="section-card" style="text-align: center; border-color: rgba(241, 96, 97, 0.3);">
+            <h2 style="color: #f16061; margin-top: 0; font-size: 1.15rem;">☕ Support Tiki Karaoke & Open Source</h2>
+            <p style="color: #94a3b8; font-size: 0.9rem; max-width: 600px; margin: 0 auto 14px auto;">
+                Tiki Karaoke is free, open-source software built for party hosts and audio enthusiasts. If you enjoy hosting parties with Tiki Karaoke, consider supporting development with a coffee!
+            </p>
+            <div style="display: flex; gap: 12px; justify-content: center; flex-wrap: wrap;">
+                <a href="https://ko-fi.com/todd0042" target="_blank" rel="noopener noreferrer" style="display: inline-flex; align-items: center; gap: 8px; background: #f16061; color: #fff; padding: 8px 18px; border-radius: 8px; text-decoration: none; font-weight: 700; font-size: 0.9rem;">
+                    ☕ Support on Ko-fi
+                </a>
+                <a href="https://github.com/Todd0042/tiki-karaoke" target="_blank" rel="noopener noreferrer" style="display: inline-flex; align-items: center; gap: 8px; background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.2); color: #fff; padding: 8px 18px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 0.9rem;">
+                    ⭐ Star on GitHub
+                </a>
+            </div>
+        </div>
+
+        <!-- Disclaimers & Licensing -->
+        <div class="disclaimer-box">
+            <div style="font-weight: 700; color: #94a3b8; margin-bottom: 6px; font-size: 0.82rem;">
+                ⚖️ Legal Notices, Audio Provenance &amp; Disclaimers
+            </div>
+            <p style="margin: 0 0 8px 0;">
+                <strong>Non-Commercial License &amp; Commercial Inquiries:</strong> Tiki Karaoke Lounge is licensed for personal, hobbyist, and non-commercial recreational use under the <strong>PolyForm Noncommercial License 1.0.0</strong>. Commercial venues, bars, or professional KJs interested in inquiring about a separate commercial software license may contact <a href="mailto:todd.0042.git@gmail.com" style="color: var(--neon-cyan); text-decoration: none;">todd.0042.git@gmail.com</a>.
+            </p>
+            <p style="margin: 0 0 8px 0;">
+                <strong>User Responsibility for Media &amp; Public Performance Rights:</strong> Tiki Karaoke Lounge licenses only the software player engine. Users and venue operators are 100% solely responsible for purchasing or providing legally licensed karaoke media files and for securing any applicable public performance licenses (e.g., ASCAP, BMI, SESAC, GMR, SOCAN, PRS) required for their jurisdiction or venue.
+            </p>
+            <p style="margin: 0 0 8px 0;">
+                <strong>Clean-Room Procedural Audio Provenance:</strong> All built-in background intermission tracks (<code>static/bgm/</code>) and DJ soundboard effects (<code>static/sounds/</code>) are 100% original, mathematically synthesized audio generated from pure waveforms via open-source Python DSP scripts (<code>scripts/generate_bgm.py</code> and <code>scripts/generate_soundboard_audio.py</code>) with zero third-party samples or copyrighted recordings.
+            </p>
+            <p style="margin: 0 0 8px 0;">
+                <strong>No Affiliation &amp; No Legal Advice:</strong> Tiki Karaoke Lounge is an independent media software player and is not affiliated with, sponsored by, or endorsed by any external vendors referenced above. Nothing in this software or documentation constitutes formal legal counsel.
+            </p>
+            <p style="margin: 0;">
+                <strong>AS-IS Disclaimer:</strong> THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT.
+            </p>
+        </div>
+    </div>
+</body>
+</html>

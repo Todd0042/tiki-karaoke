@@ -1,0 +1,593 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ bar_name }} - Main Stage</title>
+    <link rel="icon" type="image/x-icon" href="/favicon.ico">
+    <link rel="stylesheet" href="/static/css/tiki-theme.css?v=20261020_singer_joined_pill">
+    <style>
+        body, html {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #05080f;
+        }
+
+        #stageContainer {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            height: 100dvh;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
+
+        #videoViewport {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+            background: #000;
+        }
+
+        #localVideo, #fillerVideo, #youtubeContainer, #youtubeContainer iframe {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            border: none;
+            z-index: 2;
+        }
+
+        /* Top HUD Bar */
+        #topHUD {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 70px;
+            z-index: 10;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0 30px;
+            background: linear-gradient(180deg, rgba(8, 14, 24, 0.9) 0%, transparent 100%);
+            pointer-events: none;
+        }
+
+        /* Bottom Now Playing Bar */
+        #nowPlayingBar {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 90px;
+            z-index: 10;
+            display: none;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0 30px;
+            background: linear-gradient(0deg, rgba(8, 14, 24, 0.95) 0%, transparent 100%);
+            border-top: 1px solid rgba(0, 240, 255, 0.2);
+        }
+
+        /* Public Join QR Overlay */
+        #joinQROverlay {
+            position: absolute;
+            bottom: 25px;
+            right: 30px;
+            z-index: 50;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 10px 14px;
+            border-radius: 14px;
+            background: rgba(16, 28, 45, 0.85);
+            backdrop-filter: blur(10px);
+            border: 1px solid var(--border-neon);
+            box-shadow: 0 0 20px rgba(0, 240, 255, 0.25);
+            overflow: visible;
+            transition: bottom 0.25s ease;
+        }
+
+        @media (max-width: 768px) {
+            #topHUD {
+                padding: 0 14px;
+                height: 54px;
+            }
+            #topHUD h1 {
+                font-size: 1.05rem !important;
+            }
+            #upNextTicker {
+                display: none !important;
+            }
+            #joinQROverlay {
+                bottom: 12px !important;
+                right: 12px !important;
+                padding: 6px 10px !important;
+                gap: 8px !important;
+                border-radius: 10px !important;
+            }
+            #joinQROverlay img {
+                width: 46px !important;
+                height: 46px !important;
+            }
+            #nowPlayingBar {
+                height: 72px;
+                padding: 0 14px;
+            }
+            #nowSinger {
+                font-size: 1.2rem !important;
+            }
+            #nowTitle {
+                font-size: 0.95rem !important;
+            }
+        }
+
+        #joinQROverlay img {
+            width: 68px;
+            height: 68px;
+            border-radius: 6px;
+            background: #fff;
+            padding: 2px;
+        }
+
+        /* Intermission Stage Screen */
+        #intermissionOverlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 20;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            background: radial-gradient(circle at center, rgba(16, 28, 45, 0.85) 0%, rgba(8, 14, 24, 0.98) 100%);
+            text-align: center;
+        }
+
+        .countdown-circle {
+            width: 130px;
+            height: 130px;
+            border-radius: 50%;
+            border: 4px solid var(--neon-gold);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 3.5rem;
+            font-weight: 800;
+            color: var(--neon-gold);
+            box-shadow: 0 0 35px rgba(255, 183, 3, 0.4), inset 0 0 20px rgba(255, 183, 3, 0.2);
+            margin: 30px auto;
+        }
+
+        /* Floating Reactions Container - Mounted directly to top roof of QR Card */
+        #reactionContainer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 0;
+            pointer-events: none;
+            z-index: 1000;
+            overflow: visible;
+        }
+
+        /* Host QR Modal */
+        #hostQRModal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: rgba(0, 0, 0, 0.85);
+            backdrop-filter: blur(12px);
+            z-index: 100;
+            display: none;
+            justify-content: center;
+            align-items: center;
+        }
+
+        @keyframes tickerMarquee {
+            0% { transform: translateX(var(--marquee-start, 100vw)); }
+            100% { transform: translateX(var(--marquee-end, -100%)); }
+        }
+    </style>
+</head>
+<body>
+    <div id="stageContainer">
+        <!-- Video Viewport -->
+        <div id="videoViewport">
+            <video id="localVideo" style="display: none;" playsinline webkit-playsinline></video>
+            <video id="fillerVideo" style="display: none;" playsinline webkit-playsinline></video>
+            <canvas id="cdgCanvas" width="300" height="216" style="display: none; position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; z-index: 4; pointer-events: none;"></canvas>
+            <div id="youtubeContainer" style="display: none;">
+                <div id="youtubePlayer"></div>
+            </div>
+            <!-- Stage Particle & Audio-Reactive Canvas Layer -->
+            <canvas id="crowdParticleCanvas" style="position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 4;"></canvas>
+            <!-- Crowd Hype Combo Multiplier Banner (Bottom-Left Corner) -->
+            <div id="crowdHypeComboBanner" style="position: absolute; bottom: 92px; left: 24px; display: none; opacity: 0; z-index: 5; pointer-events: none; text-align: left; transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); transform-origin: bottom left; transform: scale(0.7);">
+                <div style="background: rgba(8, 6, 18, 0.94); border: 2px solid var(--neon-gold); box-shadow: 0 0 35px rgba(255, 183, 3, 0.6), inset 0 0 15px rgba(255, 42, 133, 0.4); border-radius: 18px; padding: 12px 22px;">
+                    <div class="font-tiki neon-gold" style="font-size: 1.5rem; letter-spacing: 1.5px; text-shadow: 0 0 15px #ffb703;">🔥 CROWD IN HYPER-DRIVE! 🔥</div>
+                    <div style="color: #fff; font-size: 0.9rem; font-weight: 700; margin-top: 2px; letter-spacing: 0.5px;">THE LOUNGE IS GOING WILD! 🍹👏🌴</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tap to Start / Unmute Overlay (For Mobile & Autoplay Policy) -->
+        <div id="unmuteOverlay" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 25; display: none; align-items: center; justify-content: center; background: rgba(0,0,0,0.5); cursor: pointer;" onclick="resumeStagePlayback()">
+            <button class="btn-neon-pink pulse-glow" style="padding: 16px 28px; font-size: 1.15rem; border-radius: 30px; pointer-events: none;">
+                ▶️ Tap to Start Stage Audio & Video
+            </button>
+        </div>
+
+        <!-- Top HUD -->
+        <div id="topHUD">
+            <div style="display: flex; align-items: center; gap: 12px; pointer-events: auto;">
+                <h1 class="font-tiki neon-cyan" style="font-size: 1.5rem; margin: 0;">🌴 {{ bar_name }}</h1>
+            </div>
+            <div style="display: flex; align-items: center; gap: 20px; pointer-events: auto;">
+                <div id="upNextTicker" style="color: var(--text-muted); font-size: 0.95rem;">
+                    <span style="color: var(--neon-pink); font-weight: 700;">UP NEXT:</span>
+                    <span id="upNextSinger">Queue is open</span>
+                </div>
+                <button onclick="event.stopPropagation(); this.blur(); fetchCurrentState(true);" class="btn-ghost" title="Resync Stage Player (Press R)" style="padding: 6px 12px; font-size: 0.9rem; color: var(--neon-cyan); border-color: rgba(0,240,255,0.4);">
+                    🔄 Sync
+                </button>
+                <button id="stageFullscreenBtn" onclick="event.stopPropagation(); this.blur(); toggleStageFullscreen();" class="btn-ghost" title="Toggle Fullscreen (F11)" style="padding: 6px 12px; font-size: 0.9rem; color: var(--neon-lime); border-color: rgba(57,255,20,0.4);">
+                    ⛶ Fullscreen (F11)
+                </button>
+            </div>
+        </div>
+
+        <!-- Intermission Stage View -->
+        <div id="intermissionOverlay">
+            <div style="margin-bottom: 10px;">
+                <span class="badge-youtube font-tiki" style="font-size: 0.9rem; padding: 6px 16px;">🎤 UP NEXT ON STAGE</span>
+            </div>
+            <h2 id="intermissionSinger" class="font-tiki neon-pink" style="font-size: 4rem; margin: 10px 0;">Next Singer</h2>
+            <h3 id="intermissionSong" class="neon-cyan" style="font-size: 2rem; font-weight: 400; margin: 5px 0;">Song Title</h3>
+            <div id="intermissionKey" class="badge-key" style="font-size: 1.1rem; margin-top: 8px;">Key: Standard</div>
+
+            <!-- Center Stage QR Code when Queue is Open (Dual Wi-Fi & Songbook Cards) -->
+            <div id="idleStageQRBox" style="display: none; flex-direction: column; align-items: center; margin: 16px auto;">
+                <div style="display: flex; gap: 24px; justify-content: center; align-items: stretch; flex-wrap: wrap;">
+                    <!-- Step 1: Hotspot Wi-Fi QR Card (Only shown if local hotspot is enabled and configured) -->
+                    <div id="idleWifiQRCard" style="display: {% if show_wifi_card %}block{% else %}none{% endif %}; background: rgba(16, 28, 45, 0.95); border: 2px solid var(--neon-cyan); border-radius: 20px; padding: 16px 20px; box-shadow: 0 0 35px rgba(0, 240, 255, 0.35); text-align: center; min-width: 190px;">
+                        <div style="font-size: 0.85rem; font-weight: 800; color: var(--neon-cyan); letter-spacing: 1px; text-transform: uppercase; margin-bottom: 8px;">
+                            📶 Step 1: Join Wi-Fi
+                        </div>
+                        <div style="background: #fff; padding: 8px; border-radius: 12px; display: inline-block;">
+                            <img id="stageWifiQrImg" src="/qr/wifi" alt="Scan to Join Wi-Fi" style="width: 150px; height: 150px; display: block; border-radius: 6px;">
+                        </div>
+                        <div style="margin-top: 8px; font-size: 0.82rem; color: #fff;">
+                            Wi-Fi: <strong id="stageWifiSsid" style="color: var(--neon-cyan);">{{ hotspot_ssid }}</strong>
+                        </div>
+                        <div style="font-size: 0.76rem; color: var(--text-muted); margin-top: 2px;">
+                            Pass: <strong id="stageWifiPass" style="color: var(--neon-pink);">{{ hotspot_password }}</strong>
+                        </div>
+                    </div>
+
+                    <!-- Step 2 / Primary Songbook QR Card -->
+                    <div id="idleAppQRCard" style="background: rgba(16, 28, 45, 0.95); border: 2px solid var(--neon-gold); border-radius: 20px; padding: 16px 20px; box-shadow: 0 0 35px rgba(255, 183, 3, 0.35); text-align: center; min-width: 190px;">
+                        <div id="idleAppQRTitle" style="font-size: 0.85rem; font-weight: 800; color: var(--neon-gold); letter-spacing: 1px; text-transform: uppercase; margin-bottom: 8px;">
+                            {% if show_wifi_card %}📱 Step 2: Request Songs{% else %}📱 Scan to Request Songs{% endif %}
+                        </div>
+                        <div style="background: #fff; padding: 8px; border-radius: 12px; display: inline-block;">
+                            <img id="stagePublicQrImg" src="/qr/public" alt="Scan to Sing" style="width: 150px; height: 150px; display: block; border-radius: 6px;">
+                        </div>
+                        <div style="margin-top: 8px; font-size: 0.82rem; color: #fff;">
+                            Open in phone browser:
+                        </div>
+                        <div id="stageJoinUrlText" style="font-size: 0.78rem; color: var(--neon-gold); margin-top: 2px; font-family: monospace; font-weight: 700;">
+                            {{ display_ip }}
+                        </div>
+                    </div>
+                </div>
+
+                <div style="margin-top: 14px; font-size: 1.1rem; font-weight: 700; color: var(--neon-gold); letter-spacing: 0.5px;">
+                    Scan with your camera to connect & pick songs! 🌺
+                </div>
+            </div>
+
+            <div class="countdown-circle" id="countdownCircle">
+                <span id="countdownNumber">20</span>
+            </div>
+            <p id="intermissionSubtext" style="color: var(--text-muted); font-size: 1.1rem;">Get ready! Head up to the microphone! 🌺</p>
+        </div>
+
+        <!-- BGM Filler 15s Open Mic Buffer Overlay -->
+        <div id="fillerBufferOverlay" style="display: none; position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 16; flex-direction: column; align-items: center; justify-content: center; background: radial-gradient(circle at center, rgba(16, 28, 45, 0.96) 0%, rgba(5, 8, 15, 0.98) 100%); backdrop-filter: blur(10px); text-align: center; padding: 20px;">
+            <div style="margin-bottom: 12px;">
+                <span class="badge-youtube font-tiki" style="font-size: 1.1rem; padding: 8px 24px; background: rgba(0, 240, 255, 0.18); border: 1px solid var(--neon-cyan); color: var(--neon-cyan); border-radius: 20px;">🌴 OPEN MIC COOLDOWN</span>
+            </div>
+            <h2 class="font-tiki neon-gold" style="font-size: 3.5rem; margin: 10px 0;">The Stage Is Open!</h2>
+            <p style="color: var(--text-muted); font-size: 1.25rem; max-width: 620px; margin: 0 auto 16px;">
+                Nobody is in line! Scan with your phone now to request a song and take the microphone!
+            </p>
+            <div style="background: #fff; padding: 14px; border-radius: 20px; box-shadow: 0 0 40px rgba(0, 240, 255, 0.5); display: inline-block; margin-bottom: 16px;">
+                <img src="/qr/public" alt="Scan to Sing" style="width: 200px; height: 200px; display: block; border-radius: 8px;">
+            </div>
+            <div class="countdown-circle" id="fillerCountdownCircle" style="width: 70px; height: 70px; margin: 0 auto 10px;">
+                <span id="fillerCountdownNumber" style="font-size: 1.8rem; font-weight: 700; color: var(--neon-cyan);">15</span>
+            </div>
+            <div style="font-size: 0.95rem; color: var(--text-muted);">
+                DJ music video starting shortly...
+            </div>
+        </div>
+
+        <!-- BGM Filler Playing HUD Overlays -->
+        <div id="fillerQRCard" style="display: none; position: absolute; bottom: 46px; right: 28px; z-index: 50; overflow: visible; align-items: center; gap: 14px; padding: 12px 18px; border-radius: 18px; background: rgba(8, 14, 24, 0.88); backdrop-filter: blur(12px); border: 2px solid var(--neon-cyan); box-shadow: 0 0 25px rgba(0, 240, 255, 0.35);">
+            <img id="stageFillerQrImg" src="/qr/public" alt="Scan to Sing" style="width: 90px; height: 90px; border-radius: 8px; background: #fff; padding: 4px;">
+            <div>
+                <div style="font-size: 0.78rem; color: var(--neon-pink); font-weight: 700; letter-spacing: 0.5px;">🌴 OPEN MIC KARAOKE</div>
+                <div style="font-size: 1.1rem; font-weight: 700; color: #fff;">Scan to Sing Next!</div>
+                <div id="stageFillerDisplayIp" style="font-size: 0.75rem; color: var(--neon-gold); margin-top: 2px;">{{ display_ip }}</div>
+            </div>
+        </div>
+
+        <!-- BGM Filler Bottom Scrolling Ticker -->
+        <div id="fillerTickerBar" style="display: none; position: absolute; bottom: 0; left: 0; right: 0; height: 38px; z-index: 18; background: rgba(8, 14, 24, 0.95); border-top: 1px solid rgba(0, 240, 255, 0.3); overflow: hidden; align-items: center; transition: bottom 0.25s ease;">
+            <div id="fillerTickerText" style="white-space: nowrap; font-size: 0.95rem; font-weight: 600; color: var(--neon-cyan); will-change: transform; display: inline-block;">
+                🌴 DJ LOUNGE MUSIC • 🌺 OPEN MIC: Scan the QR code to queue your favorite song!
+            </div>
+        </div>
+
+        <!-- Now Playing Bar -->
+        <div id="nowPlayingBar">
+            <div style="display: flex; align-items: center; gap: 16px;">
+                <div style="background: rgba(255,42,133,0.2); border: 1px solid var(--neon-pink); width: 48px; height: 48px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.5rem;">
+                    🎤
+                </div>
+                <div>
+                    <div style="font-size: 0.85rem; color: var(--neon-pink); font-weight: 700;">NOW SINGING</div>
+                    <div id="nowSinger" class="font-tiki neon-cyan" style="font-size: 1.6rem; line-height: 1.1;">Singer Name</div>
+                </div>
+            </div>
+
+            <div style="text-align: center;">
+                <div id="nowTitle" style="font-size: 1.3rem; font-weight: 600;">Artist - Title</div>
+            </div>
+
+            <div style="display: flex; align-items: center; gap: 12px;">
+                <div id="nowPitchBadge" class="badge-key" style="display: none;">Key: Standard</div>
+            </div>
+        </div>
+
+        <!-- Public QR Code Overlay -->
+        <div id="joinQROverlay">
+            <!-- Floating Reactions Container: Affixed directly to top roof of QR card -->
+            <div id="reactionContainer"></div>
+
+            <img id="stageJoinQrImg" src="/qr/public" alt="Scan to Sing">
+            <div>
+                <div style="font-size: 0.75rem; color: var(--neon-cyan); font-weight: 700;">JOIN THE PARTY</div>
+                <div style="font-size: 0.85rem; font-weight: 600;">Scan to Sing</div>
+                <div id="stageJoinDisplayIp" style="font-size: 0.65rem; color: var(--text-muted);">{{ display_ip }}</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Private Host QR Modal -->
+    <div id="hostQRModal" onclick="if(event.target === this) toggleHostQRModal()">
+        <div class="tiki-card-pink" style="max-width: 420px; width: 90%; padding: 30px; text-align: center;">
+            <h2 class="font-tiki neon-pink" style="font-size: 1.8rem; margin-bottom: 8px;">👑 Host DJ Remote</h2>
+            <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 20px;">
+                Scan with your phone to take master DJ controls anywhere in the party!
+            </p>
+            <div style="background: #fff; padding: 12px; display: inline-block; border-radius: 12px; box-shadow: 0 0 25px rgba(255,42,133,0.5);">
+                <img src="/qr/host" alt="Host Pairing QR" style="width: 220px; height: 220px; display: block;">
+            </div>
+            <div style="margin-top: 20px; font-size: 0.85rem; color: var(--neon-gold);">
+                Host PIN: <strong>{{ host_pin }}</strong>
+            </div>
+            <div style="margin-top: 15px; display: flex; gap: 10px;">
+                <button onclick="toggleHostQRModal()" class="btn-ghost" style="flex: 1;">Close</button>
+                <button onclick="confirmHostShutdown()" class="btn-ghost" style="flex: 1; color: #ff5555; border-color: rgba(255,85,85,0.4); font-weight: 700;" title="Stop all server processes and exit">🛑 Shutdown App</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Host Microphone & Live Mixing Modal -->
+    <div id="hostMicModal" style="position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0, 0, 0, 0.85); backdrop-filter: blur(12px); z-index: 100; display: none; justify-content: center; align-items: center;" onclick="if(event.target === this) toggleHostMicModal()">
+        <div class="tiki-card" style="max-width: 480px; width: 92%; padding: 26px; text-align: left; border: 1px solid var(--border-neon); box-shadow: 0 0 35px rgba(0, 240, 255, 0.3);">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                <h2 class="font-tiki neon-cyan" style="font-size: 1.6rem; margin: 0;">🎤 Microphone & Live Mixing</h2>
+                <button onclick="toggleHostMicModal()" class="btn-ghost" style="padding: 4px 10px; font-size: 0.9rem;">✕</button>
+            </div>
+
+            <!-- Input Device Selector -->
+            <!-- Monitoring Mode Selector -->
+            <div style="margin-bottom: 16px;">
+                <label for="hostMonitoringModeSelect" style="display: block; font-size: 0.85rem; font-weight: 700; color: #fff; margin-bottom: 6px;">🎧 Mic Monitoring Mode:</label>
+                <select id="hostMonitoringModeSelect" onchange="onHostMonitoringModeChange(this.value)" style="width: 100%; padding: 10px 12px; border-radius: 10px; background: rgba(16, 28, 45, 0.95); border: 1px solid var(--border-neon); color: #fff; font-size: 0.85rem; outline: none;">
+                    <option value="native">Native OS Direct (Low latency pactl / WASAPI loopback)</option>
+                    <option value="hardware_direct">Hardware Direct (Audio Interface Monitor Knob)</option>
+                    <option value="browser">Browser WebRTC (80–300ms, Bluetooth / TV / Fallback)</option>
+                </select>
+            </div>
+
+            <div style="margin-bottom: 16px;">
+                <label style="display: block; font-size: 0.85rem; font-weight: 700; color: #fff; margin-bottom: 6px;">Audio Input Device (Line-In / Mic / Receiver):</label>
+                <div style="display: flex; gap: 8px;">
+                    <select id="hostMicDeviceSelect" onchange="onHostMicDeviceChange(this.value)" style="flex: 1; padding: 10px 12px; border-radius: 10px; background: rgba(16, 28, 45, 0.95); border: 1px solid var(--border-neon); color: #fff; font-size: 0.9rem; outline: none;">
+                        <option value="default">Default Audio Input</option>
+                    </select>
+                    <button type="button" onclick="requestHostMicPermission()" class="btn-ghost" title="Grant or refresh microphone access" style="padding: 0 14px; font-size: 0.85rem; border-color: var(--neon-cyan); color: var(--neon-cyan); border-radius: 10px; cursor: pointer; white-space: nowrap;">
+                        🎙️ Connect
+                    </button>
+                </div>
+                <div style="font-size: 0.72rem; color: var(--text-muted); margin-top: 4px;">
+                    Supports USB mics, 3.5mm line-in, and dual-channel wireless mic receivers.
+                </div>
+                <div id="micNativeWarning" style="display: none; margin-top: 8px; padding: 10px 12px; border-radius: 10px; background: rgba(255, 183, 3, 0.12); border: 1px solid rgba(255, 183, 3, 0.45); font-size: 0.75rem; color: #ffb703; line-height: 1.45;">
+                    ⚠️ <strong>Native mic routing unavailable.</strong> Singers will not hear themselves through the venue speakers.
+                    <span id="micNativeWarningHint"></span>
+                </div>
+                <!-- Hardware Direct mode hint: controls disabled intentionally -->
+                <div id="micModeHint" style="display: none; margin-top: 8px; padding: 10px 12px; border-radius: 10px; background: rgba(57,255,20,0.08); border: 1px solid rgba(57,255,20,0.3); font-size: 0.75rem; color: #39ff14; line-height: 1.45;">
+                    🎛️ <strong>Hardware Direct mode.</strong> Your interface's monitor knob controls the mic level. Mute and volume controls are disabled — use the physical interface.
+                </div>
+            </div>
+
+            <!-- Mic Master State & Volume -->
+            <div style="display: flex; gap: 10px; align-items: center; margin-bottom: 18px;">
+                <button id="modalMicToggleBtn" onclick="toggleStageMic()" class="btn-ghost" style="flex: 1; padding: 12px; font-weight: 700; font-size: 0.95rem; border-radius: 12px; color: #ff5555; border-color: rgba(255,85,85,0.4);">
+                    🔇 Mic Muted (OFF)
+                </button>
+                <div style="flex: 1.2;">
+                    <div style="display: flex; justify-content: space-between; font-size: 0.8rem; font-weight: 700; margin-bottom: 4px;">
+                        <span>Mic Volume</span>
+                        <span id="modalMicVolumeText" style="color: var(--neon-cyan);">80%</span>
+                    </div>
+                    <input type="range" id="modalMicVolumeSlider" min="0" max="150" value="80" oninput="onHostMicVolumeChange(this.value)" style="width: 100%; accent-color: var(--neon-cyan);">
+                </div>
+            </div>
+
+            <!-- Dual VU Meters (Singer 1 / Left & Singer 2 / Right) -->
+            <div style="background: rgba(8, 14, 24, 0.7); padding: 12px 14px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.08); margin-bottom: 18px;">
+                <div style="font-size: 0.78rem; font-weight: 700; color: var(--text-muted); margin-bottom: 8px; display: flex; justify-content: space-between;">
+                    <span>LIVE DUAL-SINGER VU METERS</span>
+                    <span id="micLiveStatusBadge" style="color: #ff5555; font-size: 0.72rem; font-weight: 700;">MUTED</span>
+                </div>
+                <!-- Meter 1 -->
+                <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
+                    <span style="font-size: 0.72rem; font-weight: 700; width: 68px; color: var(--neon-pink);">Singer 1 (L)</span>
+                    <div style="flex: 1; height: 10px; background: rgba(255,255,255,0.1); border-radius: 5px; overflow: hidden; position: relative;">
+                        <div id="vuMeterBarL" style="height: 100%; width: 0%; background: linear-gradient(90deg, #00f0ff 0%, #39ff14 70%, #ff0055 95%); transition: width 0.05s ease;"></div>
+                    </div>
+                </div>
+                <!-- Meter 2 -->
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <span style="font-size: 0.72rem; font-weight: 700; width: 68px; color: var(--neon-cyan);">Singer 2 (R)</span>
+                    <div style="flex: 1; height: 10px; background: rgba(255,255,255,0.1); border-radius: 5px; overflow: hidden; position: relative;">
+                        <div id="vuMeterBarR" style="height: 100%; width: 0%; background: linear-gradient(90deg, #00f0ff 0%, #39ff14 70%, #ff0055 95%); transition: width 0.05s ease;"></div>
+                    </div>
+                </div>
+                <div style="font-size: 0.68rem; color: var(--text-muted); margin-top: 6px; text-align: right;">
+                    Left & Right channels are center-summed across all venue speakers
+                </div>
+            </div>
+
+            <!-- FX & Ducking Options -->
+            <div style="display: flex; flex-direction: column; gap: 12px; margin-bottom: 20px;">
+                <!-- Reverb Toggle -->
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                        <div style="font-size: 0.88rem; font-weight: 700; color: #fff;">🥥 Vocal Ambience Reverb</div>
+                        <div style="font-size: 0.72rem; color: var(--text-muted);">Warm plate room space to smooth vocal tremors</div>
+                    </div>
+                    <label class="switch-toggle">
+                        <input type="checkbox" id="modalMicReverbToggle" checked onchange="onHostMicReverbChange(this.checked)">
+                        <span class="slider-round"></span>
+                    </label>
+                </div>
+
+                <!-- Between-Song Ducking Toggle & Depth -->
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                        <div style="font-size: 0.88rem; font-weight: 700; color: #fff;">Intelligent Intermission Ducking</div>
+                        <div style="font-size: 0.72rem; color: var(--text-muted);">Auto-lowers lounge/filler music when speaking between songs</div>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <select id="modalDuckingDbSelect" onchange="onHostDuckingDbChange(this.value)" style="padding: 6px 8px; border-radius: 8px; background: rgba(16, 28, 45, 0.95); border: 1px solid var(--border-neon); color: #fff; font-size: 0.8rem; outline: none;">
+                            <option value="-3">-3 dB</option>
+                            <option value="-6" selected>-6 dB</option>
+                            <option value="-9">-9 dB</option>
+                            <option value="-12">-12 dB</option>
+                        </select>
+                        <label class="switch-toggle">
+                            <input type="checkbox" id="modalDuckingToggle" checked onchange="onHostDuckingToggleChange(this.checked)">
+                            <span class="slider-round"></span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+
+            <!-- CDG Karaoke Disc Styles & Themes -->
+            <div style="border-top: 1px solid rgba(255,255,255,0.08); padding-top: 14px; margin-bottom: 18px;">
+                <div style="font-size: 0.82rem; font-weight: 700; color: #fff; margin-bottom: 8px;">💿 Karaoke CD (CD+G) Visual Theme:</div>
+                <div style="display: flex; gap: 8px; margin-bottom: 10px;">
+                    <select id="cdgThemeSelect" onchange="onCdgThemeChange(this.value)" style="flex: 1; padding: 8px 10px; border-radius: 8px; background: rgba(16, 28, 45, 0.95); border: 1px solid var(--border-neon); color: #fff; font-size: 0.8rem; outline: none;">
+                        <option value="neon">🌴 Tiki Neon (Transparent Stage + Glowing Lyrics)</option>
+                        <option value="sunset">🌅 Tropical Sunset (Amber Gold + Coral Wipe)</option>
+                        <option value="cyberpunk">⚡ Cyberpunk (Cyan + Laser Yellow)</option>
+                        <option value="classic">📻 Authentic 90s CD+G (Original Disc Colors)</option>
+                    </select>
+                </div>
+                <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.78rem;">
+                    <span>Neon Lyric Glow</span>
+                    <label class="switch-toggle">
+                        <input type="checkbox" id="cdgGlowToggle" checked onchange="onCdgGlowChange(this.checked)">
+                        <span class="slider-round"></span>
+                    </label>
+                </div>
+            </div>
+
+            <div style="text-align: right;">
+                <button onclick="toggleHostMicModal()" class="btn-ghost" style="padding: 8px 24px;">Done</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Background Intermission Music (BGM) -->
+    <audio id="bgmPlayer" preload="auto">
+        <source src="/static/bgm/01_neon_highway.mp3" type="audio/mpeg">
+    </audio>
+
+    <script src="/static/js/audio-dsp.js?v=20261020_mic_mixing"></script>
+    <script src="/static/js/cdg-renderer.js"></script>
+    <script src="/static/js/host-player.js?v=20261020_mic_mixing"></script>
+    <script>
+        // Multi-monitor coordinate and window positioning secondary enforcement
+        (function() {
+            try {
+                const params = new URLSearchParams(window.location.search);
+                const isKiosk = params.get("kiosk") === "true";
+                const dx = parseInt(params.get("disp_x"), 10);
+                const dy = parseInt(params.get("disp_y"), 10);
+                const dw = parseInt(params.get("disp_w"), 10);
+                const dh = parseInt(params.get("disp_h"), 10);
+                if (!isKiosk && !isNaN(dx) && !isNaN(dy)) {
+                    window.moveTo(dx, dy);
+                    if (!isNaN(dw) && !isNaN(dh) && dw > 200 && dh > 200) {
+                        window.resizeTo(dw, dh);
+                    }
+                }
+            } catch (e) {
+                console.warn("[Display Setup] Window positioning note:", e);
+            }
+        })();
+
+        function toggleStageFullscreen() {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen().catch(() => {});
+            } else {
+                if (document.exitFullscreen) document.exitFullscreen().catch(() => {});
+            }
+        }
+        function updateFullscreenBadge() {
+            const isFull = !!document.fullscreenElement;
+            const btn = document.getElementById("stageFullscreenBtn");
+            if (btn) btn.innerHTML = isFull ? "🗗 Windowed (Esc)" : "⛶ Fullscreen (F11)";
+        }
+        document.addEventListener("fullscreenchange", updateFullscreenBadge);
+        window.addEventListener("keydown", (e) => {
+            if (e.key === "F11" || e.key === "Escape") {
+                setTimeout(updateFullscreenBadge, 200);
+            }
+        });
+    </script>
+</body>
+</html>

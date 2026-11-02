@@ -1,0 +1,19 @@
+pkgbase = tiki-karaoke-bin
+	pkgdesc = Turnkey Dual-Screen Karaoke Party Server & Host DJ Engine with Web Audio DSP, Live QR Queue, and Cloudflare SSL
+	pkgver = 1.0.9
+	pkgrel = 1
+	url = https://github.com/Todd0042/tiki-karaoke
+	arch = x86_64
+	license = custom:PolyForm-Noncommercial-1.0.0
+	depends = fuse2
+	depends = ffmpeg
+	optdepends = pipewire-pulse: for PipeWire audio routing
+	optdepends = pulseaudio: for legacy PulseAudio routing
+	provides = tiki-karaoke
+	conflicts = tiki-karaoke
+	source = tiki-karaoke-bin-1.0.9.AppImage::https://github.com/Todd0042/tiki-karaoke/releases/download/v1.0.9/TikiKaraoke-Pro-v1.0.9-x86_64.AppImage
+	source = tiki-karaoke.desktop
+	sha256sums = 817961820f5fae7080e57453a4e001876b6a751bb9f1c8822646b63e5e442582
+	sha256sums = SKIP
+
+pkgname = tiki-karaoke-bin

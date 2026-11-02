@@ -1,0 +1,1519 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>{{ bar_name }} - Mobile DJ</title>
+    <link rel="icon" type="image/x-icon" href="/favicon.ico">
+    <link rel="stylesheet" href="/static/css/tiki-theme.css?v=20261020_sing_along">
+    <style>
+        body {
+            padding-bottom: 105px;
+        }
+
+        body.host-mode-active {
+            padding-bottom: 165px;
+        }
+
+        .avatar-option {
+            font-size: 2rem;
+            padding: 8px;
+            cursor: pointer;
+            border-radius: 12px;
+            border: 2px solid transparent;
+            transition: all 0.2s ease;
+            position: relative;
+        }
+
+        .avatar-option.selected {
+            border-color: var(--neon-cyan);
+            background: rgba(0, 240, 255, 0.2);
+            box-shadow: 0 0 15px rgba(0, 240, 255, 0.4);
+        }
+
+        .avatar-option.disabled-avatar {
+            opacity: 0.28 !important;
+            filter: grayscale(1) !important;
+            pointer-events: none !important;
+            cursor: not-allowed !important;
+            border-color: rgba(255, 85, 85, 0.3) !important;
+            background: rgba(255, 85, 85, 0.08) !important;
+            box-shadow: none !important;
+        }
+
+        .avatar-option.disabled-avatar::after {
+            content: "✕";
+            position: absolute;
+            top: -2px;
+            right: -2px;
+            font-size: 0.65rem;
+            font-weight: 900;
+            color: #fff;
+            background: #ff5555;
+            border-radius: 50%;
+            width: 15px;
+            height: 15px;
+            line-height: 15px;
+            text-align: center;
+        }
+
+        .pitch-btn {
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            color: var(--text-main);
+            padding: 8px 12px;
+            border-radius: 8px;
+            font-weight: 700;
+            cursor: pointer;
+            flex: 1;
+            text-align: center;
+        }
+
+        .pitch-btn.active {
+            background: rgba(255, 42, 133, 0.25);
+            border-color: var(--neon-pink);
+            color: var(--neon-pink);
+            box-shadow: 0 0 10px rgba(255, 42, 133, 0.5);
+        }
+
+        .reaction-btn {
+            font-size: 1.8rem;
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            border-radius: 50%;
+            width: 52px;
+            height: 52px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: transform 0.15s ease;
+        }
+
+        .reaction-btn:active {
+            transform: scale(1.25);
+            background: rgba(255, 42, 133, 0.3);
+        }
+
+        .lib-sort-btn {
+            padding: 6px 14px;
+            border-radius: 20px;
+            background: rgba(8, 14, 24, 0.85);
+            border: 1px solid rgba(0, 240, 255, 0.25);
+            color: var(--text-muted);
+            font-size: 0.8rem;
+            font-weight: 600;
+            cursor: pointer;
+            white-space: nowrap;
+            transition: all 0.2s;
+        }
+
+        .lib-sort-btn.active {
+            background: rgba(0, 240, 255, 0.18);
+            border-color: var(--neon-cyan);
+            color: var(--neon-cyan);
+            box-shadow: 0 0 10px rgba(0, 240, 255, 0.35);
+        }
+
+        .search-clear-btn {
+            position: absolute;
+            right: 12px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.14);
+            border: none;
+            color: #cbd5e1;
+            font-size: 13px;
+            font-weight: 700;
+            cursor: pointer;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            line-height: 1;
+            transition: all 0.2s ease;
+            z-index: 2;
+        }
+
+        .search-clear-btn:hover, .search-clear-btn:active {
+            background: rgba(255, 42, 133, 0.4);
+            color: #fff;
+            box-shadow: 0 0 8px rgba(255, 42, 133, 0.6);
+        }
+    </style>
+</head>
+<body>
+    <!-- Mobile App Header -->
+    <header style="padding: 16px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(0, 240, 255, 0.2);">
+        <div>
+            <h1 class="font-tiki neon-cyan" style="font-size: 1.3rem; margin: 0; cursor: pointer; user-select: none;" onclick="openHostLoginModal()" title="Host DJ Login">🌴 {{ bar_name }}</h1>
+        </div>
+        <div id="headerSingerBadge" class="badge-local" style="font-size: 0.9rem; cursor: pointer;" onclick="showOnboardingModal()">
+            🌺 Welcome
+        </div>
+    </header>
+
+    <main style="padding: 16px;">
+        <!-- TAB 1: Search & Request -->
+        <section id="searchTab" class="tab-view" style="display: none;">
+            <div style="position: relative; margin-bottom: 12px;">
+                <input type="text" id="searchInput" placeholder="🔍 Search song title or artist..." 
+                       style="width: 100%; padding: 14px 44px 14px 18px; border-radius: 14px; background: rgba(16, 28, 45, 0.9); border: 1px solid var(--border-neon); color: #fff; font-size: 1rem; outline: none; box-shadow: 0 0 15px rgba(0, 240, 255, 0.15);">
+                <button id="searchClearBtn" type="button" class="search-clear-btn" aria-label="Clear search" onclick="clearSearchInput()">
+                    ✕
+                </button>
+            </div>
+
+            <!-- Sing-Along Mode Toggle -->
+            <div class="sing-along-toggle-row" style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; padding: 10px 14px; background: rgba(16, 28, 45, 0.7); border: 1px solid rgba(255, 183, 3, 0.25); border-radius: 12px;">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <span style="font-size: 1.25rem;">👥</span>
+                    <div>
+                        <div style="font-size: 0.88rem; font-weight: 700; color: #fff;">Sing-Along Mode</div>
+                        <div style="font-size: 0.74rem; color: var(--text-muted);">Lead vocals included with lyrics for shy singers</div>
+                    </div>
+                </div>
+                <label class="switch-toggle" title="Toggle Sing-Along Mode (Vocals Included)">
+                    <input type="checkbox" id="singAlongToggleSearch" onchange="onSingAlongToggleChange(this.checked)">
+                    <span class="slider-round"></span>
+                </label>
+            </div>
+
+            <div id="searchResults">
+                <div style="text-align: center; padding: 40px 20px; color: var(--text-muted);">
+                    <div style="font-size: 2.5rem; margin-bottom: 8px;">🎤</div>
+                    <p>Type a song or artist above to search our instant local library and YouTube!</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- TAB: Instant Library (Browsable & Sorted) -->
+        <section id="libraryTab" class="tab-view" style="display: block;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                <h2 class="font-tiki neon-lime" style="font-size: 1.3rem; margin: 0;">⚡ Local Tiki Library</h2>
+                <span id="libraryTotalBadge" class="badge-local" style="font-size: 0.8rem;">0 songs</span>
+            </div>
+            <p style="color: var(--text-muted); font-size: 0.8rem; margin: 0 0 12px 0;">
+                All songs saved on our local NVMe storage. Plays instantly with zero wait!
+            </p>
+
+            <!-- Sing-Along Mode Toggle (Library View) -->
+            <div class="sing-along-toggle-row" style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; padding: 10px 14px; background: rgba(16, 28, 45, 0.7); border: 1px solid rgba(255, 183, 3, 0.25); border-radius: 12px;">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <span style="font-size: 1.25rem;">👥</span>
+                    <div>
+                        <div style="font-size: 0.88rem; font-weight: 700; color: #fff;">Sing-Along Library</div>
+                        <div style="font-size: 0.74rem; color: var(--text-muted);">Show downloaded sing-along tracks with lead vocals</div>
+                    </div>
+                </div>
+                <label class="switch-toggle" title="Toggle Sing-Along Mode (Vocals Included)">
+                    <input type="checkbox" id="singAlongToggleLibrary" onchange="onSingAlongToggleChange(this.checked)">
+                    <span class="slider-round"></span>
+                </label>
+            </div>
+
+            <!-- Search & Artist Filter -->
+            <div style="display: flex; gap: 8px; margin-bottom: 12px;">
+                <div style="flex: 2; position: relative;">
+                    <input type="text" id="libSearchInput" placeholder="Filter title or artist..." oninput="onLibrarySearchInput()"
+                           style="width: 100%; padding: 10px 36px 10px 14px; border-radius: 12px; background: rgba(16, 28, 45, 0.9); border: 1px solid var(--border-neon); color: #fff; font-size: 0.9rem; outline: none;">
+                    <button id="libSearchClearBtn" type="button" class="search-clear-btn" aria-label="Clear library search" onclick="clearLibrarySearchInput()" style="right: 8px; width: 24px; height: 24px; font-size: 11px;">
+                        ✕
+                    </button>
+                </div>
+                <select id="libArtistFilter" onchange="onLibraryArtistChange()"
+                        style="flex: 1.4; padding: 10px; border-radius: 12px; background: rgba(16, 28, 45, 0.9); border: 1px solid var(--border-neon); color: #fff; font-size: 0.82rem; outline: none;">
+                    <option value="">All Artists</option>
+                </select>
+            </div>
+
+            <!-- Sort Pills -->
+            <div style="display: flex; gap: 6px; overflow-x: auto; padding-bottom: 8px; margin-bottom: 14px;" class="custom-scroll">
+                <button class="lib-sort-btn active" data-sort="popularity" onclick="setLibrarySort('popularity')">🔥 Popular</button>
+                <button class="lib-sort-btn" data-sort="bring_back" onclick="setLibrarySort('bring_back')">🌴 Bring It Back</button>
+                <button class="lib-sort-btn" data-sort="recent" onclick="setLibrarySort('recent')">🕒 Recent</button>
+                <button class="lib-sort-btn" data-sort="least_played" onclick="setLibrarySort('least_played')">🆕 Least Played</button>
+                <button class="lib-sort-btn" data-sort="alpha" onclick="setLibrarySort('alpha')">🔤 A-Z</button>
+            </div>
+
+            <!-- Track List -->
+            <div id="libraryListContainer">
+                <div style="text-align: center; padding: 40px 20px; color: var(--text-muted);">
+                    <div style="font-size: 2rem; margin-bottom: 8px;">🌴</div>
+                    <p>Loading downloaded songs...</p>
+                </div>
+            </div>
+
+            <!-- Pagination Bar -->
+            <div id="libraryPaginationBar" style="display: none; justify-content: space-between; align-items: center; margin-top: 20px; margin-bottom: 30px; padding-top: 14px; padding-bottom: 14px; border-top: 1px solid rgba(255,255,255,0.1);">
+                <button id="libPrevBtn" onclick="changeLibraryPage(-1)" class="btn-ghost" style="padding: 6px 14px; font-size: 0.85rem;">◀ Prev</button>
+                <span id="libPageInfo" style="font-size: 0.85rem; color: var(--text-muted);">Page 1 of 1</span>
+                <button id="libNextBtn" onclick="changeLibraryPage(1)" class="btn-ghost" style="padding: 6px 14px; font-size: 0.85rem;">Next ▶</button>
+            </div>
+        </section>
+
+        <!-- TAB 2: Live Queue -->
+        <section id="queueTab" class="tab-view" style="display: none;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px;">
+                <h2 class="font-tiki neon-pink" style="font-size: 1.3rem; margin: 0;">📜 Tonight's Stage Line-Up</h2>
+                <button onclick="loadLiveQueue()" class="btn-ghost" style="padding: 4px 10px; font-size: 0.8rem;">↻ Refresh</button>
+            </div>
+
+            <!-- Singer Self Status Banner (Active vs Break) -->
+            <div id="singerSelfStatusBanner"></div>
+
+            <!-- Crowd Reaction Bar -->
+            <div class="tiki-card" style="padding: 12px; margin-bottom: 16px; text-align: center;">
+                <div style="font-size: 0.75rem; color: var(--neon-gold); font-weight: 700; margin-bottom: 8px;">CROWD HYPE (TAP TO CHEER ON MAIN TV STAGE!)</div>
+                <div style="display: flex; justify-content: space-around;">
+                    <button onclick="sendReaction('🔥')" class="reaction-btn">🔥</button>
+                    <button onclick="sendReaction('🍹')" class="reaction-btn">🍹</button>
+                    <button onclick="sendReaction('🌴')" class="reaction-btn">🌴</button>
+                    <button onclick="sendReaction('👏')" class="reaction-btn">👏</button>
+                    <button onclick="sendReaction('🌺')" class="reaction-btn">🌺</button>
+                    <button onclick="sendReaction('🍻')" class="reaction-btn">🍻</button>
+                </div>
+            </div>
+
+            <div id="queueListContainer"></div>
+        </section>
+
+        <!-- TAB 3: My History & Songbook -->
+        <section id="historyTab" class="tab-view" style="display: none;">
+            <div class="tiki-card-pink" style="padding: 18px; text-align: center; margin-bottom: 20px;">
+                <div style="font-size: 2rem; margin-bottom: 6px;">🎰</div>
+                <h3 class="font-tiki neon-gold" style="font-size: 1.2rem; margin-bottom: 6px;">Indecisive? Spin the Tiki Wheel!</h3>
+                <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 12px;">Let the Tiki gods pick a crowd-pleasing karaoke anthem for you!</p>
+                <button onclick="spinTikiWheel()" class="btn-neon-pink" style="width: 100%;">
+                    🎲 Spin the Tiki Wheel
+                </button>
+            </div>
+
+            <!-- Personal Songbook Header -->
+            <div style="display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 12px;">
+                <div>
+                    <h2 class="font-tiki neon-cyan" style="font-size: 1.25rem; margin: 0 0 4px 0;">⭐ My Songbook</h2>
+                    <div id="songbookSubtext" style="font-size: 0.8rem; color: var(--text-muted);">Ranked by your most queued tracks across all visits</div>
+                </div>
+                <button onclick="loadSongbook()" class="btn-ghost" style="padding: 4px 10px; font-size: 0.78rem;">↻ Refresh</button>
+            </div>
+
+            <!-- Sort Pills -->
+            <div id="songbookSortPills" style="display: flex; gap: 6px; overflow-x: auto; padding-bottom: 8px; margin-bottom: 14px;" class="custom-scroll">
+                <button class="lib-sort-btn active" data-songbook-sort="frequency" onclick="setSongbookSort('frequency')">🔥 Most Queued</button>
+                <button class="lib-sort-btn" data-songbook-sort="recent" onclick="setSongbookSort('recent')">🕒 Recent</button>
+                <button class="lib-sort-btn" data-songbook-sort="alpha" onclick="setSongbookSort('alpha')">🔤 Title A-Z</button>
+            </div>
+
+            <!-- Ranked Song List -->
+            <div id="songbookList"></div>
+            <div id="historyList" style="display: none;"></div>
+
+            <!-- Personal Live Performance Recordings Souvenirs -->
+            <div style="margin-top: 24px; padding-top: 18px; border-top: 1px solid rgba(0, 240, 255, 0.2);">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                    <div>
+                        <h2 class="font-tiki neon-gold" style="font-size: 1.2rem; margin: 0 0 4px 0;">🎙️ My Live Recordings</h2>
+                        <div style="font-size: 0.78rem; color: var(--text-muted);">Souvenir audio of your performances with mics & music summed!</div>
+                    </div>
+                    <button onclick="loadSingerRecordings()" class="btn-ghost" style="padding: 4px 10px; font-size: 0.78rem;">↻ Refresh</button>
+                </div>
+                <div id="singerRecordingsList"></div>
+            </div>
+        </section>
+
+        <!-- TAB 4: Host DJ Controls (Protected) -->
+        <section id="hostTab" class="tab-view" style="display: none;">
+            <div class="tiki-card-pink" style="padding: 16px; margin-bottom: 16px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                    <h2 class="font-tiki neon-pink" style="font-size: 1.3rem; margin: 0;">👑 Master Host Desk</h2>
+                    <span class="badge-local" style="font-size: 0.75rem;">Host Desk</span>
+                </div>
+
+                <!-- First-Run Quickstart Guide Banner (Dismissible) -->
+                <div id="hostQuickstartCard" class="tiki-card" style="margin-bottom: 14px; padding: 14px; border-left: 4px solid var(--neon-gold); display: none;">
+                    <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
+                        <span style="font-weight: 700; font-size: 0.95rem; color: var(--neon-gold);">🚀 Welcome to Tiki Karaoke!</span>
+                        <button type="button" onclick="dismissQuickstartCard()" class="btn-ghost" style="padding: 2px 8px; font-size: 0.75rem; border: none; color: var(--text-muted); cursor: pointer;">✕</button>
+                    </div>
+                    <p style="font-size: 0.8rem; color: #ddd; margin: 0 0 10px 0; line-height: 1.4;">
+                        Your lounge is ready! Here is the 3-step party loop:
+                    </p>
+                    <div style="display: flex; flex-direction: column; gap: 8px; font-size: 0.78rem; color: #ccc;">
+                        <div style="display: flex; gap: 8px; align-items: center;">
+                            <span style="background: rgba(255,183,3,0.2); color: var(--neon-gold); border-radius: 50%; width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; font-weight: bold; flex-shrink: 0;">1</span>
+                            <span><strong>Connect Guests:</strong> Point phone cameras at the stage QR code or print table tents.</span>
+                        </div>
+                        <div style="display: flex; gap: 8px; align-items: center;">
+                            <span style="background: rgba(0,240,255,0.2); color: var(--neon-cyan); border-radius: 50%; width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; font-weight: bold; flex-shrink: 0;">2</span>
+                            <span><strong>Queue Songs:</strong> Search any YouTube or local track from the Search tab.</span>
+                        </div>
+                        <div style="display: flex; gap: 8px; align-items: center;">
+                            <span style="background: rgba(0,255,100,0.2); color: var(--neon-lime); border-radius: 50%; width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; font-weight: bold; flex-shrink: 0;">3</span>
+                            <span><strong>Stage Display:</strong> Connect your TV via HDMI and open Stage View full screen!</span>
+                        </div>
+                    </div>
+                    <div style="margin-top: 12px; text-align: right;">
+                        <button type="button" onclick="dismissQuickstartCard()" class="btn-ghost" style="padding: 4px 12px; font-size: 0.75rem; border-color: rgba(255,183,3,0.4); color: var(--neon-gold);">Got it, Let's Party!</button>
+                    </div>
+                </div>
+
+                <!-- FFmpeg Missing Health Warning Banner -->
+                <div id="hostFfmpegBanner" class="tiki-card" style="margin-bottom: 14px; padding: 12px 14px; border-left: 4px solid #ff5555; background: rgba(255,50,50,0.08); display: none;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                        <span style="font-weight: 700; font-size: 0.85rem; color: #ff8888;">⚠️ FFmpeg Missing on Host Machine</span>
+                        <span style="font-size: 0.75rem; font-weight: 700; padding: 2px 8px; border-radius: 8px; background: rgba(255,50,50,0.25); color: #ff7777;">Action Required</span>
+                    </div>
+                    <p style="font-size: 0.76rem; color: #ffcccc; margin: 4px 0 6px 0; line-height: 1.35;">
+                        YouTube audio extraction and video conversion require FFmpeg. Run this in your terminal:
+                    </p>
+                    <code style="display: block; font-size: 0.72rem; padding: 6px 8px; background: rgba(0,0,0,0.5); border-radius: 4px; color: #aaffaa; word-break: break-all;">sudo apt install -y ffmpeg</code>
+                </div>
+
+                <!-- ============================================================== -->
+                <!-- TIER 1: LIVE STAGE TRANSPORT & PLAYBACK CONTROLS (MOST USED)   -->
+                <!-- ============================================================== -->
+                <div style="margin-bottom: 18px;">
+                    <div style="font-size: 0.82rem; color: var(--neon-cyan); font-weight: 700; margin-bottom: 8px; letter-spacing: 0.5px;">
+                        ⚡ LIVE STAGE TRANSPORT & PLAYBACK
+                    </div>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px;">
+                        <button onclick="hostPauseResume()" class="btn-ghost" style="padding: 12px; font-weight: 700; font-size: 0.95rem;">⏯️ Pause / Play</button>
+                        <button onclick="hostSkip()" class="btn-ghost" style="color: #ff5555; border-color: rgba(255,85,85,0.4); padding: 12px; font-weight: 700; font-size: 0.95rem;">⏭️ Skip Track</button>
+                        <button onclick="hostStartNow()" class="btn-neon-cyan" style="padding: 12px; font-weight: 700; font-size: 0.95rem;">⚡ Start Stage Now</button>
+                        <button onclick="hostAdd15s()" class="btn-ghost" style="padding: 12px; font-weight: 700; font-size: 0.95rem;">+15s Timer</button>
+                        <button onclick="hostStop()" class="btn-ghost" style="color: #ffaa00; border-color: rgba(255,170,0,0.4); padding: 10px;">⏹️ Stop Stage</button>
+                        <button onclick="hostRefreshStage()" class="btn-ghost" style="color: var(--neon-cyan); border-color: rgba(0,240,255,0.4); padding: 10px;">🔄 Refresh Stage</button>
+                    </div>
+                </div>
+
+                <!-- Between-Song Intermission Vibe Mode Card -->
+                <div class="tiki-card" style="padding: 12px 14px; margin-bottom: 18px; border-left: 4px solid var(--neon-gold); background: rgba(255, 183, 3, 0.05);">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                        <span style="font-size: 0.82rem; font-weight: 700; color: var(--neon-gold); letter-spacing: 0.5px;">
+                            🌴 BETWEEN-SONG INTERMISSION VIBE:
+                        </span>
+                        <span id="hostVibeActiveBadge" style="font-size: 0.72rem; font-weight: 700; padding: 2px 8px; border-radius: 6px; background: rgba(0,240,255,0.15); color: var(--neon-cyan);">
+                            🎤 Sing-Alongs
+                        </span>
+                    </div>
+                    <div style="display: flex; gap: 6px; margin-bottom: 6px;">
+                        <button type="button" id="hostVibeModeFillerBtn" onclick="setIntermissionVibeMode('pure_filler')" class="lib-sort-btn" style="flex: 1; font-size: 0.76rem; padding: 8px 4px; border-radius: 8px;">
+                            📼 Music Videos
+                        </button>
+                        <button type="button" id="hostVibeModeSingAlongBtn" onclick="setIntermissionVibeMode('sing_along')" class="lib-sort-btn active" style="flex: 1; font-size: 0.76rem; padding: 8px 4px; border-radius: 8px;">
+                            🎤 Sing-Alongs
+                        </button>
+                        <button type="button" id="hostVibeModeMashupBtn" onclick="setIntermissionVibeMode('intelligent_mashup')" class="lib-sort-btn" style="flex: 1; font-size: 0.76rem; padding: 8px 4px; border-radius: 8px;">
+                            🧠 Smart Mashup
+                        </button>
+                    </div>
+                    <div id="hostVibeModeDesc" style="font-size: 0.73rem; color: #cbd5e1; line-height: 1.35; font-style: italic;">
+                        True Karaoke: Crowd sing-along tracks with guide vocals & lyrics between songs.
+                    </div>
+                </div>
+
+                <!-- ============================================================== -->
+                <!-- TIER 2: LIVE VOCAL MIXING & SOUNDBOARD                         -->
+                <!-- ============================================================== -->
+                <div class="tiki-card" style="margin: 18px 0; padding: 14px; border-left: 4px solid var(--neon-cyan);">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                        <span style="font-weight: 700; font-size: 0.88rem; color: #fff;">🎤 Live Stage Microphone & Mixing</span>
+                        <span id="mobileHostMicBadge" style="font-size: 0.78rem; font-weight: 700; padding: 3px 8px; border-radius: 6px; background: rgba(255, 85, 85, 0.2); color: #ff5555; border: 1px solid rgba(255, 85, 85, 0.4);">MUTED</span>
+                    </div>
+
+                    <!-- Native routing unavailable warning -->
+                    <div id="mobileHostMicNativeWarning" style="display: none; margin-bottom: 10px; padding: 10px 12px; border-radius: 10px; background: rgba(255, 183, 3, 0.12); border: 1px solid rgba(255, 183, 3, 0.45); font-size: 0.75rem; color: #ffb703; line-height: 1.45;">
+                        ⚠️ <strong>Native mic routing unavailable.</strong> Singers will not hear themselves through the venue speakers.
+                        <span id="mobileHostMicNativeWarningHint"></span>
+                    </div>
+
+                    <!-- Hardware Direct mode hint -->
+                    <div id="mobileMicModeHint" style="display: none; margin-bottom: 10px; padding: 10px 12px; border-radius: 10px; background: rgba(57,255,20,0.08); border: 1px solid rgba(57,255,20,0.3); font-size: 0.75rem; color: #39ff14; line-height: 1.45;">
+                        🎛️ <strong>Hardware Direct mode.</strong> Your audio interface's monitor knob controls the mic level. Mute and volume controls are disabled — use the interface.
+                    </div>
+
+                    <!-- Master Mic Toggle Button -->
+                    <div style="margin-bottom: 12px;">
+                        <button id="mobileHostMicToggleBtn" onclick="hostToggleMic()" type="button" class="btn-ghost" style="width: 100%; padding: 12px; font-weight: 700; font-size: 0.95rem; color: #ff5555; border-color: rgba(255,85,85,0.4); border-radius: 10px;">
+                            🔇 Stage Mic Muted (OFF)
+                        </button>
+                    </div>
+
+                    <!-- Mic Master Volume Slider -->
+                    <div style="margin-bottom: 14px;">
+                        <div style="display: flex; justify-content: space-between; font-size: 0.78rem; font-weight: 700; margin-bottom: 4px;">
+                            <span style="color: var(--text-muted);">Mic Volume</span>
+                            <span id="mobileHostMicVolText" style="color: var(--neon-cyan);">80%</span>
+                        </div>
+                        <input type="range" id="mobileHostMicSlider" min="0" max="150" value="80" oninput="hostSetMicVolume(this.value)" style="width: 100%; accent-color: var(--neon-cyan);">
+                    </div>
+
+                    <!-- Live Dual-Singer VU Meters (L/R Channels) -->
+                    <div style="margin-bottom: 12px; padding: 10px 12px; border-radius: 8px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.06);">
+                        <div style="display: flex; justify-content: space-between; font-size: 0.72rem; font-weight: 700; margin-bottom: 6px;">
+                            <span style="color: var(--text-muted);">Live Input Signal (Dual-Singer L/R)</span>
+                            <span id="mobileVuStatusBadge" style="color: #ff5555;">MUTED</span>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 5px;">
+                            <span style="font-size: 0.68rem; font-weight: 700; color: var(--neon-cyan); width: 64px;">Singer 1 (L)</span>
+                            <div style="flex: 1; height: 9px; background: rgba(0, 0, 0, 0.6); border-radius: 5px; overflow: hidden; border: 1px solid rgba(255,255,255,0.12);">
+                                <div id="mobileVuMeterBarL" style="width: 0%; height: 100%; background: linear-gradient(90deg, #39ff14, #ffb703, #ff0055); transition: width 0.08s linear;"></div>
+                            </div>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <span style="font-size: 0.68rem; font-weight: 700; color: var(--neon-pink); width: 64px;">Singer 2 (R)</span>
+                            <div style="flex: 1; height: 9px; background: rgba(0, 0, 0, 0.6); border-radius: 5px; overflow: hidden; border: 1px solid rgba(255,255,255,0.12);">
+                                <div id="mobileVuMeterBarR" style="width: 0%; height: 100%; background: linear-gradient(90deg, #39ff14, #ffb703, #ff0055); transition: width 0.08s linear;"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Reverb & Ducking Toggles -->
+                    <div style="display: flex; flex-direction: column; gap: 10px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.08); margin-bottom: 12px;">
+                        <!-- Reverb Toggle -->
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <div>
+                                <div style="font-size: 0.82rem; font-weight: 700; color: #fff;">Vocal Ambience Reverb</div>
+                                <div style="font-size: 0.7rem; color: var(--text-muted);">Warm plate room effect</div>
+                            </div>
+                            <label class="switch-toggle">
+                                <input type="checkbox" id="mobileMicReverbToggle" checked onchange="hostToggleMicReverb(this.checked)">
+                                <span class="slider-round"></span>
+                            </label>
+                        </div>
+
+                        <!-- Intermission Ducking Toggle & Depth -->
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <div>
+                                <div style="font-size: 0.82rem; font-weight: 700; color: #fff;">Between-Song Ducking</div>
+                                <div style="font-size: 0.7rem; color: var(--text-muted);">Auto-lowers BGM when talking</div>
+                            </div>
+                            <div style="display: flex; align-items: center; gap: 6px;">
+                                <select id="mobileDuckingDbSelect" onchange="hostSetDuckingDb(this.value)" style="padding: 4px 6px; border-radius: 6px; background: rgba(16, 28, 45, 0.95); border: 1px solid var(--border-neon); color: #fff; font-size: 0.75rem; outline: none;">
+                                    <option value="-3">-3 dB</option>
+                                    <option value="-6" selected>-6 dB</option>
+                                    <option value="-9">-9 dB</option>
+                                    <option value="-12">-12 dB</option>
+                                </select>
+                                <label class="switch-toggle">
+                                    <input type="checkbox" id="mobileDuckingToggle" checked onchange="hostToggleDucking(this.checked)">
+                                    <span class="slider-round"></span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Live DJ Soundboard -->
+                    <div style="padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.08);">
+                        <div style="font-size: 0.78rem; color: var(--neon-cyan); font-weight: 700; margin-bottom: 8px;">LIVE DJ SOUNDBOARD</div>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                            <button onclick="hostPlaySound('airhorn')" class="btn-ghost" style="padding: 10px;">📢 Air Horn</button>
+                            <button onclick="hostPlaySound('applause')" class="btn-ghost" style="padding: 10px;">👏 Applause</button>
+                            <button onclick="hostPlaySound('rimshot')" class="btn-ghost" style="padding: 10px;">🥁 Rimshot</button>
+                            <button onclick="hostPlaySound('bird')" class="btn-ghost" style="padding: 10px;">🦜 Tropical Bird</button>
+                        </div>
+                    </div>
+
+                    <!-- Virtual DJ TTS Toggle -->
+                    <div style="margin-top: 12px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.08); display: flex; justify-content: space-between; align-items: center;">
+                        <span style="font-size: 0.85rem; font-weight: 600;">🎙️ TTS Virtual DJ Announcer:</span>
+                        <input type="checkbox" id="ttsToggle" onchange="hostToggleTTS(this.checked)" style="transform: scale(1.3);">
+                    </div>
+                </div>
+
+                <!-- ============================================================== -->
+                <!-- TIER 3: SINGER ROSTER & GUEST MANAGEMENT                       -->
+                <!-- ============================================================== -->
+                <div style="margin: 20px 0; padding-top: 14px; border-top: 1px solid rgba(255,255,255,0.12);">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                        <span style="font-size: 0.88rem; color: var(--neon-gold); font-weight: 700;">👥 SINGER ROSTER & QUEUE FLOW</span>
+                        <button onclick="loadHostSingerRoster()" class="btn-ghost" style="padding: 3px 8px; font-size: 0.75rem; border-color: rgba(0,240,255,0.3);">🔄 Refresh</button>
+                    </div>
+
+                    <div style="margin-bottom: 12px;">
+                        <a href="/host/print-tents" target="_blank" class="btn-ghost" style="color: var(--neon-gold); border-color: rgba(255,183,3,0.4); text-align: center; text-decoration: none; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 10px; font-size: 0.85rem; font-weight: 600; border-radius: 8px;">
+                            🖨️ Print Scannable Table Tents
+                        </a>
+                    </div>
+
+                    <div id="hostSingerRosterContainer" style="display: flex; flex-direction: column; gap: 10px;">
+                        <!-- Dynamically populated by mobile-client.js -->
+                    </div>
+
+                    <div style="margin-top: 14px; text-align: center;">
+                        <button type="button" onclick="hostPurgeAllSingers()" class="btn-ghost" style="font-size: 0.75rem; color: #ff5555; border-color: rgba(255,85,85,0.3); padding: 6px 12px; border-radius: 8px; cursor: pointer;">
+                            ⚠️ Reset Party / Purge All Singers
+                        </button>
+                    </div>
+                </div>
+
+                <!-- ============================================================== -->
+                <!-- TIER 4: HARDWARE, VENUE A/V SYNC & LOCAL IMPORTER              -->
+                <!-- ============================================================== -->
+                <div style="margin: 20px 0; padding-top: 14px; border-top: 1px solid rgba(255,255,255,0.12);">
+                    <!-- Venue A/V Sync Latency Control -->
+                    <div class="tiki-card" style="margin-bottom: 14px; padding: 14px; border-left: 4px solid var(--neon-gold);">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                            <span style="font-weight: 700; font-size: 0.88rem; color: #fff;">🎛️ Venue A/V Sync (Audio Delay)</span>
+                            <span id="avSyncBadge" style="font-size: 0.82rem; font-weight: 700; padding: 3px 10px; border-radius: 8px; background: rgba(255, 183, 3, 0.18); color: var(--neon-gold);">0 ms</span>
+                        </div>
+                        <p id="avSyncDesc" style="color: var(--text-muted); font-size: 0.76rem; margin: 0 0 10px 0;">
+                            Direct PA / zero lag. Adjust if TV picture trails behind the speakers.
+                        </p>
+
+                        <!-- Smart Presets -->
+                        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 12px;">
+                            <button type="button" onclick="setVenueAvSyncPreset(0)" class="btn-ghost av-preset-btn" data-offset="0" style="padding: 6px 4px; font-size: 0.72rem; text-align: center;">⚡ Direct<br><span style="color:var(--text-muted);">0ms</span></button>
+                            <button type="button" onclick="setVenueAvSyncPreset(80)" class="btn-ghost av-preset-btn" data-offset="80" style="padding: 6px 4px; font-size: 0.72rem; text-align: center;">📺 TV Lag<br><span style="color:var(--text-muted);">+80ms</span></button>
+                            <button type="button" onclick="setVenueAvSyncPreset(140)" class="btn-ghost av-preset-btn" data-offset="140" style="padding: 6px 4px; font-size: 0.72rem; text-align: center;">📽️ Projector<br><span style="color:var(--text-muted);">+140ms</span></button>
+                            <button type="button" onclick="setVenueAvSyncPreset(-150)" class="btn-ghost av-preset-btn" data-offset="-150" style="padding: 6px 4px; font-size: 0.72rem; text-align: center;">📡 Bluetooth<br><span style="color:var(--text-muted);">-150ms</span></button>
+                        </div>
+
+                        <!-- Live Steppers -->
+                        <div style="display: flex; gap: 8px; align-items: center;">
+                            <button type="button" onclick="nudgeVenueAvSync(-10)" class="btn-ghost" style="flex: 1; padding: 8px; font-size: 0.85rem; font-weight: 700;">-10 ms</button>
+                            <button type="button" onclick="setVenueAvSyncPreset(0)" class="btn-ghost" style="padding: 8px 12px; font-size: 0.78rem; color: var(--text-muted);">⟲ Reset</button>
+                            <button type="button" onclick="nudgeVenueAvSync(10)" class="btn-ghost" style="flex: 1; padding: 8px; font-size: 0.85rem; font-weight: 700;">+10 ms</button>
+                        </div>
+                    </div>
+
+                    <!-- Monitoring Mode & Mic Device Routing -->
+                    <div class="tiki-card" style="margin-bottom: 14px; padding: 14px; border-left: 4px solid var(--neon-lime);">
+                        <div style="font-weight: 700; font-size: 0.88rem; color: #fff; margin-bottom: 10px;">🎧 Mic Hardware & Monitoring Mode</div>
+                        <div style="margin-bottom: 10px;">
+                            <label for="mobileMonitoringModeSelect" style="display: block; font-size: 0.74rem; font-weight: 700; color: var(--text-muted); margin-bottom: 4px;">Monitoring Mode:</label>
+                            <select id="mobileMonitoringModeSelect" onchange="hostSetMonitoringMode(this.value)" style="width: 100%; padding: 8px 10px; border-radius: 8px; background: rgba(16, 28, 45, 0.95); border: 1px solid var(--border-neon); color: #fff; font-size: 0.8rem; outline: none;">
+                                <option value="hardware_direct">Hardware Mixer / Direct Interface (Clean Bypass - Pro Recommended)</option>
+                                <option value="native">Native OS Router (Low-latency loopback via pactl / WASAPI)</option>
+                                <option value="browser">Casual USB Mic DSP (Software Reverb & Volume - Bypassed for Mixers)</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label for="mobileHostMicDeviceSelect" style="display: block; font-size: 0.74rem; font-weight: 700; color: var(--text-muted); margin-bottom: 4px;">Host PC Input Device (Mic / Line-In):</label>
+                            <div style="display: flex; gap: 6px; align-items: center;">
+                                <select id="mobileHostMicDeviceSelect" onchange="hostSetMicDevice(this.value)" style="flex: 1; padding: 8px 10px; border-radius: 8px; background: rgba(16, 28, 45, 0.95); border: 1px solid var(--border-neon); color: #fff; font-size: 0.8rem; outline: none;">
+                                    <option value="default">System Default Input</option>
+                                </select>
+                                <button type="button" onclick="loadHostMicDevices(true)" class="btn-ghost" style="padding: 8px 10px; font-size: 0.75rem; border-color: rgba(0,240,255,0.4); color: var(--neon-cyan);" title="Rescan audio input devices">🔄 Refresh</button>
+                            </div>
+                            <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 5px;">
+                                Supports USB mics, 3.5mm line-in, and dual-channel wireless mic receivers.
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Karaoke CD (CD+G) Visual Theme & Glow -->
+                    <div class="tiki-card" style="margin-bottom: 14px; padding: 14px; border-left: 4px solid var(--neon-pink);">
+                        <div style="font-weight: 700; font-size: 0.88rem; color: #fff; margin-bottom: 10px;">💿 Karaoke CD (CD+G) Visual Theme</div>
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                            <div>
+                                <div style="font-size: 0.8rem; font-weight: 700; color: #fff;">Color Palette Override</div>
+                                <div style="font-size: 0.7rem; color: var(--text-muted);">Modernize classic 16-color CD+G tracks</div>
+                            </div>
+                            <select id="mobileCdgThemeSelect" onchange="hostSetCdgTheme(this.value)" style="padding: 6px 10px; border-radius: 8px; background: rgba(16, 28, 45, 0.95); border: 1px solid var(--border-neon); color: #fff; font-size: 0.78rem; outline: none;">
+                                <option value="neon">🌴 Tiki Neon (Default)</option>
+                                <option value="sunset">🌅 Tropical Sunset</option>
+                                <option value="cyberpunk">⚡ Cyberpunk Synth</option>
+                                <option value="classic">📺 Original CD+G Disc Colors</option>
+                            </select>
+                        </div>
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <div>
+                                <div style="font-size: 0.8rem; font-weight: 700; color: #fff;">Neon Lyric Glow & Upscaling</div>
+                                <div style="font-size: 0.7rem; color: var(--text-muted);">Smooth pixel edges & add stage bloom</div>
+                            </div>
+                            <label class="switch-toggle">
+                                <input type="checkbox" id="mobileCdgGlowToggle" checked onchange="hostToggleCdgGlow(this.checked)">
+                                <span class="slider-round"></span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- Connected Stage Displays & Audio Routing -->
+                    <div style="margin-bottom: 14px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                            <span style="font-size: 0.85rem; color: var(--neon-cyan); font-weight: 700;">📺 STAGE DISPLAYS & AUDIO ROUTING</span>
+                            <button onclick="loadHostDisplays()" class="btn-ghost" style="padding: 3px 8px; font-size: 0.75rem; border-color: rgba(0,240,255,0.3);">🔄 Refresh</button>
+                        </div>
+                        <div id="hostDisplaysContainer" style="display: flex; flex-direction: column; gap: 8px;">
+                            <!-- Dynamically populated by mobile-client.js -->
+                        </div>
+                    </div>
+
+                    <!-- Smart Library Importer (CompuHost & YouTube) -->
+                    <div>
+                        <div style="padding: 14px; border-radius: 10px; background: rgba(0, 240, 255, 0.06); border: 1px solid rgba(0, 240, 255, 0.35); margin-bottom: 12px;">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                                <span style="font-size: 0.85rem; color: var(--neon-cyan); font-weight: 700; display: flex; align-items: center; gap: 6px;">
+                                    📂 SMART LIBRARY IMPORTER
+                                </span>
+                                <span style="font-size: 0.72rem; color: var(--neon-gold); font-weight: 600;">CompuHost & YouTube</span>
+                            </div>
+                            <div style="font-size: 0.78rem; color: var(--text-muted); margin-bottom: 12px; line-height: 1.4;">
+                                Sanitize messy YouTube titles, autocorrect release years & genres via iTunes, or migrate directly from legacy CompuHost (<code style="color: var(--neon-cyan);">SongList.tps</code>).
+                            </div>
+                            <button type="button" id="btnLaunchImporter" onclick="launchSmartImporter()" class="btn-ghost" style="width: 100%; padding: 12px; font-weight: 700; font-size: 0.88rem; border-color: var(--neon-cyan); color: var(--neon-cyan); background: rgba(0, 240, 255, 0.1); border-radius: 8px; cursor: pointer;">
+                                🚀 Launch Smart Media Importer
+                            </button>
+                            <button type="button" id="btnLaunchCdgRipper" onclick="launchCdgRipper()" class="btn-ghost" style="width: 100%; margin-top: 6px; padding: 10px; font-weight: 700; font-size: 0.85rem; border-color: var(--neon-gold); color: var(--neon-gold); background: rgba(255, 183, 3, 0.08); border-radius: 8px; cursor: pointer;">
+                                📀 Launch CD+G Optical Disc Ripper
+                            </button>
+                            <div id="importerLaunchStatus" style="display: none; margin-top: 8px; font-size: 0.75rem; text-align: center; color: var(--neon-lime);">
+                            </div>
+                        </div>
+
+                        <!-- Stage Marquee Broadcast Card -->
+                        <div style="margin-top: 14px; padding: 12px; border-radius: 8px; background: rgba(255, 183, 3, 0.08); border: 1px solid rgba(255, 183, 3, 0.35);">
+                            <div style="font-size: 0.85rem; color: var(--neon-gold); font-weight: 700; margin-bottom: 6px;">
+                                📢 Stage Marquee Broadcast (Crawling Text)
+                            </div>
+                            <div style="font-size: 0.74rem; color: #cbd5e1; margin-bottom: 8px;">
+                                Broadcast announcements, happy birthdays, drink specials, or food alerts directly onto the TV stage marquee.
+                            </div>
+                            <input type="text" id="hostMarqueeInput" placeholder="e.g. 🎂 Happy 40th Birthday Sarah! 🍹 Drinks at the bar!" 
+                                   style="width: 100%; box-sizing: border-box; padding: 8px 10px; border-radius: 6px; background: rgba(0,0,0,0.5); border: 1px solid rgba(255,183,3,0.3); color: #fff; font-size: 0.85rem; margin-bottom: 8px;">
+                            <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+                                <button type="button" onclick="submitHostMarquee(10)" class="btn-ghost" style="flex: 1; min-width: 90px; padding: 6px 8px; font-size: 0.75rem; border-color: var(--neon-gold); color: var(--neon-gold); border-radius: 6px;">
+                                    Broadcast (10m)
+                                </button>
+                                <button type="button" onclick="submitHostMarquee(0)" class="btn-ghost" style="flex: 1; min-width: 90px; padding: 6px 8px; font-size: 0.75rem; border-color: var(--neon-cyan); color: var(--neon-cyan); border-radius: 6px;">
+                                    All Night
+                                </button>
+                                <button type="button" onclick="clearHostMarquee()" class="btn-ghost" style="padding: 6px 10px; font-size: 0.75rem; border-color: #ff5555; color: #ff5555; border-radius: 6px;">
+                                    Clear
+                                </button>
+                            </div>
+                            <div style="display: flex; align-items: center; justify-content: space-between; margin-top: 10px; padding-top: 8px; border-top: 1px dashed rgba(255, 183, 3, 0.25);">
+                                <span style="font-size: 0.75rem; color: #cbd5e1; font-weight: 600;">Scroll Speed:</span>
+                                <select id="hostMarqueeSpeedSelect" onchange="updateHostMarqueeSpeed(this.value)" style="padding: 4px 8px; border-radius: 6px; background: rgba(0,0,0,0.6); border: 1px solid rgba(255,183,3,0.4); color: var(--neon-gold); font-size: 0.75rem; font-weight: 600; cursor: pointer;">
+                                    <option value="60">Calm / Relaxed (60 px/s)</option>
+                                    <option value="85" selected>Standard (85 px/s)</option>
+                                    <option value="115">Brisk Party (115 px/s)</option>
+                                    <option value="145">Fast Crawl (145 px/s)</option>
+                                </select>
+                            </div>
+                            <div id="marqueeBroadcastFeedback" style="display: none; margin-top: 6px; font-size: 0.72rem; color: var(--neon-lime); text-align: center;"></div>
+                        </div>
+
+                        <!-- Curated Local Library Only Mode -->
+                        <div style="margin-top: 14px; padding: 12px; border-radius: 8px; background: rgba(0, 240, 255, 0.08); border: 1px solid rgba(0, 240, 255, 0.35);">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                                <span style="font-size: 0.85rem; color: var(--neon-cyan); font-weight: 700; display: flex; align-items: center; gap: 6px;">
+                                    🔒 Curated Local Library Mode (Downloader Lock)
+                                </span>
+                                <label style="display: flex; align-items: center; cursor: pointer; margin: 0;">
+                                    <input type="checkbox" id="hostStrictByomToggle" onchange="toggleStrictByomMode(this.checked)" style="transform: scale(1.4); accent-color: var(--neon-cyan); cursor: pointer;">
+                                </label>
+                            </div>
+                            <div style="font-size: 0.74rem; color: #cbd5e1; line-height: 1.4;">
+                                Locks down software to offline / curated library: shuts down online search and downloads, restricting singer requests exclusively to tracks imported in your local crate.
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ============================================================== -->
+                <!-- TIER 5: SYSTEM HEALTH, WI-FI HOTSPOT, STARTER PACKS & POWER    -->
+                <!-- ============================================================== -->
+                <div style="margin: 20px 0; padding-top: 14px; border-top: 1px solid rgba(255,255,255,0.12);">
+                    <div style="font-size: 0.85rem; color: var(--text-muted); font-weight: 700; margin-bottom: 12px; letter-spacing: 0.5px;">
+                        ⚙️ SYSTEM HEALTH, WI-FI HOTSPOT & POWER
+                    </div>
+
+                    <!-- Offline Wi-Fi Hotspot & Local Network Hub Card -->
+                    <div id="hostNetworkCard" class="tiki-card" style="margin-bottom: 14px; padding: 14px; border-left: 4px solid var(--neon-gold);">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                            <span style="font-weight: 700; font-size: 0.88rem; color: #fff;">📶 Offline Hotspot & In-Car Hub</span>
+                            <span id="networkModeBadge" style="font-size: 0.78rem; font-weight: 700; padding: 2px 8px; border-radius: 8px; background: rgba(0, 255, 100, 0.15); color: var(--neon-lime);">Checking...</span>
+                        </div>
+
+                        <div style="font-size: 0.8rem; color: #ddd; margin-bottom: 8px; word-break: break-all;">
+                            <span style="color: var(--text-muted);">Songbook URL:</span> <strong id="networkCurrentUrl" style="color: var(--neon-gold);">http://127.0.0.1:8000/join</strong>
+                        </div>
+
+                        <!-- Hotspot Credentials Config -->
+                        <div id="hotspotConfigBox" style="background: rgba(0,0,0,0.3); padding: 10px; border-radius: 10px; margin-bottom: 10px; font-size: 0.78rem;">
+                            <label style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px; cursor: pointer; user-select: none;">
+                                <input type="checkbox" id="hotspotEnabledToggle" style="width: 16px; height: 16px; accent-color: var(--neon-cyan);">
+                                <span style="font-size: 0.76rem; color: #fff; font-weight: 700;">Broadcast Wi-Fi Hotspot QR on TV Stage</span>
+                            </label>
+                            <div style="display: flex; gap: 8px; margin-bottom: 8px;">
+                                <div style="flex: 1;">
+                                    <label style="display: block; font-size: 0.7rem; color: var(--text-muted); margin-bottom: 2px;">Hotspot Wi-Fi Name:</label>
+                                    <input type="text" id="hotspotSsidInput" value="" placeholder="e.g. Tiki Karaoke Hotspot"
+                                           style="width: 100%; box-sizing: border-box; padding: 6px 8px; border-radius: 6px; background: rgba(16, 28, 45, 0.9); border: 1px solid var(--border-neon); color: #fff; font-size: 0.78rem;">
+                                </div>
+                                <div style="flex: 1;">
+                                    <label style="display: block; font-size: 0.7rem; color: var(--text-muted); margin-bottom: 2px;">Wi-Fi Password:</label>
+                                    <input type="text" id="hotspotPassInput" value="" placeholder="e.g. singalong123"
+                                           style="width: 100%; box-sizing: border-box; padding: 6px 8px; border-radius: 6px; background: rgba(16, 28, 45, 0.9); border: 1px solid var(--border-neon); color: #fff; font-size: 0.78rem;">
+                                </div>
+                            </div>
+                            <div style="display: flex; justify-content: space-between; align-items: center;">
+                                <a href="/setup" style="color: var(--neon-cyan); text-decoration: none; font-size: 0.72rem;">⚙️ Tunnel Setup</a>
+                                <button type="button" onclick="saveHotspotConfig()" class="btn-ghost" style="padding: 3px 10px; font-size: 0.72rem; border-color: var(--neon-cyan); color: var(--neon-cyan);">💾 Save Wi-Fi Info</button>
+                            </div>
+                        </div>
+
+                        <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                            <button type="button" id="openWifiQrBtn" onclick="openWifiQrModal()" class="btn-ghost" style="flex: 1; min-width: 150px; padding: 8px; font-size: 0.78rem; border-color: var(--neon-cyan); color: var(--neon-cyan); font-weight: 700;">
+                                📱 Show Songbook QR Code
+                            </button>
+                            <button type="button" id="openHostPairingQrBtn" onclick="openHostPairingQrModal()" class="btn-ghost" style="flex: 1; min-width: 150px; padding: 8px; font-size: 0.78rem; border-color: var(--neon-gold); color: var(--neon-gold); font-weight: 700;">
+                                👑 Pair Host Remote (QR & PIN)
+                            </button>
+                        </div>
+
+                        <div style="font-size: 0.72rem; color: var(--text-muted); line-height: 1.4;">
+                            🛡️ <strong>Dual-Routing Active:</strong> Hotspot runs local-only. Connected guests retain 5G/LTE mobile data for emergency calls and text messages!
+                        </div>
+                    </div>
+                    <!-- Storage Monitoring Banner -->
+                    <div id="hostStorageBanner" class="tiki-card" style="margin-bottom: 14px; padding: 12px 14px; border-left: 4px solid var(--neon-lime);">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                            <span style="font-weight: 700; font-size: 0.85rem; color: #fff;">💾 Storage Capacity</span>
+                            <span id="storageBadge" style="font-size: 0.78rem; font-weight: 700; padding: 2px 8px; border-radius: 8px; background: rgba(0,255,100,0.15); color: var(--neon-lime);">Checking...</span>
+                        </div>
+                        <div style="width: 100%; height: 7px; background: rgba(255,255,255,0.12); border-radius: 4px; overflow: hidden; margin-bottom: 8px;">
+                            <div id="storageProgressBar" style="width: 0%; height: 100%; background: var(--neon-lime); transition: width 0.4s ease, background 0.4s ease;"></div>
+                        </div>
+                        <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.76rem; color: var(--text-muted);">
+                            <span id="storageDetails">Calculating free space...</span>
+                            <button type="button" onclick="openCleanupModal()" class="btn-ghost" style="padding: 2px 8px; font-size: 0.72rem; border-color: rgba(0,240,255,0.4); color: var(--neon-cyan);">🧹 Free Up Space</button>
+                        </div>
+                    </div>
+
+                    <!-- Live Performance Recordings Storage Card -->
+                    <div id="hostRecordingsStorageCard" class="tiki-card" style="margin-bottom: 14px; padding: 12px 14px; border-left: 4px solid var(--neon-pink);">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                            <span style="font-weight: 700; font-size: 0.85rem; color: #fff;">🎙️ Live Recordings Storage</span>
+                            <span id="recordingsStorageBadge" style="font-size: 0.78rem; font-weight: 700; padding: 2px 8px; border-radius: 8px; background: rgba(255,42,133,0.15); color: var(--neon-pink);">Checking...</span>
+                        </div>
+                        <div style="font-size: 0.74rem; color: #cbd5e1; margin-bottom: 6px; word-break: break-all;">
+                            <span style="color: var(--text-muted);">Folder:</span> <code id="hostRecordingsPathText" style="color: var(--neon-cyan); font-size: 0.72rem;">Loading...</code>
+                        </div>
+                        <div style="font-size: 0.72rem; color: var(--text-muted); margin-bottom: 8px;">
+                            Tracks are organized into subfolders by each guest's persistent cookie ID (stays linked even if names vary).
+                        </div>
+                        <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.76rem; color: var(--text-muted);">
+                            <span id="hostRecordingsStats">Loading stats...</span>
+                            <div style="display: flex; gap: 6px;">
+                                <button type="button" onclick="openRecordingsFolder()" class="btn-ghost" style="padding: 2px 8px; font-size: 0.72rem; border-color: var(--neon-gold); color: var(--neon-gold); cursor: pointer;">📂 Open Folder</button>
+                                <a href="/setup" class="btn-ghost" style="padding: 2px 8px; font-size: 0.72rem; border-color: var(--neon-cyan); color: var(--neon-cyan); text-decoration: none; cursor: pointer;">⚙️ Change Path</a>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- yt-dlp Video Engine Maintenance Banner -->
+                    <div id="hostYtdlpBanner" class="tiki-card" style="margin-bottom: 14px; padding: 12px 14px; border-left: 4px solid var(--neon-cyan);">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                            <span style="font-weight: 700; font-size: 0.85rem; color: #fff;">🛠️ YouTube Video Engine</span>
+                            <span id="ytdlpBadge" style="font-size: 0.78rem; font-weight: 700; padding: 2px 8px; border-radius: 8px; background: rgba(0, 240, 255, 0.15); color: var(--neon-cyan);">Checking...</span>
+                        </div>
+                        <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.76rem; color: var(--text-muted); margin-top: 4px;">
+                            <span id="ytdlpStatusText">Engine version checking...</span>
+                            <button type="button" id="updateYtdlpBtn" onclick="updateYtdlpEngine()" class="btn-ghost" style="padding: 2px 8px; font-size: 0.72rem; border-color: rgba(0, 240, 255, 0.4); color: var(--neon-cyan);">🔄 Update Engine</button>
+                        </div>
+                    </div>
+
+                    <!-- Host DJ Quick Guide Dropdown Data Sheet -->
+                    <div style="margin-bottom: 14px;">
+                        <button type="button" id="guideToggleBtn" onclick="toggleHostGuideDropdown()" class="btn-ghost" style="width: 100%; padding: 12px 16px; font-weight: 600; font-size: 0.88rem; border-color: var(--neon-cyan); color: var(--neon-cyan); display: flex; align-items: center; justify-content: space-between; border-radius: 12px; background: rgba(0, 240, 255, 0.08); cursor: pointer;">
+                            <span>📖 Host DJ Master Guide & Manual</span>
+                            <span id="guideArrow" style="font-size: 1.1rem; transition: transform 0.2s;">▼</span>
+                        </button>
+
+                        <!-- Collapsible Data Sheet -->
+                        <div id="hostGuideDropdown" style="display: none; margin-top: 12px; padding: 16px; background: rgba(8, 14, 24, 0.95); border: 1px solid rgba(0, 240, 255, 0.25); border-radius: 14px; font-size: 0.88rem; line-height: 1.55; color: #e2e8f0; box-shadow: 0 4px 20px rgba(0,0,0,0.5);">
+                            <div style="margin-bottom: 14px;">
+                                <div style="font-weight: 700; color: var(--neon-cyan); margin-bottom: 4px;">🌴 1. TV Stage & Display Setup</div>
+                                <p style="margin: 0; color: var(--text-muted); font-size: 0.83rem;">
+                                    The TV Stage runs at <code style="color: var(--neon-gold); background: rgba(255,183,3,0.1); padding: 2px 6px; border-radius: 4px;">/stage</code> on your main TV or projector. Between songs, it displays the room QR code, counts down intermission, and announces who is <strong>Up Next</strong> so singers can get to the microphone.
+                                </p>
+                            </div>
+
+                            <div style="margin-bottom: 14px;">
+                                <div style="font-weight: 700; color: var(--neon-pink); margin-bottom: 4px;">⚡ 2. Live Playback & Stage Controls</div>
+                                <ul style="margin: 4px 0 0 16px; padding: 0; font-size: 0.83rem; color: var(--text-muted);">
+                                    <li style="margin-bottom: 3px;"><strong style="color: #fff;">⏯️ Pause / Play:</strong> Instantly pause or resume video playback on the TV screen.</li>
+                                    <li style="margin-bottom: 3px;"><strong style="color: #fff;">⏭️ Skip Track:</strong> Fade out and skip the current song if the singer finishes early or steps out.</li>
+                                    <li style="margin-bottom: 3px;"><strong style="color: #fff;">⚡ Start Stage Now:</strong> Bypass the intermission countdown and start the next song immediately.</li>
+                                    <li style="margin-bottom: 3px;"><strong style="color: #fff;">+15s Timer:</strong> Add 15 extra seconds if a singer needs more time getting to the mic.</li>
+                                </ul>
+                            </div>
+
+                            <div style="margin-bottom: 14px;">
+                                <div style="font-weight: 700; color: var(--neon-gold); margin-bottom: 4px;">🎬 3. BGM Video Autopilot & Crate</div>
+                                <ul style="margin: 4px 0 0 16px; padding: 0; font-size: 0.83rem; color: var(--text-muted);">
+                                    <li style="margin-bottom: 3px;"><strong style="color: #fff;">Autopilot:</strong> When the queue runs empty, official music videos automatically play on the TV screen.</li>
+                                    <li style="margin-bottom: 3px;"><strong style="color: #fff;">Room Pulse & 90-min Cooldown:</strong> BGM matches the eras/genres sung tonight, and automatically bars songs sung within the last 90 minutes so the party never feels repetitive.</li>
+                                    <li style="margin-bottom: 3px;"><strong style="color: #fff;">Private Preview:</strong> In the Crate or YouTube Search tabs, tap <strong>👁️ Preview</strong> to privately inspect videos on your phone before stage playback.</li>
+                                </ul>
+                            </div>
+
+                            <div style="margin-bottom: 14px;">
+                                <div style="font-weight: 700; color: var(--neon-lime); margin-bottom: 4px;">🎛️ 4. Audio DSP (Key Pitch & Vocal Cut)</div>
+                                <ul style="margin: 4px 0 0 16px; padding: 0; font-size: 0.83rem; color: var(--text-muted);">
+                                    <li style="margin-bottom: 3px;"><strong style="color: #fff;">Key / Pitch Shift:</strong> Adjust pitch by ±1 to ±6 semitones so any song matches a singer's vocal range.</li>
+                                    <li style="margin-bottom: 3px;"><strong style="color: #fff;">Vocal Attenuation:</strong> Center-channel filter suppresses guide vocals on tracks with backing singers.</li>
+                                </ul>
+                            </div>
+
+                            <div style="margin-bottom: 14px;">
+                                <div style="font-weight: 700; color: var(--neon-cyan); margin-bottom: 4px;">🎙️ 5. Mic Ducking, Soundboard & Voice MC</div>
+                                <ul style="margin: 4px 0 0 16px; padding: 0; font-size: 0.83rem; color: var(--text-muted);">
+                                    <li style="margin-bottom: 3px;"><strong style="color: #fff;">Between-Song Ducking:</strong> Automatically lowers BGM volume (-3 dB to -12 dB) whenever someone speaks into the stage microphone during intermissions.</li>
+                                    <li style="margin-bottom: 3px;"><strong style="color: #fff;">TTS Virtual Announcer:</strong> Automatically announces the next singer over the TV sound system.</li>
+                                    <li style="margin-bottom: 3px;"><strong style="color: #fff;">Soundboard:</strong> Trigger Air Horn, Applause, Rimshot, or Tropical Bird to hype the room.</li>
+                                </ul>
+                            </div>
+
+                            <div style="margin-bottom: 14px;">
+                                <div style="font-weight: 700; color: var(--neon-pink); margin-bottom: 4px;">👥 6. Fair Queue & Singer Checkout</div>
+                                <ul style="margin: 4px 0 0 16px; padding: 0; font-size: 0.83rem; color: var(--text-muted);">
+                                    <li style="margin-bottom: 3px;"><strong style="color: #fff;">Fair Round-Robin:</strong> The queue automatically balances stage time across singers so no single person monopolizes the microphone.</li>
+                                    <li style="margin-bottom: 3px;"><strong style="color: #fff;">Singer Checkout:</strong> In the Singer Roster, tap any singer to choose <em>"Just Clear Songs (No-Show)"</em> to purge their queue, or <em>"Singer Left Party (Check Out & Free Name)"</em> to release their profile.</li>
+                                </ul>
+                            </div>
+
+                            <div>
+                                <div style="font-weight: 700; color: var(--neon-gold); margin-bottom: 4px;">💾 7. Storage Profiles & 1-Tap Save</div>
+                                <ul style="margin: 4px 0 0 16px; padding: 0; font-size: 0.83rem; color: var(--text-muted);">
+                                    <li style="margin-bottom: 3px;"><strong style="color: #fff;">Profiles:</strong> Set in Setup: <em>Studio Full HD</em> (1080p), <em>Balanced HD</em> (720p), <em>Compact Space Saver</em> (480p), or <em>Temporary Cache Mode</em> (auto-deletes video after song finishes).</li>
+                                    <li style="margin-bottom: 3px;"><strong style="color: #fff;">1-Tap Save:</strong> In the Songbook / History tab, tap <strong>⬇️ Save</strong> on any temporary track to permanently keep it in local storage. Tap <strong>🎬 BGM</strong> to convert any crowd favorite into an official BGM music video!</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Prominent Turn Off / Shutdown Button -->
+                    <div style="margin-top: 16px; padding-top: 14px; border-top: 1px solid rgba(255,255,255,0.08);">
+                        <button type="button" onclick="confirmHostServerShutdown()" class="btn-ghost" style="width: 100%; font-size: 0.95rem; color: #ff5555; border-color: rgba(255,85,85,0.4); padding: 14px; border-radius: 12px; cursor: pointer; font-weight: 700; background: rgba(255,50,50,0.08); display: flex; align-items: center; justify-content: center; gap: 8px;">
+                            🛑 Turn Off Lounge & Exit App
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- TAB 5: BGM Video Crate (Host Only) -->
+        <section id="fillerCrateTab" class="tab-view" style="display: none;">
+            <div class="tiki-card-pink" style="padding: 16px; margin-bottom: 16px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                    <div>
+                        <h2 class="font-tiki neon-gold" style="font-size: 1.3rem; margin: 0 0 4px 0;">🎬 BGM Video Crate & Autopilot</h2>
+                    </div>
+                    <button onclick="loadFillerTracks()" class="btn-ghost" style="padding: 4px 10px; font-size: 0.78rem;">↻ Refresh</button>
+                </div>
+
+                <!-- Autopilot & Transition Settings Card -->
+                <div class="tiki-card" style="padding: 12px 14px; margin-bottom: 14px; border-left: 4px solid var(--neon-cyan);">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                        <span style="font-size: 0.88rem; font-weight: 700; color: #fff;">▶️ Auto-Play When Queue Empty:</span>
+                        <input type="checkbox" id="bgmAutopilotToggle" onchange="toggleBgmVideoAutopilot(this.checked)" style="transform: scale(1.4);">
+                    </div>
+
+                    <!-- Transition Policy Pills -->
+                    <div style="margin-top: 10px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 10px;">
+                        <div style="font-size: 0.8rem; font-weight: 700; color: var(--neon-gold); margin-bottom: 6px;">WHEN SINGER QUEUES DURING BGM:</div>
+                        <div style="display: flex; gap: 8px;">
+                            <button type="button" id="policyFadeBtn" onclick="setBgmTransitionPolicy('fade')" class="lib-sort-btn active" style="flex: 1; font-size: 0.78rem;">
+                                ⚡ 3s Soft Fade
+                            </button>
+                            <button type="button" id="policyFinishBtn" onclick="setBgmTransitionPolicy('finish')" class="lib-sort-btn" style="flex: 1; font-size: 0.78rem;">
+                                ⏳ Let Video Finish
+                            </button>
+                        </div>
+                    </div>
+                    <!-- Intermission Vibe Mode Pills -->
+                    <div style="margin-top: 10px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 10px;">
+                        <div style="font-size: 0.8rem; font-weight: 700; color: var(--neon-cyan); margin-bottom: 6px;">INTERMISSION VIBE MODE:</div>
+                        <div style="display: flex; gap: 6px;">
+                            <button type="button" id="vibeModeFillerBtn" onclick="setIntermissionVibeMode('pure_filler')" class="lib-sort-btn" style="flex: 1; font-size: 0.74rem; padding: 6px 4px;">
+                                📼 Pure Filler
+                            </button>
+                            <button type="button" id="vibeModeSingAlongBtn" onclick="setIntermissionVibeMode('sing_along')" class="lib-sort-btn active" style="flex: 1; font-size: 0.74rem; padding: 6px 4px;">
+                                🎤 True Karaoke
+                            </button>
+                            <button type="button" id="vibeModeMashupBtn" onclick="setIntermissionVibeMode('intelligent_mashup')" class="lib-sort-btn" style="flex: 1; font-size: 0.74rem; padding: 6px 4px;">
+                                🧠 Smart Mashup
+                            </button>
+                        </div>
+                        <div id="vibeModeDesc" style="font-size: 0.72rem; color: var(--text-muted); margin-top: 5px; font-style: italic;">
+                            Crowd sing-alongs with lyrics & guide vocals between songs.
+                        </div>
+                    </div>
+                </div>
+                <!-- Batch Actions Banner -->
+                <div id="fillerBatchBanner" style="display: none; margin-bottom: 14px; background: rgba(0, 240, 255, 0.12); border: 1px solid var(--neon-cyan); padding: 12px 14px; border-radius: 12px; justify-content: space-between; align-items: center;">
+                    <div>
+                        <div id="stagedCountText" style="font-weight: 700; font-size: 0.88rem; color: #fff;">0 videos staged</div>
+                        <div style="font-size: 0.75rem; color: var(--text-muted);">Fetch genre & year, download, and normalize audio</div>
+                    </div>
+                    <button id="batchDownloadBtn" type="button" onclick="downloadFillerBatch()" class="btn-neon-cyan" style="padding: 8px 14px; font-size: 0.82rem;">
+                        📥 Download Batch
+                    </button>
+                </div>
+
+                <!-- Staged Videos Section -->
+                <div id="stagedSection" style="display: none; margin-bottom: 16px;">
+                    <div style="font-size: 0.82rem; font-weight: 700; color: var(--neon-pink); margin-bottom: 8px; letter-spacing: 0.5px;">STAGED / DOWNLOADING (IN PROGRESS)</div>
+                    <div id="stagedList" style="display: flex; flex-direction: column; gap: 8px;"></div>
+                </div>
+
+                <!-- Ready Crate Section -->
+                <div>
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                        <span style="font-size: 0.82rem; font-weight: 700; color: var(--neon-lime); letter-spacing: 0.5px;">READY IN BGM CRATE</span>
+                        <span id="readyCrateCount" style="font-size: 0.78rem; color: var(--text-muted);">0 tracks</span>
+                    </div>
+                    <div id="readyCrateList" style="display: flex; flex-direction: column; gap: 8px;"></div>
+                    <div id="emptyCrateNotice" style="text-align: center; padding: 24px 16px; color: var(--text-muted); font-size: 0.9rem;">
+                        No filler music videos in crate yet.<br>
+                        Tap <strong>"Find Videos"</strong> below to search and stage tracks! 🌺
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- TAB 6: Find Music Videos (Host Only) -->
+        <section id="fillerSearchTab" class="tab-view" style="display: none;">
+            <div style="position: relative; margin-bottom: 16px;">
+                <input type="text" id="fillerSearchInput" placeholder="🔍 Search YouTube for Music Videos / BGM (e.g. Queen, Bruno Mars)..." 
+                       style="width: 100%; padding: 14px 44px 14px 18px; border-radius: 14px; background: rgba(16, 28, 45, 0.9); border: 1px solid var(--border-neon); color: #fff; font-size: 1rem; outline: none; box-shadow: 0 0 15px rgba(0, 240, 255, 0.15);"
+                       oninput="onFillerSearchInput(this.value)">
+                <button id="fillerSearchClearBtn" type="button" class="search-clear-btn" aria-label="Clear search" onclick="clearFillerSearch()">
+                    ✕
+                </button>
+            </div>
+
+            <div id="fillerSearchLoading" style="display: none; text-align: center; padding: 20px;">
+                <div class="spinner" style="margin: 0 auto 10px;"></div>
+                <div style="color: var(--neon-cyan); font-size: 0.9rem;">Searching official music videos...</div>
+            </div>
+
+            <div id="fillerSearchResults" style="display: flex; flex-direction: column; gap: 8px;"></div>
+        </section>
+    </main>
+
+    <!-- Bottom Navigation Bar with Two-Row Host Layout -->
+    <nav class="mobile-bottom-nav" id="mobileBottomNav" style="display: flex; flex-direction: column; padding: 0;">
+        <!-- Row 1: Singer Navigation -->
+        <div style="display: flex; justify-content: space-around; width: 100%; padding: 6px 6px 4px;">
+            <button class="nav-tab-btn active" data-tab="libraryTab" onclick="loadLibraryTracks()">
+                <span style="font-size: 1.25rem;">🌴</span>
+                <span>Library</span>
+            </button>
+            <button class="nav-tab-btn" data-tab="searchTab">
+                <span style="font-size: 1.25rem;">🔍</span>
+                <span>Search</span>
+            </button>
+            <button class="nav-tab-btn" data-tab="queueTab">
+                <span style="font-size: 1.25rem;">📜</span>
+                <span>Queue</span>
+            </button>
+            <button class="nav-tab-btn" data-tab="historyTab">
+                <span style="font-size: 1.25rem;">⭐</span>
+                <span>My Songs</span>
+            </button>
+            <button class="nav-tab-btn" onclick="openStageTab(event)" style="color: var(--neon-cyan);" title="Open Live TV Stage in new tab">
+                <span style="font-size: 1.25rem;">📺</span>
+                <span>Stage TV</span>
+            </button>
+        </div>
+
+        <!-- Row 2: Host DJ Navigation (Visible only when host authenticated) -->
+        <div id="hostNavRow" style="display: none; justify-content: space-around; width: 100%; padding: 4px 6px 8px; border-top: 1px solid rgba(255, 42, 133, 0.35); background: rgba(14, 20, 32, 0.98);">
+            <button class="nav-tab-btn host-tab-btn" data-tab="hostTab" style="color: var(--neon-pink);">
+                <span style="font-size: 1.2rem;">👑</span>
+                <span>Host Desk</span>
+            </button>
+            <button class="nav-tab-btn host-tab-btn" data-tab="fillerCrateTab" onclick="loadFillerTracks()" style="color: var(--neon-gold);">
+                <span style="font-size: 1.2rem;">🎬</span>
+                <span>BGM Crate</span>
+            </button>
+            <button class="nav-tab-btn host-tab-btn" data-tab="fillerSearchTab" style="color: var(--neon-cyan);">
+                <span style="font-size: 1.2rem;">🔎</span>
+                <span>Find Videos</span>
+            </button>
+            <button class="nav-tab-btn host-tab-btn" onclick="openCleanupModal()" style="color: var(--neon-lime);">
+                <span style="font-size: 1.2rem;">🧹</span>
+                <span>Storage</span>
+            </button>
+            <button class="nav-tab-btn host-tab-btn" onclick="window.open('/legal', '_blank')" style="color: var(--neon-gold);" title="About & Bring-Your-Own-Media Guide">
+                <span style="font-size: 1.2rem;">ℹ️</span>
+                <span>About</span>
+            </button>
+        </div>
+    </nav>
+
+    <!-- Queue & Pitch Selector Modal -->
+    <div id="queueModal" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); backdrop-filter: blur(12px); display: none; align-items: center; justify-content: center; z-index: 100; padding: 20px;">
+        <div class="tiki-card-pink" style="max-width: 420px; width: 100%; padding: 24px; max-height: 90vh; overflow-y: auto;">
+            
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 6px;">
+                <h3 class="font-tiki neon-cyan" style="font-size: 1.3rem; margin: 0;">Add to Stage Queue</h3>
+                <button type="button" onclick="closeQueueModal()" class="btn-ghost" style="padding: 2px 8px; font-size: 0.85rem;">✕</button>
+            </div>
+            <div id="modalSongTitle" style="font-weight: 700; margin-bottom: 16px; color: #fff;">Song Title</div>
+
+            <!-- Key / Pitch Transposition -->
+            <div style="margin-bottom: 16px;">
+                <label style="font-size: 0.85rem; color: var(--neon-gold); font-weight: 700; display: block; margin-bottom: 8px;">
+                    🎵 KEY / PITCH ADJUSTMENT:
+                </label>
+                <div style="display: flex; gap: 4px;">
+                    <button type="button" class="pitch-btn" data-pitch="-3" onclick="selectPitch(-3)">-3</button>
+                    <button type="button" class="pitch-btn" data-pitch="-2" onclick="selectPitch(-2)">-2</button>
+                    <button type="button" class="pitch-btn" data-pitch="-1" onclick="selectPitch(-1)">-1</button>
+                    <button type="button" class="pitch-btn active" data-pitch="0" onclick="selectPitch(0)">Std</button>
+                    <button type="button" class="pitch-btn" data-pitch="1" onclick="selectPitch(1)">+1</button>
+                    <button type="button" class="pitch-btn" data-pitch="2" onclick="selectPitch(2)">+2</button>
+                    <button type="button" class="pitch-btn" data-pitch="3" onclick="selectPitch(3)">+3</button>
+                </div>
+            </div>
+
+            <!-- Collaborator / Duet Partner -->
+            <div style="margin-bottom: 16px;">
+                <label style="font-size: 0.85rem; color: var(--text-muted); display: block; margin-bottom: 6px;">
+                    Collaborator / Duet Partner (Optional):
+                </label>
+                <input type="text" id="duetInput" placeholder="Friend's Name" 
+                       style="width: 100%; padding: 10px 14px; border-radius: 10px; background: rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.2); color: #fff;">
+            </div>
+
+            <!-- Dedication / Shoutout -->
+            <div style="margin-bottom: 16px;">
+                <label style="font-size: 0.85rem; color: var(--neon-gold); display: block; margin-bottom: 6px; font-weight: 600;">
+                    💌 Dedication / Shoutout (Optional, scrolls on stage TV):
+                </label>
+                <input type="text" id="dedicationInput" maxlength="60" placeholder="e.g. For Jenny's 30th birthday! 🌺" 
+                       style="width: 100%; padding: 10px 14px; border-radius: 10px; background: rgba(0,0,0,0.5); border: 1px solid rgba(255,183,3,0.35); color: #fff;">
+            </div>
+
+            <!-- Under all of that: Duplicate / Singer Advisory Section -->
+            <div id="queueModalDuplicateSection" style="display: none; background: rgba(0,0,0,0.45); border: 1px solid rgba(0,240,255,0.35); border-radius: 12px; padding: 12px; margin-bottom: 16px;">
+                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
+                    <span id="dupModalBadge" style="font-size: 0.72rem; background: rgba(0,240,255,0.2); color: var(--neon-cyan); padding: 3px 8px; border-radius: 6px; font-weight: 800; text-transform: uppercase;">
+                        Already in Queue
+                    </span>
+                    <span id="dupQueuePosition" style="font-size: 0.78rem; color: var(--neon-gold); font-weight: 700;">
+                        Up Next • #1 in line
+                    </span>
+                </div>
+
+                <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 6px;">
+                    <div id="dupSingerAvatar" style="font-size: 1.8rem; line-height: 1;">🍹</div>
+                    <div>
+                        <div style="font-size: 0.70rem; color: var(--text-muted); text-transform: uppercase; font-weight: 700;">Already Queued By</div>
+                        <div id="dupSingerName" style="font-size: 1.05rem; font-weight: 800; color: var(--neon-cyan);">Scott</div>
+                    </div>
+                </div>
+
+                <p id="dupAdvisoryText" style="font-size: 0.85rem; color: var(--text-muted); line-height: 1.4; margin: 0 0 10px 0;">
+                    Scott already has this song in queue! Consider singing along with them as a duet and discuss as appropriate.
+                </p>
+
+                <button type="button" id="dupJoinDuetBtn" onclick="handleJoinDuet()" class="btn-ghost" style="width: 100%; border-color: var(--neon-cyan); color: var(--neon-cyan); font-size: 0.85rem; padding: 8px; border-radius: 8px; font-weight: 700;">
+                    👯 Add Me as Duet Partner with <span id="dupDuetTargetName">Scott</span>
+                </button>
+            </div>
+
+            <!-- Action Buttons -->
+            <div style="display: flex; gap: 10px;">
+                <button type="button" onclick="closeQueueModal()" class="btn-ghost" style="flex: 1;">Cancel</button>
+                <button type="button" id="submitQueueBtn" onclick="submitQueue()" class="btn-neon-pink" style="flex: 2;">+ Queue Song</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Storage Cleanup Modal (Host Only) -->
+    <div id="cleanupModal" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.88); backdrop-filter: blur(12px); display: none; align-items: center; justify-content: center; z-index: 150; padding: 16px;">
+        <div class="tiki-card-pink" style="max-width: 520px; width: 100%; max-height: 90vh; display: flex; flex-direction: column; padding: 20px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                <h3 class="font-tiki neon-cyan" style="font-size: 1.25rem; margin: 0;">🧹 Storage & Song Manager</h3>
+                <button type="button" onclick="closeCleanupModal()" class="btn-ghost" style="padding: 2px 8px; font-size: 0.85rem;">✕</button>
+            </div>
+            <p style="color: var(--text-muted); font-size: 0.78rem; margin: 0 0 10px 0;">
+                Preview tracks, fix misparsed names, switch song types, or prune files to free drive space.
+            </p>
+
+            <!-- Cleanup Sort Toggle -->
+            <div style="display: flex; gap: 8px; margin-bottom: 10px;">
+                <button type="button" id="cleanSortOldest" onclick="setCleanupSort('oldest_played')" class="btn-ghost" style="flex: 1; padding: 5px; font-size: 0.75rem; border-color: var(--neon-cyan); color: var(--neon-cyan);">⌛ Longest Unplayed</button>
+                <button type="button" id="cleanSortLeast" onclick="setCleanupSort('least_played')" class="btn-ghost" style="flex: 1; padding: 5px; font-size: 0.75rem;">🆕 Least Played</button>
+            </div>
+
+            <!-- Selection Action Bar -->
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-size: 0.8rem;">
+                <span id="cleanupSelectedStats" style="color: var(--neon-gold); font-weight: 600;">Selected: 0 files (0 MB)</span>
+                <div style="display: flex; gap: 6px;">
+                    <button type="button" onclick="selectTopNCleanup(5)" class="btn-ghost" style="padding: 2px 6px; font-size: 0.75rem;">+ Top 5</button>
+                    <button type="button" onclick="toggleAllCleanup()" class="btn-ghost" style="padding: 2px 6px; font-size: 0.75rem;">Toggle All</button>
+                </div>
+            </div>
+
+            <!-- Candidate Track List (Scrollable) -->
+            <div id="cleanupCandidateList" style="flex: 1; overflow-y: auto; margin-bottom: 12px; max-height: 290px; display: flex; flex-direction: column; gap: 6px;" class="custom-scroll">
+                <!-- Populated by JS -->
+            </div>
+
+            <div style="display: flex; gap: 10px;">
+                <button type="button" onclick="closeCleanupModal()" class="btn-ghost" style="flex: 1;">Cancel</button>
+                <button type="button" id="pruneExecuteBtn" onclick="executePrune()" class="btn-neon-pink" style="flex: 2; padding: 10px; font-size: 0.9rem;" disabled>
+                    🗑️ Prune Selected Files
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Host Song Metadata Edit Modal -->
+    <div id="editTrackModal" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); backdrop-filter: blur(12px); display: none; align-items: center; justify-content: center; z-index: 260; padding: 16px;">
+        <div class="tiki-card-pink" style="max-width: 400px; width: 100%; padding: 20px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                <h3 class="font-tiki neon-gold" style="font-size: 1.15rem; margin: 0;">✏️ Edit Track Metadata</h3>
+                <button type="button" onclick="closeEditTrackModal()" class="btn-ghost" style="padding: 2px 8px; font-size: 0.85rem;">✕</button>
+            </div>
+            <p style="color: var(--text-muted); font-size: 0.78rem; margin: 0 0 12px 0;">
+                Correct misparsed YouTube title or artist. Saves to library and safely renames the local video file.
+            </p>
+            <input type="hidden" id="editTrackId" value="">
+            <input type="hidden" id="editTrackIsFiller" value="0">
+            <div style="margin-bottom: 10px;">
+                <label style="font-size: 0.75rem; color: var(--neon-cyan); font-weight: 700; display: block; margin-bottom: 4px;">Song Title</label>
+                <input type="text" id="editTrackTitleInput" class="tiki-input" style="width: 100%; font-size: 0.9rem; padding: 8px 10px; background: rgba(0,0,0,0.5); border: 1px solid var(--neon-cyan); border-radius: 8px; color: #fff;">
+            </div>
+            <div style="margin-bottom: 16px;">
+                <label style="font-size: 0.75rem; color: var(--neon-gold); font-weight: 700; display: block; margin-bottom: 4px;">Artist Name</label>
+                <input type="text" id="editTrackArtistInput" class="tiki-input" style="width: 100%; font-size: 0.9rem; padding: 8px 10px; background: rgba(0,0,0,0.5); border: 1px solid var(--neon-gold); border-radius: 8px; color: #fff;">
+            </div>
+            <div style="display: flex; gap: 10px;">
+                <button type="button" onclick="closeEditTrackModal()" class="btn-ghost" style="flex: 1;">Cancel</button>
+                <button type="button" onclick="submitEditTrack()" class="btn-neon-pink" style="flex: 2; padding: 10px; font-weight: 700;">💾 Save & Rename</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Host PIN Login Modal -->
+    <div id="hostLoginModal" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.88); backdrop-filter: blur(12px); display: none; align-items: center; justify-content: center; z-index: 250; padding: 20px;" onclick="if(event.target === this) closeHostLoginModal()">
+        <div class="tiki-card-pink" style="max-width: 360px; width: 100%; padding: 26px; text-align: center;">
+            <div style="font-size: 2.8rem; margin-bottom: 6px;">👑</div>
+            <h2 class="font-tiki neon-pink" style="font-size: 1.5rem; margin-bottom: 6px;">Host DJ Login</h2>
+            <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 18px;">
+                Enter the 4-digit Host PIN shown on the TV Stage display to unlock master controls:
+            </p>
+
+            <input type="password" id="hostPinInput" inputmode="numeric" maxlength="8" placeholder="••••" 
+                   onkeydown="if(event.key === 'Enter') submitHostPinLogin()"
+                   style="width: 100%; padding: 14px; border-radius: 12px; background: rgba(0,0,0,0.6); border: 1px solid var(--neon-pink); color: #fff; font-size: 1.6rem; text-align: center; letter-spacing: 8px; margin-bottom: 12px; outline: none; box-shadow: 0 0 15px rgba(255,42,133,0.3);">
+
+            <div id="hostPinErrorMsg" style="display: none; color: #ff5555; background: rgba(255,85,85,0.15); border: 1px solid rgba(255,85,85,0.4); padding: 8px 12px; border-radius: 8px; font-size: 0.85rem; margin-bottom: 14px; font-weight: 600;"></div>
+
+            <div style="display: flex; gap: 10px;">
+                <button type="button" onclick="closeHostLoginModal()" class="btn-ghost" style="flex: 1;">Cancel</button>
+                <button type="button" id="hostPinSubmitBtn" onclick="submitHostPinLogin()" class="btn-neon-pink" style="flex: 1.5; padding: 12px; font-size: 1rem;">
+                    Unlock DJ 👑
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Onboarding Modal -->
+    <div id="onboardingModal" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); backdrop-filter: blur(12px); display: none; align-items: center; justify-content: center; z-index: 200; padding: 20px;">
+        <div class="tiki-card" style="max-width: 380px; width: 100%; padding: 26px; text-align: center;">
+            <div style="font-size: 3rem; margin-bottom: 8px;">🌴🌺🍹</div>
+            <h2 class="font-tiki neon-cyan" style="font-size: 1.6rem; margin-bottom: 6px;">Welcome to the Tiki Lounge!</h2>
+            <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 20px;">Choose a tropical avatar and enter your singer name:</p>
+
+            <!-- Avatar Picker -->
+            <div id="avatarPickerContainer" style="display: flex; justify-content: center; flex-wrap: wrap; gap: 8px; margin-bottom: 18px;">
+                <div class="avatar-option selected" data-avatar="🌺" onclick="selectAvatar(this)">🌺</div>
+                <div class="avatar-option" data-avatar="🦩" onclick="selectAvatar(this)">🦩</div>
+                <div class="avatar-option" data-avatar="🍹" onclick="selectAvatar(this)">🍹</div>
+                <div class="avatar-option" data-avatar="🌴" onclick="selectAvatar(this)">🌴</div>
+                <div class="avatar-option" data-avatar="🦜" onclick="selectAvatar(this)">🦜</div>
+                <div class="avatar-option" data-avatar="🥥" onclick="selectAvatar(this)">🥥</div>
+                <div class="avatar-option" data-avatar="🏄" onclick="selectAvatar(this)">🏄</div>
+                <div class="avatar-option" data-avatar="🍍" onclick="selectAvatar(this)">🍍</div>
+            </div>
+
+            <div style="display: flex; gap: 8px; margin-bottom: 12px;">
+                <input type="text" id="singerNameInput" placeholder="Your Singer Nickname..." 
+                       oninput="onSingerNameInput(this.value)"
+                       onblur="onSingerNameInput(this.value)"
+                       style="flex: 1; min-width: 0; padding: 14px; border-radius: 12px; background: rgba(0,0,0,0.6); border: 1px solid var(--border-neon); color: #fff; font-size: 1.05rem; text-align: center; outline: none;">
+                <button type="button" onclick="rollTikiPersona()" class="btn-ghost" title="Roll a fun Tiki Persona"
+                        style="padding: 0 14px; border-color: var(--neon-gold); color: var(--neon-gold); background: rgba(255, 183, 3, 0.1); border-radius: 12px; font-weight: 700; font-size: 0.88rem; white-space: nowrap; cursor: pointer;">
+                    🎲 Roll Alias
+                </button>
+            </div>
+
+            <div id="nameErrorMsg" style="display: none; color: #ff5555; background: rgba(255,85,85,0.15); border: 1px solid rgba(255,85,85,0.4); padding: 8px 12px; border-radius: 8px; font-size: 0.85rem; margin-bottom: 14px; font-weight: 600;"></div>
+
+            <button type="button" id="onboardingSubmitBtn" onclick="completeOnboarding()" class="btn-neon-cyan" style="width: 100%; padding: 14px; font-size: 1.1rem;">
+                Let's Sing! 🎤
+            </button>
+
+            <!-- Singer Leave / Sign Out Option -->
+            <div id="singerLeavePartyContainer" style="margin-top: 14px; display: none;">
+                <button type="button" onclick="singerLeaveParty()" class="btn-ghost" style="width: 100%; padding: 10px; font-size: 0.85rem; color: #ff5555; border-color: rgba(255,85,85,0.35); border-radius: 10px; cursor: pointer;">
+                    👋 Leave Party / Sign Out
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Left Party / Checked-Out Screen Modal -->
+    <div id="leftPartyModal" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.92); backdrop-filter: blur(14px); display: none; align-items: center; justify-content: center; z-index: 210; padding: 20px;">
+        <div class="tiki-card" style="max-width: 390px; width: 100%; padding: 28px 24px; text-align: center; border: 1px solid rgba(0, 240, 255, 0.35);">
+            <div id="leftPartyAvatarDisplay" style="font-size: 3.2rem; margin-bottom: 8px;">🌺</div>
+            <h2 class="font-tiki neon-gold" style="font-size: 1.55rem; margin: 0 0 8px 0;">You've Left the Party!</h2>
+            <p style="color: #e2e8f0; font-size: 0.92rem; line-height: 1.45; margin-bottom: 12px;">
+                Mahalo for singing with us, <strong id="leftPartyNameDisplay" style="color: var(--neon-cyan);">Singer</strong>! 🌴
+            </p>
+            <p style="color: var(--text-muted); font-size: 0.82rem; line-height: 1.45; margin-bottom: 22px;">
+                Your pending songs have been cleared from tonight's stage queue and your nickname is freed up for the room. Your personal <strong>My Songs</strong> history &amp; <strong>Live Recordings</strong> are safely saved for your next visit!
+            </p>
+
+            <button type="button" onclick="rejoinParty()" class="btn-neon-cyan" style="width: 100%; padding: 14px; font-size: 1.05rem; font-weight: 700; margin-bottom: 10px; cursor: pointer;">
+                🎤 Rejoin the Party
+            </button>
+            <button type="button" onclick="rejoinPartyWithNewName()" class="btn-ghost" style="width: 100%; padding: 10px; font-size: 0.84rem; color: var(--text-muted); border-color: rgba(255,255,255,0.2); border-radius: 10px; cursor: pointer;">
+                ✏️ Rejoin with a Different Nickname
+            </button>
+        </div>
+    </div>
+
+    <!-- Host Singer Manage & Checkout Modal -->
+    <div id="hostSingerManageModal" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.88); backdrop-filter: blur(12px); display: none; align-items: center; justify-content: center; z-index: 250; padding: 20px;" onclick="if(event.target === this) closeHostSingerManageModal()">
+        <div class="tiki-card-pink" style="max-width: 400px; width: 100%; padding: 24px; text-align: center;">
+            <div id="manageSingerAvatar" style="font-size: 2.8rem; margin-bottom: 6px;">🌴</div>
+            <h2 id="manageSingerName" class="font-tiki neon-cyan" style="font-size: 1.5rem; margin-bottom: 4px;">Bob</h2>
+            <div id="manageSingerQueueCount" style="color: var(--neon-gold); font-size: 0.85rem; font-weight: 700; margin-bottom: 16px;">2 songs in queue</div>
+
+            <p style="color: var(--text-muted); font-size: 0.88rem; margin-bottom: 18px;">
+                Has <span id="manageSingerNameText" style="color: #fff; font-weight: 700;">Bob</span> left the party, or are they just away from the mic?
+            </p>
+
+            <div style="display: flex; flex-direction: column; gap: 10px;">
+                <button type="button" id="manageClearQueueOnlyBtn" onclick="confirmHostSingerAction(false)" class="btn-ghost" style="padding: 12px; font-weight: 700; border-color: var(--neon-cyan); color: var(--neon-cyan); text-align: left; display: flex; align-items: center; gap: 10px; border-radius: 10px; cursor: pointer;">
+                    <span style="font-size: 1.3rem;">🎵</span>
+                    <div>
+                        <div>Just Clear Songs (No-Show)</div>
+                        <div style="font-size: 0.72rem; color: var(--text-muted); font-weight: 400;">Drops songs from queue, keeps name & avatar locked for singer.</div>
+                    </div>
+                </button>
+
+                <button type="button" onclick="confirmHostSingerAction(true)" class="btn-ghost" style="padding: 12px; font-weight: 700; border-color: rgba(255,85,85,0.5); color: #ff5555; background: rgba(255,85,85,0.08); text-align: left; display: flex; align-items: center; gap: 10px; border-radius: 10px; cursor: pointer;">
+                    <span style="font-size: 1.3rem;">👋</span>
+                    <div>
+                        <div>Singer Left Party (Check Out)</div>
+                        <div style="font-size: 0.72rem; color: var(--text-muted); font-weight: 400;">Clears songs & frees up name so other guests can use it.</div>
+                    </div>
+                </button>
+
+                <button type="button" onclick="closeHostSingerManageModal()" class="btn-ghost" style="margin-top: 6px; padding: 10px; font-size: 0.85rem; border-radius: 10px; cursor: pointer;">
+                    Cancel
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Host Video Preview Modal -->
+    <div id="hostVideoPreviewModal" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.92); backdrop-filter: blur(14px); display: none; align-items: center; justify-content: center; z-index: 300; padding: 16px;" onclick="if(event.target === this) closeHostVideoPreview()">
+        <div class="tiki-card-pink" style="max-width: 520px; width: 100%; padding: 20px; text-align: left;">
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px;">
+                <div style="flex: 1; min-width: 0; padding-right: 10px;">
+                    <span id="previewModalBadge" class="badge-youtube font-tiki" style="font-size: 0.72rem; padding: 2px 8px;">🎬 BGM PREVIEW</span>
+                    <h3 id="previewModalTitle" style="font-size: 1.05rem; font-weight: 700; color: #fff; margin: 6px 0 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Song Title</h3>
+                    <div id="previewModalArtist" style="font-size: 0.85rem; color: var(--neon-cyan); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Artist Name</div>
+                </div>
+                <button type="button" onclick="closeHostVideoPreview()" class="btn-ghost" style="padding: 4px 10px; font-size: 1rem; border-radius: 8px; cursor: pointer;">✕</button>
+            </div>
+
+            <!-- Preview Viewport (16:9 ratio) -->
+            <div style="position: relative; width: 100%; padding-top: 56.25%; background: #000; border-radius: 12px; overflow: hidden; margin-bottom: 16px; border: 1px solid rgba(0, 240, 255, 0.35); box-shadow: 0 0 20px rgba(0, 240, 255, 0.15);">
+                <video id="previewLocalVideo" controls playsinline style="display: none; position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: contain;"></video>
+                <iframe id="previewYoutubeIframe" src="" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen style="display: none; position: absolute; top: 0; left: 0; width: 100%; height: 100%; border: none;"></iframe>
+            </div>
+
+            <!-- Modal Footer Actions -->
+            <div id="previewModalActions" style="display: flex; gap: 10px; justify-content: flex-end;"></div>
+        </div>
+    </div>
+
+    <!-- Singer Private Rehearsal / Lyric Practice Modal -->
+    <div id="rehearsalPreviewModal" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.92); backdrop-filter: blur(14px); display: none; align-items: center; justify-content: center; z-index: 250; padding: 16px;" onclick="if(event.target === this) closeRehearsalModal()">
+        <div class="tiki-card" style="max-width: 500px; width: 100%; padding: 20px; border: 1px solid var(--neon-cyan); box-shadow: 0 0 30px rgba(0,240,255,0.25);">
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px;">
+                <div style="overflow: hidden; padding-right: 8px;">
+                    <span class="badge-local font-tiki" style="font-size: 0.72rem; padding: 2px 8px; color: var(--neon-cyan); border-color: var(--neon-cyan);">👁️ PRIVATE REHEARSAL</span>
+                    <h3 id="rehearsalModalTitle" style="font-size: 1.1rem; font-weight: 700; color: #fff; margin: 6px 0 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Song Title</h3>
+                    <div id="rehearsalModalArtist" style="font-size: 0.85rem; color: var(--neon-gold); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Artist Name</div>
+                </div>
+                <button type="button" onclick="closeRehearsalModal()" class="btn-ghost" style="padding: 4px 10px; font-size: 1.1rem; border-radius: 8px; cursor: pointer;">✕</button>
+            </div>
+
+            <!-- Video Viewport (16:9 ratio) -->
+            <div style="position: relative; width: 100%; padding-top: 56.25%; background: #000; border-radius: 12px; overflow: hidden; margin-bottom: 14px; border: 1px solid rgba(0, 240, 255, 0.35);">
+                <video id="rehearsalLocalVideo" controls playsinline muted style="display: none; position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: contain;"></video>
+                <iframe id="rehearsalYoutubeIframe" src="" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen style="display: none; position: absolute; top: 0; left: 0; width: 100%; height: 100%; border: none;"></iframe>
+            </div>
+
+            <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap;">
+                <div style="font-size: 0.74rem; color: var(--text-muted); display: flex; align-items: center; gap: 4px;">
+                    <span>🔒 Private Preview</span> • <span>Stage is not affected</span>
+                </div>
+                <div style="display: flex; gap: 8px;">
+                    <button type="button" id="rehearsalMuteToggleBtn" onclick="toggleRehearsalMute()" class="btn-ghost" style="padding: 6px 12px; font-size: 0.8rem; border-color: var(--neon-gold); color: var(--neon-gold); border-radius: 8px; cursor: pointer;">
+                        🔇 Unmute Audio
+                    </button>
+                    <button type="button" onclick="closeRehearsalModal()" class="btn-ghost" style="padding: 6px 14px; font-size: 0.85rem; border-radius: 8px; cursor: pointer;">
+                        Done
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Souvenir Album Art Modal -->
+    <div id="souvenirAlbumModal" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.92); backdrop-filter: blur(14px); display: none; align-items: center; justify-content: center; z-index: 260; padding: 16px;" onclick="if(event.target === this) closeSouvenirAlbumModal()">
+        <div class="tiki-card-pink" style="max-width: 440px; width: 100%; padding: 22px; text-align: center; border: 1px solid var(--neon-pink); box-shadow: 0 0 35px rgba(255,42,133,0.3);">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                <span class="font-tiki neon-gold" style="font-size: 0.95rem;">🎨 SOUVENIR ALBUM JACKET</span>
+                <button type="button" onclick="closeSouvenirAlbumModal()" class="btn-ghost" style="padding: 4px 10px; font-size: 1rem; border-radius: 8px; cursor: pointer;">✕</button>
+            </div>
+            <div style="position: relative; width: 100%; border-radius: 12px; overflow: hidden; margin-bottom: 14px; box-shadow: 0 8px 30px rgba(0,0,0,0.6); border: 2px solid rgba(255,183,3,0.4);">
+                <img id="souvenirAlbumImage" src="" alt="Souvenir Album Jacket" style="width: 100%; height: auto; display: block;">
+            </div>
+            <div style="font-size: 0.78rem; color: #cbd5e1; margin-bottom: 14px;">
+                📸 Long-press or tap below to save your retro record sleeve to your camera roll!
+            </div>
+            <div style="display: flex; gap: 8px; justify-content: center;">
+                <a id="souvenirDownloadBtn" href="" download="tiki_karaoke_souvenir.png" class="btn-neon-pink" style="padding: 10px 20px; font-weight: 700; text-decoration: none; border-radius: 10px;">
+                    ⬇️ Save to Camera Roll
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Reconnecting Status Pill -->
+    <div id="reconnectingPill" style="display: none; position: fixed; top: 12px; left: 50%; transform: translateX(-50%); background: rgba(255, 85, 85, 0.95); color: #fff; padding: 5px 14px; border-radius: 20px; font-size: 0.78rem; font-weight: 700; z-index: 999; box-shadow: 0 4px 15px rgba(0,0,0,0.4); align-items: center; gap: 6px;">
+        <span>📡</span> Reconnecting to Tiki Lounge...
+    </div>
+
+    <!-- Notification Permission Banner -->
+    <div id="notificationPermissionBanner" style="display: none; position: fixed; bottom: 75px; left: 16px; right: 16px; max-width: 460px; margin: 0 auto; background: rgba(16, 28, 45, 0.96); backdrop-filter: blur(10px); border: 1px solid var(--neon-gold); border-radius: 12px; padding: 12px 16px; z-index: 200; box-shadow: 0 8px 25px rgba(0,0,0,0.6); align-items: center; justify-content: space-between; gap: 12px;">
+        <div style="flex: 1; font-size: 0.82rem; color: #e2e8f0;">
+            🔔 <strong>Buzz Phone When Up?</strong> Get alerted when it's your turn to sing!
+        </div>
+        <div style="display: flex; gap: 6px;">
+            <button onclick="requestNotificationPermission()" class="btn-ghost" style="padding: 4px 10px; font-size: 0.75rem; border-color: var(--neon-gold); color: var(--neon-gold); font-weight: 700;">Allow</button>
+            <button onclick="dismissNotificationBanner()" class="btn-ghost" style="padding: 4px 8px; font-size: 0.75rem; color: var(--text-muted);">✕</button>
+        </div>
+    </div>
+
+    <!-- Singer On-Deck Top Notification Banner (Non-Blocking) -->
+    <div id="singerOnDeckBanner" style="display: none; position: fixed; top: 14px; left: 16px; right: 16px; max-width: 440px; margin: 0 auto; background: rgba(14, 22, 38, 0.98); backdrop-filter: blur(14px); border: 2px solid var(--neon-pink); box-shadow: 0 4px 25px rgba(255, 42, 133, 0.5); border-radius: 14px; padding: 12px 16px; z-index: 1000; align-items: center; justify-content: space-between; gap: 12px; transform: translateY(-30px); transition: transform 0.3s ease, opacity 0.3s ease; opacity: 0; cursor: pointer;" onclick="dismissSingerOnDeckBanner()">
+        <div style="display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0;">
+            <div style="font-size: 2rem; flex-shrink: 0;">🎤</div>
+            <div style="min-width: 0; overflow: hidden;">
+                <div style="font-size: 0.72rem; font-weight: 800; color: var(--neon-gold); letter-spacing: 1px; text-transform: uppercase;">YOU'RE UP IN ~30 SECONDS!</div>
+                <div id="onDeckSongTitle" style="font-size: 0.95rem; font-weight: 700; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Song Title</div>
+                <div style="font-size: 0.76rem; color: var(--text-muted);">Head toward the stage microphone 🌴</div>
+            </div>
+        </div>
+        <button type="button" onclick="event.stopPropagation(); dismissSingerOnDeckBanner();" class="btn-ghost" style="padding: 4px 8px; font-size: 0.85rem; color: var(--text-muted); flex-shrink: 0;">✕</button>
+    </div>
+
+    <!-- Guest Connection QR Modal -->
+    <div id="wifiQrModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 1200; background: rgba(5, 8, 15, 0.94); backdrop-filter: blur(12px); align-items: center; justify-content: center; padding: 20px; box-sizing: border-box;">
+        <div class="tiki-card-pink" style="max-width: 440px; width: 100%; text-align: center; padding: 22px; position: relative;">
+            <button type="button" onclick="closeWifiQrModal()" class="btn-ghost" style="position: absolute; top: 12px; right: 12px; padding: 4px 10px; font-size: 0.85rem;">✕</button>
+            <h3 class="font-tiki neon-gold" style="font-size: 1.4rem; margin-top: 0; margin-bottom: 6px;">🌴 Guest Connection QR</h3>
+            <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 16px;">Guests scan with phone camera to connect & sing!</p>
+
+            <div style="display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; margin-bottom: 16px;">
+                <!-- Wi-Fi QR (Only shown if local hotspot is enabled and configured) -->
+                <div id="modalWifiQrSection" style="display: none; background: rgba(16, 28, 45, 0.9); padding: 10px; border-radius: 14px; border: 1px solid var(--neon-cyan);">
+                    <div style="font-size: 0.75rem; font-weight: 700; color: var(--neon-cyan); margin-bottom: 4px;">1. JOIN WI-FI</div>
+                    <div style="background: #fff; padding: 6px; border-radius: 8px;">
+                        <img id="modalWifiQrImg" src="/qr/wifi" alt="Wi-Fi QR" style="width: 130px; height: 130px; display: block; border-radius: 4px;">
+                    </div>
+                    <div id="modalWifiSsidText" style="font-size: 0.75rem; color: #fff; margin-top: 4px; font-weight: 600;"></div>
+                </div>
+
+                <!-- Songbook QR -->
+                <div style="background: rgba(16, 28, 45, 0.9); padding: 10px; border-radius: 14px; border: 1px solid var(--neon-gold);">
+                    <div id="modalAppTitleText" style="font-size: 0.75rem; font-weight: 700; color: var(--neon-gold); margin-bottom: 4px;">📱 SCAN TO OPEN SONGBOOK</div>
+                    <div style="background: #fff; padding: 6px; border-radius: 8px;">
+                        <img id="modalAppQrImg" src="/qr/public" alt="Songbook QR" style="width: 130px; height: 130px; display: block; border-radius: 4px;">
+                    </div>
+                    <div id="modalAppUrlText" style="font-size: 0.75rem; color: var(--neon-gold); margin-top: 4px; font-weight: 600;">/join</div>
+                </div>
+            </div>
+
+            <div id="modalWifiDetailBox" style="display: none; font-size: 0.76rem; color: #ddd; margin-bottom: 12px;">
+                Network: <strong id="modalWifiSsidDetail" style="color: var(--neon-cyan);"></strong> | Pass: <strong id="modalWifiPassDetail" style="color: var(--neon-pink);"></strong>
+            </div>
+            <button type="button" onclick="closeWifiQrModal()" class="btn-ghost" style="padding: 6px 20px; font-size: 0.82rem; border-color: rgba(255,255,255,0.3); color: #fff;">Close</button>
+        </div>
+    </div>
+
+    <!-- Host Remote Pairing QR & PIN Modal -->
+    <div id="hostPairingQrModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 1200; background: rgba(5, 8, 15, 0.94); backdrop-filter: blur(12px); align-items: center; justify-content: center; padding: 20px; box-sizing: border-box;">
+        <div class="tiki-card-pink" style="max-width: 400px; width: 100%; text-align: center; padding: 22px; position: relative;">
+            <button type="button" onclick="closeHostPairingQrModal()" class="btn-ghost" style="position: absolute; top: 12px; right: 12px; padding: 4px 10px; font-size: 0.85rem;">✕</button>
+            <h3 class="font-tiki neon-gold" style="font-size: 1.4rem; margin-top: 0; margin-bottom: 6px;">👑 Pair Mobile Host Remote</h3>
+            <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 16px;">Scan with your phone to unlock the Host DJ Desk & Stage Remote from anywhere in the room.</p>
+            <div style="display: inline-block; background: #fff; padding: 10px; border-radius: 12px; margin-bottom: 14px; border: 2px solid var(--neon-gold);">
+                <img id="hostPairingQrImg" src="/qr/host" alt="Host Pairing QR" style="width: 170px; height: 170px; display: block; border-radius: 6px;">
+            </div>
+            <div style="margin-bottom: 16px; padding: 10px; border-radius: 10px; background: rgba(255, 183, 3, 0.12); border: 1px solid rgba(255, 183, 3, 0.4);">
+                <div style="font-size: 0.72rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 2px;">Manual Host PIN</div>
+                <div id="hostPairingPinText" style="font-size: 1.4rem; font-weight: 800; color: var(--neon-gold); letter-spacing: 3px;">----</div>
+            </div>
+            <button type="button" onclick="closeHostPairingQrModal()" class="btn-ghost" style="padding: 6px 20px; font-size: 0.82rem; border-color: rgba(255,255,255,0.3); color: #fff;">Close</button>
+        </div>
+    </div>
+
+    <script>
+        // Multi-monitor coordinate and window positioning secondary enforcement
+        (function() {
+            try {
+                const params = new URLSearchParams(window.location.search);
+                const isKiosk = params.get("kiosk") === "true";
+                const dx = parseInt(params.get("disp_x"), 10);
+                const dy = parseInt(params.get("disp_y"), 10);
+                const dw = parseInt(params.get("disp_w"), 10);
+                const dh = parseInt(params.get("disp_h"), 10);
+                if (!isKiosk && !isNaN(dx) && !isNaN(dy)) {
+                    window.moveTo(dx, dy);
+                    if (!isNaN(dw) && !isNaN(dh) && dw > 200 && dh > 200) {
+                        window.resizeTo(dw, dh);
+                    }
+                }
+            } catch (e) {
+                console.warn("[Display Setup] Window positioning note:", e);
+            }
+        })();
+
+        function toggleHostGuideDropdown() {
+            var el = document.getElementById('hostGuideDropdown');
+            var arrow = document.getElementById('guideArrow');
+            if (!el) return;
+            if (el.style.display === 'none' || el.style.display === '') {
+                el.style.display = 'block';
+                if (arrow) arrow.innerText = '▲';
+            } else {
+                el.style.display = 'none';
+                if (arrow) arrow.innerText = '▼';
+            }
+        }
+    </script>
+    <script src="/static/js/mobile-client.js?v=20261020_byom_paths"></script>
+</body>
+</html>

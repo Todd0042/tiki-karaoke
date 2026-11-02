@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Tiki Karaoke Lounge
+Comment=Turnkey Dual-Screen Karaoke Party Server & Host DJ Engine
+Exec=tiki-karaoke
+Icon=tiki-karaoke
+Terminal=false
+Type=Application
+Categories=AudioVideo;Audio;Player;Music;
+Keywords=karaoke;music;party;player;sing;
