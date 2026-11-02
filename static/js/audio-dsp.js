@@ -215,6 +215,10 @@ class AudioDSPPipeline {
         }
     }
 
+    async connectMicrophone(deviceId = null) {
+        return this.initMicrophone(deviceId);
+    }
+
     setupMicGraph(stream) {
         if (!this.ctx || !stream) return;
 

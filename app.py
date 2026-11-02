@@ -1389,13 +1389,36 @@ async def api_save_setup(payload: Dict[str, Any], request: Request, response: Re
             samesite="lax"
         )
 
+        if tunnel_reload_trigger_callback:
+            try:
+                await asyncio.to_thread(tunnel_reload_trigger_callback)
+            except Exception as te:
+                print(f"[Setup] Tunnel reload notice: {te}")
+
         # Broadcast updated network info to any connected displays/clients
         try:
+            import network_helper
+            from config import PORT
+            effective_port = int(os.getenv("TIKI_PORT", str(PORT)))
+            ip = network_helper.get_best_local_ip()
+            is_hotspot = network_helper.is_hotspot_ip(ip)
+            is_net = network_helper.is_internet_available()
+            ssid = network_helper.get_hotspot_ssid()
+            password = network_helper.get_hotspot_password()
+            show_wifi_card = network_helper.is_hotspot_enabled()
+            base_url = get_base_url()
             await manager.broadcast({
                 "type": "network_updated",
-                "base_url": get_base_url(),
-                "join_url": f"{get_base_url()}/join",
-                "host_url": f"{get_base_url()}/host?token={HOST_TOKEN}"
+                "local_ip": ip,
+                "port": effective_port,
+                "base_url": base_url,
+                "join_url": f"{base_url}/join",
+                "is_internet_connected": is_net,
+                "is_hotspot": is_hotspot,
+                "hotspot_enabled": get_setting("hotspot_enabled", "false") == "true",
+                "hotspot_ssid": ssid,
+                "hotspot_password": password,
+                "show_wifi_card": show_wifi_card
             })
         except Exception:
             pass
@@ -2004,6 +2027,33 @@ async def api_cancel_pending_download(pending_id: int, request: Request):
     })
     return {"status": "ok", "removed": removed}
 
+def maybe_cleanup_temporary_track(track_id: Optional[int]):
+    """In Temporary Cache Mode (stream_only), deletes the buffered video file once no active queue items need it."""
+    if not track_id:
+        return
+    profile = get_setting("video_quality_profile", "") or load_config().get("video_quality_profile", "pro")
+    if profile != "stream_only":
+        return
+    try:
+        remaining = get_queue()
+        if any(q.get("track_id") == track_id and q.get("status") in ("pending", "playing") for q in remaining):
+            return
+        track = get_track_by_id(track_id)
+        if not track:
+            return
+        if (
+            track.get("media_source") == "imported"
+            or str(track.get("video_id", "")).startswith("local_")
+            or track.get("media_type") == "cdg"
+            or bool(track.get("cdg_path"))
+            or track.get("track_type") == "cdg"
+        ):
+            return
+        prune_local_track(track_id, is_filler=False)
+        print(f"[Temporary Cache Mode] Cleaned up temporary video buffer for track_id={track_id}")
+    except Exception as e:
+        print(f"[Temporary Cache Mode] Cleanup notice for track_id={track_id}: {e}")
+
 @app.delete("/api/queue/{queue_id}")
 async def api_remove_queue(queue_id: int, request: Request, token: str = ""):
     is_host = is_host_request(request) or is_local_request(request)
@@ -2014,8 +2064,12 @@ async def api_remove_queue(queue_id: int, request: Request, token: str = ""):
         singer_id = singer["id"]
     else:
         singer_id = None
+    queue_before = get_queue()
+    target_item = next((q for q in queue_before if q["queue_id"] == queue_id), None)
     deleted = remove_from_queue(queue_id, singer_id=singer_id)
     if deleted:
+        if target_item:
+            maybe_cleanup_temporary_track(target_item.get("track_id"))
         await manager.broadcast({
             "type": "queue_updated",
             "queue": get_queue()
@@ -2028,7 +2082,10 @@ async def api_play_queue_item(queue_id: int, request: Request):
         raise HTTPException(status_code=403, detail="Host DJ authorization required")
     global current_intermission_end
     current_intermission_end = None
+    prev_playing = get_current_playing()
     set_queue_status(queue_id, "playing")
+    if prev_playing and prev_playing.get("queue_id") != queue_id:
+        maybe_cleanup_temporary_track(prev_playing.get("track_id"))
     current = get_current_playing()
     await manager.broadcast({
         "type": "play_track",
@@ -2049,6 +2106,8 @@ async def api_complete_queue_item(queue_id: int, request: Request):
     item = next((q for q in queue_list if q["queue_id"] == queue_id), None)
 
     set_queue_status(queue_id, "completed")
+    if item:
+        maybe_cleanup_temporary_track(item.get("track_id"))
 
     # Sync to YouTube playlist in background if authenticated
     if item and is_yt_authenticated():
@@ -2211,8 +2270,16 @@ async def api_update_settings(settings: Dict[str, str], request: Request):
 @app.get("/api/host/mic-state")
 async def api_get_host_mic_state():
     st = audio_router.get_state()
-    # Persist monitoring_mode in settings so it survives restarts
+    # Persist monitoring_mode and DSP/CDG settings so they survive restarts
     st["monitoring_mode"] = get_setting("mic_monitoring_mode", st.get("monitoring_mode", "native"))
+    st["reverb"] = get_setting("mic_reverb", "true").lower() == "true"
+    st["ducking_enabled"] = get_setting("mic_ducking_enabled", "true").lower() == "true"
+    try:
+        st["ducking_db"] = int(float(get_setting("mic_ducking_db", "-6")))
+    except Exception:
+        st["ducking_db"] = -6
+    st["cdg_theme"] = get_setting("cdg_theme", "neon")
+    st["cdg_glow"] = get_setting("cdg_glow", "true").lower() == "true"
     return JSONResponse(st)
 
 
@@ -2276,6 +2343,7 @@ async def host_skip_action(request: Request):
 
     if current:
         set_queue_status(current["queue_id"], "skipped")
+        maybe_cleanup_temporary_track(current.get("track_id"))
         await manager.broadcast({"type": "skip_track"})
         queue = get_queue()
         pending = [q for q in queue if q["status"] == "pending"]
@@ -2297,7 +2365,9 @@ async def host_skip_action(request: Request):
         return {"status": "ok"}
 
     elif pending:
+        skipped_track_id = pending[0].get("track_id")
         set_queue_status(pending[0]["queue_id"], "skipped")
+        maybe_cleanup_temporary_track(skipped_track_id)
         await manager.broadcast({"type": "skip_track"})
         queue = get_queue()
         pending = [q for q in queue if q["status"] == "pending"]
@@ -3004,7 +3074,10 @@ async def host_remove_all_singer_songs(singer_id: int, request: Request):
     except Exception:
         checkout = request.query_params.get("checkout", "0") in ("1", "true", "True")
 
+    singer_tracks = [q.get("track_id") for q in get_queue() if q.get("singer_id") == singer_id and q.get("status") == "pending"]
     deleted_count = remove_all_songs_by_singer(singer_id)
+    for tid in set(singer_tracks):
+        maybe_cleanup_temporary_track(tid)
     if checkout:
         checkout_singer(singer_id)
 
@@ -3341,7 +3414,10 @@ async def api_singer_leave(request: Request):
     singer = get_singer_by_token(token)
     if not singer:
         return {"status": "ok", "message": "Singer not found"}
+    singer_tracks = [q.get("track_id") for q in get_queue() if q.get("singer_id") == singer["id"] and q.get("status") == "pending"]
     remove_all_songs_by_singer(singer["id"])
+    for tid in set(singer_tracks):
+        maybe_cleanup_temporary_track(tid)
     checkout_singer(singer["id"])
     queue = get_queue()
     await manager.broadcast({
@@ -3354,7 +3430,10 @@ async def api_singer_leave(request: Request):
 async def host_purge_all_singers(request: Request):
     if not is_host_request(request):
         raise HTTPException(status_code=403, detail="Host DJ authorization required")
+    all_queued_tracks = [q.get("track_id") for q in get_queue()]
     res = purge_all_singers(include_history=True)
+    for tid in set(all_queued_tracks):
+        maybe_cleanup_temporary_track(tid)
     await manager.broadcast({
         "type": "queue_updated",
         "queue": []
@@ -3527,12 +3606,15 @@ async def host_get_network_status(request: Request):
     show_wifi_card = network_helper.is_hotspot_enabled()
     base_url = get_base_url()
     join_url = f"{base_url}/join"
+    cfg = load_config()
+    pin = str(cfg.get("host_pin", HOST_PIN))
     return {
         "status": "ok",
         "local_ip": ip,
         "port": effective_port,
         "base_url": base_url,
         "join_url": join_url,
+        "host_pin": pin,
         "is_internet_connected": is_net,
         "is_hotspot": is_hotspot,
         "hotspot_enabled": get_setting("hotspot_enabled", "false") == "true",
@@ -3587,6 +3669,7 @@ async def host_update_hotspot_config(payload: HotspotConfigPayload, request: Req
 
 shutdown_trigger_callback: Optional[Callable] = None
 focus_hub_trigger_callback: Optional[Callable] = None
+tunnel_reload_trigger_callback: Optional[Callable] = None
 
 def register_shutdown_trigger(cb: Callable):
     global shutdown_trigger_callback
@@ -3595,6 +3678,10 @@ def register_shutdown_trigger(cb: Callable):
 def register_focus_hub_trigger(cb: Callable):
     global focus_hub_trigger_callback
     focus_hub_trigger_callback = cb
+
+def register_tunnel_reload_trigger(cb: Callable):
+    global tunnel_reload_trigger_callback
+    tunnel_reload_trigger_callback = cb
 
 @app.post("/api/host/focus_hub")
 async def host_focus_hub_action(request: Request):
@@ -3787,7 +3874,25 @@ async def websocket_endpoint(websocket: WebSocket):
                             if monitoring_mode == "native" and not audio_router.is_muted:
                                 audio_router.start_loopback()
 
+                    if "reverb" in data and data["reverb"] is not None:
+                        set_setting("mic_reverb", "true" if bool(data["reverb"]) else "false")
+                    if "ducking_enabled" in data and data["ducking_enabled"] is not None:
+                        set_setting("mic_ducking_enabled", "true" if bool(data["ducking_enabled"]) else "false")
+                    if "ducking_db" in data and data["ducking_db"] is not None:
+                        try:
+                            set_setting("mic_ducking_db", str(int(float(data["ducking_db"]))))
+                        except Exception:
+                            pass
+                    if "cdg_theme" in data and data["cdg_theme"]:
+                        set_setting("cdg_theme", str(data["cdg_theme"]).strip())
+                    if "cdg_glow" in data and data["cdg_glow"] is not None:
+                        set_setting("cdg_glow", "true" if bool(data["cdg_glow"]) else "false")
+
                     st = audio_router.get_state()
+                    try:
+                        duck_db_val = int(float(get_setting("mic_ducking_db", "-6")))
+                    except Exception:
+                        duck_db_val = -6
                     msg = {
                         "type": "host_mic_settings",
                         "volume": st["volume"],
@@ -3796,9 +3901,11 @@ async def websocket_endpoint(websocket: WebSocket):
                         "available": st.get("available", False),
                         "latency_ms": st.get("latency_ms_est"),
                         "monitoring_mode": get_setting("mic_monitoring_mode", st.get("monitoring_mode", "native")),
-                        "reverb": data.get("reverb", False),
-                        "ducking_enabled": data.get("ducking_enabled", True),
-                        "ducking_db": data.get("ducking_db", -6)
+                        "reverb": get_setting("mic_reverb", "true").lower() == "true",
+                        "ducking_enabled": get_setting("mic_ducking_enabled", "true").lower() == "true",
+                        "ducking_db": duck_db_val,
+                        "cdg_theme": get_setting("cdg_theme", "neon"),
+                        "cdg_glow": get_setting("cdg_glow", "true").lower() == "true"
                     }
                     await manager.broadcast(msg)
     except WebSocketDisconnect:

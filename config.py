@@ -18,7 +18,7 @@ else:
 BASE_DIR = BUNDLE_DIR
 STATIC_DIR = BUNDLE_DIR / "static"
 TEMPLATES_DIR = BUNDLE_DIR / "templates"
-APP_VERSION = os.getenv("TIKI_VERSION", "").strip() or "1.0.6"
+APP_VERSION = os.getenv("TIKI_VERSION", "").strip() or "1.0.8"
 
 def get_user_data_root() -> Path:
     """Returns safe persistent user data root across installed, portable, and AppImage modes."""
@@ -51,31 +51,45 @@ CONFIG_FILE = get_user_data_root() / "config.json"
 def get_bundled_binary_path(binary_name: str) -> Path:
     """
     Returns the resolved Path to a bundled binary (e.g. cloudflared, bore, ffmpeg).
-    Supports PyInstaller bundle directory (_MEIPASS) and Windows .exe extensions.
+    Supports PyInstaller bundle directory (_MEIPASS), AppImage APPDIR, and Windows .exe extensions.
     """
     ext = ".exe" if sys.platform == "win32" else ""
     full_name = f"{binary_name}{ext}" if not binary_name.endswith(ext) else binary_name
 
-    # 1. Check PyInstaller runtime temp dir if packaged
+    # 1. Check PyInstaller runtime temp dir if packaged (both _internal/bin and parent usr/bin/bin)
     if hasattr(sys, "_MEIPASS"):
-        meipass_path = Path(sys._MEIPASS) / "bin" / full_name
-        if meipass_path.exists():
-            return meipass_path
-        meipass_root = Path(sys._MEIPASS) / full_name
-        if meipass_root.exists():
-            return meipass_root
+        meipass = Path(sys._MEIPASS)
+        for cand in (
+            meipass / "bin" / full_name,
+            meipass.parent / "bin" / full_name,
+            meipass / full_name,
+            meipass.parent / full_name,
+        ):
+            if cand.exists():
+                return cand
+
+    # 1b. Check AppImage APPDIR environment variable if set
+    appdir_env = os.environ.get("APPDIR", "").strip()
+    if appdir_env:
+        appdir_path = Path(appdir_env)
+        for cand in (
+            appdir_path / "usr" / "bin" / "bin" / full_name,
+            appdir_path / "usr" / "bin" / "_internal" / "bin" / full_name,
+            appdir_path / "usr" / "bin" / full_name,
+        ):
+            if cand.exists():
+                return cand
 
     # 2. Check project / application bin directory
-    app_bin = APP_DIR / "bin" / full_name
-    if app_bin.exists():
-        return app_bin
-    app_root = APP_DIR / full_name
-    if app_root.exists():
-        return app_root
-
-    local_bin = BASE_DIR / "bin" / full_name
-    if local_bin.exists():
-        return local_bin
+    for cand in (
+        APP_DIR / "bin" / full_name,
+        APP_DIR / "_internal" / "bin" / full_name,
+        APP_DIR / full_name,
+        BASE_DIR / "bin" / full_name,
+        BASE_DIR / "_internal" / "bin" / full_name,
+    ):
+        if cand.exists():
+            return cand
 
     # 2b. Check staging packaging bin directory (including sibling windows repo)
     pkg_bin = BASE_DIR / "packaging" / "windows" / "bin" / full_name
@@ -91,7 +105,7 @@ def get_bundled_binary_path(binary_name: str) -> Path:
     if sys_which:
         return Path(sys_which)
 
-    return local_bin
+    return BASE_DIR / "bin" / full_name
 
 
 def find_system_browser(name: str) -> Optional[str]:
@@ -866,6 +880,12 @@ def save_config(updates: Dict[str, Any]) -> Dict[str, Any]:
         json.dump(cfg, f, indent=2)
     ensure_storage_dirs()
     refresh_globals()
+    if "video_quality_profile" in updates:
+        try:
+            from database import set_setting
+            set_setting("video_quality_profile", str(updates["video_quality_profile"]))
+        except Exception:
+            pass
     return cfg
 
 def is_configured() -> bool:
@@ -997,7 +1017,7 @@ PORT = int(os.getenv("TIKI_PORT", str(_current_cfg.get("port", 8000))))
 PUBLIC_HOST = os.getenv("TIKI_PUBLIC_HOST", _current_cfg.get("public_host", "")).strip()
 TARGET_LUFS = float(_current_cfg.get("target_lufs", -23.0))
 DEFAULT_INTERMISSION_SECONDS = int(_current_cfg.get("intermission_seconds", 15))
-REMOTE_MODE = os.getenv("TIKI_REMOTE_MODE", _current_cfg.get("remote_mode", "bore"))
+REMOTE_MODE = os.getenv("TIKI_REMOTE_MODE", _current_cfg.get("remote_mode", "cloudflare_quick"))
 REMOTE_PORT = int(os.getenv("TIKI_REMOTE_PORT", str(_current_cfg.get("remote_port", 38480))))
 BAR_NAME = os.getenv("TIKI_BAR_NAME", _current_cfg.get("bar_name", "The Tiki Hut Karaoke Lounge"))
 VIDEO_QUALITY_PROFILE = _current_cfg.get("video_quality_profile", "pro")

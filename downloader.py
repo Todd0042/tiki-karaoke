@@ -40,18 +40,24 @@ def sanitize_filename(name: str) -> str:
     return cleaned if cleaned else "unknown"
 
 def get_ydl_video_format(quality_profile: str = "default") -> str:
+    fmt_480p = "bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=480]+bestaudio/best[height<=480][ext=mp4]/best[height<=480]/worst[ext=mp4]"
+    fmt_720p = "bestvideo[height<=720][vcodec^=avc1]+bestaudio[ext=m4a]/bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=720]+bestaudio/best[height<=720][ext=mp4]/best[height<=720]/best[ext=mp4]"
+    fmt_1080p = "bestvideo[height<=1080][vcodec^=avc1]+bestaudio[ext=m4a]/bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"
+
     if quality_profile == "lowest":
         return "worstvideo[ext=mp4]+worstaudio[ext=m4a]/worst[ext=mp4]/worst"
-    if quality_profile in ("medium_360p", "medium", "inept"):
-        # 480p/360p compact format (~70% smaller)
-        return "bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=480]+bestaudio/best[height<=480][ext=mp4]/best[height<=480]/worst[ext=mp4]"
+    if quality_profile in ("medium_360p", "medium", "compact_480p", "inept", "stream_only"):
+        return fmt_480p
+    if quality_profile == "balanced_720p":
+        return fmt_720p
 
-    cfg = load_config()
-    profile = cfg.get("video_quality_profile", "pro")
-    if profile == "inept":
-        return "bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=480]+bestaudio/best[height<=480][ext=mp4]/best[height<=480]/worst[ext=mp4]"
-    # Pro / default: 1080p/720p HD
-    return "bestvideo[height<=1080][vcodec^=avc1]+bestaudio[ext=m4a]/bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"
+    profile = get_setting("video_quality_profile", "") or load_config().get("video_quality_profile", "pro")
+    if profile in ("compact_480p", "inept", "stream_only"):
+        return fmt_480p
+    if profile == "balanced_720p":
+        return fmt_720p
+    # Pro / default: 1080p Full HD
+    return fmt_1080p
 
 def normalize_audio_loudness(input_path: Path, output_path: Path, target_lufs: float = TARGET_LUFS) -> bool:
     ffmpeg_bin = str(get_bundled_binary_path("ffmpeg")) if get_bundled_binary_path("ffmpeg").exists() else "ffmpeg"

@@ -2014,12 +2014,6 @@ function hostToggleTTS(enabled) {
     });
 }
 
-function hostDuckBGM(duck) {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: "volume_change", volume: duck ? 0.05 : 1.0 }));
-    }
-}
-
 // -------------------------------------------------------------
 // Mobile Host Remote Microphone Controls
 // -------------------------------------------------------------
@@ -2030,49 +2024,93 @@ let hostMicState = {
     reverb: true,
     ducking_enabled: true,
     ducking_db: -6,
+    cdg_theme: "neon",
+    cdg_glow: true,
     available: null,   // null = unknown yet; true/false from backend router
     latency_ms: null,  // negotiated buffering latency estimate (native path)
     monitoring_mode: "native"  // hardware_direct | native | browser
 };
 
-async function loadHostMicDevices() {
+async function loadHostMicDevices(showFeedback = false) {
     const sel = document.getElementById("mobileHostMicDeviceSelect");
     if (!sel) return;
 
     try {
-        const res = await fetch("/api/setup/audio-inputs");
-        if (!res.ok) return;
-        const devices = await res.json();
-        sel.innerHTML = "";
-        devices.forEach(d => {
-            const opt = document.createElement("option");
-            opt.value = d.id;
-            opt.text = d.description || d.name;
-            if (d.id === hostMicState.device) opt.selected = true;
-            sel.appendChild(opt);
-        });
-
-        // Also fetch live state from backend audio router
-        const stateRes = await fetch("/api/host/mic-state");
-        if (stateRes.ok) {
-            const st = await stateRes.json();
-            if (st) {
-                hostMicState.muted = Boolean(st.muted);
-                hostMicState.volume = Number(st.volume) || 80;
-                if (st.device && st.device !== "default") hostMicState.device = st.device;
-                if (st.available !== undefined) hostMicState.available = Boolean(st.available);
-                if (st.monitoring_mode) hostMicState.monitoring_mode = st.monitoring_mode;
-                if (st.latency_ms_est !== undefined && st.latency_ms_est !== null) {
-                    hostMicState.latency_ms = Number(st.latency_ms_est);
+        // First fetch live state from backend audio router so we know the saved device
+        try {
+            const stateRes = await fetch("/api/host/mic-state");
+            if (stateRes.ok) {
+                const st = await stateRes.json();
+                if (st) {
+                    hostMicState.muted = Boolean(st.muted);
+                    hostMicState.volume = Number(st.volume) || 80;
+                    if (st.device && st.device !== "default") hostMicState.device = st.device;
+                    if (st.available !== undefined) hostMicState.available = Boolean(st.available);
+                    if (st.monitoring_mode) hostMicState.monitoring_mode = st.monitoring_mode;
+                    if (st.latency_ms_est !== undefined && st.latency_ms_est !== null) {
+                        hostMicState.latency_ms = Number(st.latency_ms_est);
+                    }
+                    if (st.reverb !== undefined) {
+                        hostMicState.reverb = Boolean(st.reverb);
+                        const rev = document.getElementById("mobileMicReverbToggle");
+                        if (rev) rev.checked = hostMicState.reverb;
+                    }
+                    if (st.ducking_enabled !== undefined) {
+                        hostMicState.ducking_enabled = Boolean(st.ducking_enabled);
+                        const duck = document.getElementById("mobileDuckingToggle");
+                        if (duck) duck.checked = hostMicState.ducking_enabled;
+                    }
+                    if (st.ducking_db !== undefined) {
+                        hostMicState.ducking_db = Number(st.ducking_db) || -6;
+                        const dbSel = document.getElementById("mobileDuckingDbSelect");
+                        if (dbSel) dbSel.value = String(hostMicState.ducking_db);
+                    }
+                    if (st.cdg_theme) {
+                        hostMicState.cdg_theme = st.cdg_theme;
+                        const cdgSel = document.getElementById("mobileCdgThemeSelect");
+                        if (cdgSel) cdgSel.value = st.cdg_theme;
+                    }
+                    if (st.cdg_glow !== undefined) {
+                        hostMicState.cdg_glow = Boolean(st.cdg_glow);
+                        const cdgGlow = document.getElementById("mobileCdgGlowToggle");
+                        if (cdgGlow) cdgGlow.checked = hostMicState.cdg_glow;
+                    }
                 }
-                renderMobileMonitoringModeGating();
-                updateMobileHostMicUI();
-                const slider = document.getElementById("mobileHostMicSlider");
-                if (slider) slider.value = hostMicState.volume;
-                const volText = document.getElementById("mobileHostMicVolText");
-                if (volText) volText.innerText = `${hostMicState.volume}%`;
-                if (hostMicState.device) sel.value = hostMicState.device;
             }
+        } catch (e) {}
+
+        const res = await fetch("/api/setup/audio-inputs");
+        if (res.ok) {
+            const devices = await res.json();
+            sel.innerHTML = "";
+            let matched = false;
+            devices.forEach(d => {
+                const opt = document.createElement("option");
+                opt.value = d.id;
+                opt.text = d.description || d.name;
+                if (d.id === hostMicState.device) {
+                    opt.selected = true;
+                    matched = true;
+                }
+                sel.appendChild(opt);
+            });
+            if (!matched && hostMicState.device && hostMicState.device !== "default") {
+                const opt = document.createElement("option");
+                opt.value = hostMicState.device;
+                opt.text = `Saved Device (${hostMicState.device.slice(0, 18)})`;
+                opt.selected = true;
+                sel.appendChild(opt);
+            }
+        }
+
+        renderMobileMonitoringModeGating();
+        updateMobileHostMicUI();
+        const slider = document.getElementById("mobileHostMicSlider");
+        if (slider) slider.value = hostMicState.volume;
+        const volText = document.getElementById("mobileHostMicVolText");
+        if (volText) volText.innerText = `${hostMicState.volume}%`;
+        if (showFeedback && typeof showToast === "function") {
+            showToast("🔄 Audio input devices refreshed!");
         }
     } catch (e) {
         console.warn("[Host Remote] Error loading audio inputs:", e);
@@ -2129,6 +2167,7 @@ function hostSetMicVolume(vol) {
     sendHostMicSettings({ volume: hostMicState.volume });
     const label = document.getElementById("mobileHostMicVolText");
     if (label) label.innerText = `${hostMicState.volume}%`;
+    updateMobileHostMicUI();
 }
 
 function hostToggleMicReverb(enabled) {
@@ -2146,6 +2185,17 @@ function hostSetDuckingDb(db) {
     sendHostMicSettings({ ducking_db: hostMicState.ducking_db });
 }
 
+function hostSetCdgTheme(theme) {
+    if (!theme) return;
+    hostMicState.cdg_theme = theme;
+    sendHostMicSettings({ cdg_theme: theme });
+}
+
+function hostToggleCdgGlow(enabled) {
+    hostMicState.cdg_glow = !!enabled;
+    sendHostMicSettings({ cdg_glow: hostMicState.cdg_glow });
+}
+
 function sendHostMicSettings(partial) {
     if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({
@@ -2159,6 +2209,10 @@ function sendHostMicSettings(partial) {
 function updateMobileHostMicUI() {
     const btn = document.getElementById("mobileHostMicToggleBtn");
     const badge = document.getElementById("mobileHostMicBadge");
+    const vuBadge = document.getElementById("mobileVuStatusBadge");
+    const barL = document.getElementById("mobileVuMeterBarL");
+    const barR = document.getElementById("mobileVuMeterBarR");
+
     if (btn) {
         if (hostMicState.muted) {
             btn.innerHTML = "🔇 Stage Mic Muted (OFF)";
@@ -2170,41 +2224,56 @@ function updateMobileHostMicUI() {
             btn.style.borderColor = "rgba(57,255,20,0.4)";
         }
     }
+
+    let badgeLabel = "MUTED";
+    let badgeColor = "#ff5555";
+    let badgeBg = "rgba(255, 85, 85, 0.2)";
+    let badgeBorder = "rgba(255, 85, 85, 0.4)";
+
+    if (hostMicState.monitoring_mode === "hardware_direct") {
+        badgeLabel = "DIRECT HARDWARE";
+        badgeColor = "#39ff14";
+        badgeBg = "rgba(57, 255, 20, 0.2)";
+        badgeBorder = "rgba(57, 255, 20, 0.4)";
+    } else if (hostMicState.monitoring_mode === "browser") {
+        if (!hostMicState.muted) {
+            badgeLabel = "LIVE (Browser WebRTC)";
+            badgeColor = "#00f0ff";
+            badgeBg = "rgba(0, 240, 255, 0.2)";
+            badgeBorder = "rgba(0, 240, 255, 0.4)";
+        }
+    } else if (hostMicState.available === false) {
+        badgeLabel = "NO NATIVE ROUTING";
+        badgeColor = "#ffb703";
+        badgeBg = "rgba(255, 183, 3, 0.2)";
+        badgeBorder = "rgba(255, 183, 3, 0.4)";
+    } else if (!hostMicState.muted) {
+        badgeLabel = (hostMicState.latency_ms !== null && hostMicState.latency_ms > 0)
+            ? `LIVE (~${Math.round(hostMicState.latency_ms)}ms)`
+            : "LIVE";
+        badgeColor = "#39ff14";
+        badgeBg = "rgba(57, 255, 20, 0.2)";
+        badgeBorder = "rgba(57, 255, 20, 0.4)";
+    }
+
     if (badge) {
-        if (hostMicState.monitoring_mode === "hardware_direct") {
-            badge.innerText = "DIRECT HARDWARE";
-            badge.style.background = "rgba(57, 255, 20, 0.2)";
-            badge.style.color = "#39ff14";
-            badge.style.borderColor = "rgba(57, 255, 20, 0.4)";
-        } else if (hostMicState.monitoring_mode === "browser") {
-            if (hostMicState.muted) {
-                badge.innerText = "MUTED";
-                badge.style.background = "rgba(255, 85, 85, 0.2)";
-                badge.style.color = "#ff5555";
-                badge.style.borderColor = "rgba(255, 85, 85, 0.4)";
-            } else {
-                badge.innerText = "LIVE (Browser WebRTC)";
-                badge.style.background = "rgba(0, 240, 255, 0.2)";
-                badge.style.color = "#00f0ff";
-                badge.style.borderColor = "rgba(0, 240, 255, 0.4)";
-            }
-        } else if (hostMicState.available === false) {
-            badge.innerText = "NO NATIVE ROUTING";
-            badge.style.background = "rgba(255, 183, 3, 0.2)";
-            badge.style.color = "#ffb703";
-            badge.style.borderColor = "rgba(255, 183, 3, 0.4)";
-        } else if (hostMicState.muted) {
-            badge.innerText = "MUTED";
-            badge.style.background = "rgba(255, 85, 85, 0.2)";
-            badge.style.color = "#ff5555";
-            badge.style.borderColor = "rgba(255, 85, 85, 0.4)";
+        badge.innerText = badgeLabel;
+        badge.style.background = badgeBg;
+        badge.style.color = badgeColor;
+        badge.style.borderColor = badgeBorder;
+    }
+    if (vuBadge) {
+        vuBadge.innerText = badgeLabel;
+        vuBadge.style.color = badgeColor;
+    }
+    if (barL && barR) {
+        if (hostMicState.muted || hostMicState.monitoring_mode === "hardware_direct" || (hostMicState.monitoring_mode === "native" && hostMicState.available === false)) {
+            barL.style.width = "0%";
+            barR.style.width = "0%";
         } else {
-            badge.innerText = (hostMicState.latency_ms !== null && hostMicState.latency_ms > 0)
-                ? `LIVE (~${Math.round(hostMicState.latency_ms)}ms)`
-                : "LIVE";
-            badge.style.background = "rgba(57, 255, 20, 0.2)";
-            badge.style.color = "#39ff14";
-            badge.style.borderColor = "rgba(57, 255, 20, 0.4)";
+            const pct = Math.min(100, Math.max(15, Math.round((hostMicState.volume / 150) * 90)));
+            barL.style.width = `${pct}%`;
+            barR.style.width = `${pct}%`;
         }
     }
 }
@@ -2263,6 +2332,7 @@ function syncHostMicSettingsUI(data) {
         if (slider) slider.value = hostMicState.volume;
         const volText = document.getElementById("mobileHostMicVolText");
         if (volText) volText.innerText = `${hostMicState.volume}%`;
+        updateMobileHostMicUI();
     }
     if (data.reverb !== undefined) {
         hostMicState.reverb = !!data.reverb;
@@ -2278,6 +2348,16 @@ function syncHostMicSettingsUI(data) {
         hostMicState.ducking_db = Number(data.ducking_db);
         const sel = document.getElementById("mobileDuckingDbSelect");
         if (sel) sel.value = String(hostMicState.ducking_db);
+    }
+    if (data.cdg_theme !== undefined && data.cdg_theme) {
+        hostMicState.cdg_theme = data.cdg_theme;
+        const cdgSel = document.getElementById("mobileCdgThemeSelect");
+        if (cdgSel) cdgSel.value = data.cdg_theme;
+    }
+    if (data.cdg_glow !== undefined) {
+        hostMicState.cdg_glow = !!data.cdg_glow;
+        const cdgGlow = document.getElementById("mobileCdgGlowToggle");
+        if (cdgGlow) cdgGlow.checked = hostMicState.cdg_glow;
     }
 }
 
@@ -4884,6 +4964,15 @@ function updateHostNetworkUI(data) {
     if (modalWifiSsidDetail) modalWifiSsidDetail.innerText = data.hotspot_ssid || "";
     if (modalWifiPassDetail) modalWifiPassDetail.innerText = data.hotspot_password || "";
 
+    const hostPinEl = document.getElementById("hostPairingPinText");
+    if (hostPinEl && data.host_pin) {
+        hostPinEl.innerText = data.host_pin;
+    }
+    const hostPairQr = document.getElementById("hostPairingQrImg");
+    if (hostPairQr) {
+        hostPairQr.src = `/qr/host?t=${t}`;
+    }
+
     document.querySelectorAll('img[src*="/qr/"]').forEach(img => {
         const base = img.src.split('?')[0];
         img.src = `${base}?t=${t}`;
@@ -4929,7 +5018,18 @@ function closeWifiQrModal() {
     }
 }
 
+function openHostPairingQrModal() {
+    const modal = document.getElementById("hostPairingQrModal");
+    if (modal) {
+        modal.style.display = "flex";
+        loadHostNetworkStatus();
+    }
+}
 
-
-
+function closeHostPairingQrModal() {
+    const modal = document.getElementById("hostPairingQrModal");
+    if (modal) {
+        modal.style.display = "none";
+    }
+}
 

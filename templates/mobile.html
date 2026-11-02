@@ -451,6 +451,26 @@
                         <input type="range" id="mobileHostMicSlider" min="0" max="150" value="80" oninput="hostSetMicVolume(this.value)" style="width: 100%; accent-color: var(--neon-cyan);">
                     </div>
 
+                    <!-- Live Dual-Singer VU Meters (L/R Channels) -->
+                    <div style="margin-bottom: 12px; padding: 10px 12px; border-radius: 8px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.06);">
+                        <div style="display: flex; justify-content: space-between; font-size: 0.72rem; font-weight: 700; margin-bottom: 6px;">
+                            <span style="color: var(--text-muted);">Live Input Signal (Dual-Singer L/R)</span>
+                            <span id="mobileVuStatusBadge" style="color: #ff5555;">MUTED</span>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 5px;">
+                            <span style="font-size: 0.68rem; font-weight: 700; color: var(--neon-cyan); width: 64px;">Singer 1 (L)</span>
+                            <div style="flex: 1; height: 9px; background: rgba(0, 0, 0, 0.6); border-radius: 5px; overflow: hidden; border: 1px solid rgba(255,255,255,0.12);">
+                                <div id="mobileVuMeterBarL" style="width: 0%; height: 100%; background: linear-gradient(90deg, #39ff14, #ffb703, #ff0055); transition: width 0.08s linear;"></div>
+                            </div>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <span style="font-size: 0.68rem; font-weight: 700; color: var(--neon-pink); width: 64px;">Singer 2 (R)</span>
+                            <div style="flex: 1; height: 9px; background: rgba(0, 0, 0, 0.6); border-radius: 5px; overflow: hidden; border: 1px solid rgba(255,255,255,0.12);">
+                                <div id="mobileVuMeterBarR" style="width: 0%; height: 100%; background: linear-gradient(90deg, #39ff14, #ffb703, #ff0055); transition: width 0.08s linear;"></div>
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- Reverb & Ducking Toggles -->
                     <div style="display: flex; flex-direction: column; gap: 10px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.08); margin-bottom: 12px;">
                         <!-- Reverb Toggle -->
@@ -484,15 +504,6 @@
                                 </label>
                             </div>
                         </div>
-                    </div>
-
-                    <!-- Instant Manual Ducking Hold Button -->
-                    <div style="margin-bottom: 14px;">
-                        <button onmousedown="hostDuckBGM(true)" onmouseup="hostDuckBGM(false)" 
-                                ontouchstart="hostDuckBGM(true)" ontouchend="hostDuckBGM(false)"
-                                class="btn-ghost" style="width: 100%; padding: 11px; font-weight: 700; font-size: 0.85rem; background: rgba(255, 183, 3, 0.12); border-color: rgba(255,183,3,0.5); color: var(--neon-gold); border-radius: 8px;">
-                            🎤 Hold to Duck BGM (Talkover)
-                        </button>
                     </div>
 
                     <!-- Live DJ Soundboard -->
@@ -582,9 +593,42 @@
                         </div>
                         <div>
                             <label for="mobileHostMicDeviceSelect" style="display: block; font-size: 0.74rem; font-weight: 700; color: var(--text-muted); margin-bottom: 4px;">Host PC Input Device (Mic / Line-In):</label>
-                            <select id="mobileHostMicDeviceSelect" onchange="hostSetMicDevice(this.value)" style="width: 100%; padding: 8px 10px; border-radius: 8px; background: rgba(16, 28, 45, 0.95); border: 1px solid var(--border-neon); color: #fff; font-size: 0.8rem; outline: none;">
-                                <option value="default">System Default Input</option>
+                            <div style="display: flex; gap: 6px; align-items: center;">
+                                <select id="mobileHostMicDeviceSelect" onchange="hostSetMicDevice(this.value)" style="flex: 1; padding: 8px 10px; border-radius: 8px; background: rgba(16, 28, 45, 0.95); border: 1px solid var(--border-neon); color: #fff; font-size: 0.8rem; outline: none;">
+                                    <option value="default">System Default Input</option>
+                                </select>
+                                <button type="button" onclick="loadHostMicDevices(true)" class="btn-ghost" style="padding: 8px 10px; font-size: 0.75rem; border-color: rgba(0,240,255,0.4); color: var(--neon-cyan);" title="Rescan audio input devices">🔄 Refresh</button>
+                            </div>
+                            <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 5px;">
+                                Supports USB mics, 3.5mm line-in, and dual-channel wireless mic receivers.
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Karaoke CD (CD+G) Visual Theme & Glow -->
+                    <div class="tiki-card" style="margin-bottom: 14px; padding: 14px; border-left: 4px solid var(--neon-pink);">
+                        <div style="font-weight: 700; font-size: 0.88rem; color: #fff; margin-bottom: 10px;">💿 Karaoke CD (CD+G) Visual Theme</div>
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                            <div>
+                                <div style="font-size: 0.8rem; font-weight: 700; color: #fff;">Color Palette Override</div>
+                                <div style="font-size: 0.7rem; color: var(--text-muted);">Modernize classic 16-color CD+G tracks</div>
+                            </div>
+                            <select id="mobileCdgThemeSelect" onchange="hostSetCdgTheme(this.value)" style="padding: 6px 10px; border-radius: 8px; background: rgba(16, 28, 45, 0.95); border: 1px solid var(--border-neon); color: #fff; font-size: 0.78rem; outline: none;">
+                                <option value="neon">🌴 Tiki Neon (Default)</option>
+                                <option value="sunset">🌅 Tropical Sunset</option>
+                                <option value="cyberpunk">⚡ Cyberpunk Synth</option>
+                                <option value="classic">📺 Original CD+G Disc Colors</option>
                             </select>
+                        </div>
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <div>
+                                <div style="font-size: 0.8rem; font-weight: 700; color: #fff;">Neon Lyric Glow & Upscaling</div>
+                                <div style="font-size: 0.7rem; color: var(--text-muted);">Smooth pixel edges & add stage bloom</div>
+                            </div>
+                            <label class="switch-toggle">
+                                <input type="checkbox" id="mobileCdgGlowToggle" checked onchange="hostToggleCdgGlow(this.checked)">
+                                <span class="slider-round"></span>
+                            </label>
                         </div>
                     </div>
 
@@ -714,9 +758,12 @@
                             </div>
                         </div>
 
-                        <div style="margin-bottom: 8px;">
-                            <button type="button" id="openWifiQrBtn" onclick="openWifiQrModal()" class="btn-ghost" style="width: 100%; padding: 8px; font-size: 0.78rem; border-color: var(--neon-cyan); color: var(--neon-cyan); font-weight: 700;">
+                        <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;">
+                            <button type="button" id="openWifiQrBtn" onclick="openWifiQrModal()" class="btn-ghost" style="flex: 1; min-width: 150px; padding: 8px; font-size: 0.78rem; border-color: var(--neon-cyan); color: var(--neon-cyan); font-weight: 700;">
                                 📱 Show Songbook QR Code
+                            </button>
+                            <button type="button" id="openHostPairingQrBtn" onclick="openHostPairingQrModal()" class="btn-ghost" style="flex: 1; min-width: 150px; padding: 8px; font-size: 0.78rem; border-color: var(--neon-gold); color: var(--neon-gold); font-weight: 700;">
+                                👑 Pair Host Remote (QR & PIN)
                             </button>
                         </div>
 
@@ -1392,6 +1439,23 @@
                 Network: <strong id="modalWifiSsidDetail" style="color: var(--neon-cyan);"></strong> | Pass: <strong id="modalWifiPassDetail" style="color: var(--neon-pink);"></strong>
             </div>
             <button type="button" onclick="closeWifiQrModal()" class="btn-ghost" style="padding: 6px 20px; font-size: 0.82rem; border-color: rgba(255,255,255,0.3); color: #fff;">Close</button>
+        </div>
+    </div>
+
+    <!-- Host Remote Pairing QR & PIN Modal -->
+    <div id="hostPairingQrModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 1200; background: rgba(5, 8, 15, 0.94); backdrop-filter: blur(12px); align-items: center; justify-content: center; padding: 20px; box-sizing: border-box;">
+        <div class="tiki-card-pink" style="max-width: 400px; width: 100%; text-align: center; padding: 22px; position: relative;">
+            <button type="button" onclick="closeHostPairingQrModal()" class="btn-ghost" style="position: absolute; top: 12px; right: 12px; padding: 4px 10px; font-size: 0.85rem;">✕</button>
+            <h3 class="font-tiki neon-gold" style="font-size: 1.4rem; margin-top: 0; margin-bottom: 6px;">👑 Pair Mobile Host Remote</h3>
+            <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 16px;">Scan with your phone to unlock the Host DJ Desk & Stage Remote from anywhere in the room.</p>
+            <div style="display: inline-block; background: #fff; padding: 10px; border-radius: 12px; margin-bottom: 14px; border: 2px solid var(--neon-gold);">
+                <img id="hostPairingQrImg" src="/qr/host" alt="Host Pairing QR" style="width: 170px; height: 170px; display: block; border-radius: 6px;">
+            </div>
+            <div style="margin-bottom: 16px; padding: 10px; border-radius: 10px; background: rgba(255, 183, 3, 0.12); border: 1px solid rgba(255, 183, 3, 0.4);">
+                <div style="font-size: 0.72rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 2px;">Manual Host PIN</div>
+                <div id="hostPairingPinText" style="font-size: 1.4rem; font-weight: 800; color: var(--neon-gold); letter-spacing: 3px;">----</div>
+            </div>
+            <button type="button" onclick="closeHostPairingQrModal()" class="btn-ghost" style="padding: 6px 20px; font-size: 0.82rem; border-color: rgba(255,255,255,0.3); color: #fff;">Close</button>
         </div>
     </div>
 

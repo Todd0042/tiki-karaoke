@@ -45,7 +45,10 @@ from config import (
     find_system_browser, get_available_displays,
     open_url_in_preferred_browser, get_available_browsers
 )
-from app import LOCAL_IP, PUBLIC_IP, get_base_url, get_public_host, register_shutdown_trigger, register_focus_hub_trigger
+from app import (
+    LOCAL_IP, PUBLIC_IP, get_base_url, get_public_host,
+    register_shutdown_trigger, register_focus_hub_trigger, register_tunnel_reload_trigger
+)
 from tray import start_tray, stop_tray
 
 LOG_FILE = DATA_DIR / "tiki_karaoke.log"
@@ -918,9 +921,85 @@ def start_permanent_tunnel(port: int, remote_port: int = 38480):
 
 tunnel_watchdog_thread = None
 
+def apply_tunnel_configuration(
+    target_port: int,
+    cli_override_mode: Optional[str] = None,
+    cli_remote_port: Optional[int] = None
+) -> Optional[str]:
+    """
+    Starts, switches, or stops the remote tunnel based on the latest saved config.json,
+    updates TIKI_PUBLIC_HOST / TIKI_USE_HTTPS, and refreshes Control Hub URLs.
+    """
+    global active_tunnel_proc, active_hub
+    cfg = load_config()
+    remote_mode = cli_override_mode or cfg.get("remote_mode", "cloudflare_quick")
+    remote_port = int(cli_remote_port if cli_remote_port is not None else cfg.get("remote_port", 38480))
+
+    # Stop any existing tunnel process cleanly before starting/switching
+    if active_tunnel_proc and active_tunnel_proc.poll() is None:
+        kill_process_tree(active_tunnel_proc)
+    active_tunnel_proc = None
+
+    public_url = None
+
+    if remote_mode in ("cloudflare", "cloudflare_quick"):
+        public_url, active_tunnel_proc = start_cloudflare_quick_tunnel(target_port)
+        if public_url:
+            print(f"🔒 [Cloudflare HTTPS Active] Public URL: {public_url}")
+    elif remote_mode == "cloudflare_named":
+        token = cfg.get("cloudflare_token") or os.getenv("TIKI_CLOUDFLARE_TOKEN", "")
+        custom_domain = cfg.get("custom_domain") or os.getenv("TIKI_CUSTOM_DOMAIN", "")
+        public_url, active_tunnel_proc = start_cloudflare_named_tunnel(token, custom_domain)
+        if public_url:
+            print(f"🔒 [Cloudflare Branded HTTPS Active] Public URL: {public_url}")
+    elif remote_mode == "tailscale":
+        tailnet_domain = cfg.get("tailscale_domain") or os.getenv("TIKI_TAILSCALE_DOMAIN", "")
+        public_url, active_tunnel_proc = start_tailscale_funnel(target_port, tailnet_domain)
+        if public_url:
+            print(f"🔒 [Tailscale Funnel Active] Public URL: {public_url}")
+    elif remote_mode == "duckdns":
+        domain = cfg.get("duckdns_domain") or os.getenv("TIKI_DUCKDNS_DOMAIN", "")
+        if domain:
+            public_url = f"https://{domain}.duckdns.org" if not domain.startswith("http") else domain
+            print(f"🔒 [DuckDNS SSL Active] Public URL: {public_url}")
+    elif remote_mode == "bore":
+        public_url, active_tunnel_proc = start_permanent_tunnel(target_port, remote_port)
+        if public_url:
+            print(f"🌐 [Bore Static URL Active] Public URL: {public_url}")
+    elif remote_mode == "custom" and cfg.get("public_host"):
+        public_url = cfg["public_host"]
+
+    if public_url:
+        clean_host = public_url.replace("https://", "").replace("http://", "").rstrip("/")
+        os.environ["TIKI_PUBLIC_HOST"] = clean_host
+        if public_url.startswith("https://"):
+            os.environ["TIKI_USE_HTTPS"] = "1"
+        else:
+            os.environ.pop("TIKI_USE_HTTPS", None)
+    else:
+        os.environ.pop("TIKI_PUBLIC_HOST", None)
+        os.environ.pop("TIKI_USE_HTTPS", None)
+        if remote_mode != "local":
+            print(f"ℹ️  [Notice] Remote tunnel ({remote_mode}) inactive or offline. Serving on Local Wi-Fi.")
+
+    from config import refresh_globals
+    refresh_globals()
+
+    effective_base = public_url if public_url else get_base_url()
+    if active_hub:
+        host_param = f"?token={HOST_TOKEN}" if HOST_TOKEN else ""
+        active_hub.update_network_urls({
+            "public": effective_base,
+            "join": f"{effective_base}/join",
+            "host_remote": f"{effective_base}/host{host_param}"
+        })
+
+    return public_url
+
+
 def start_tunnel_watchdog(mode: str, local_port: int, remote_port: int = 38480, token: str = "", custom_domain: str = ""):
     global tunnel_watchdog_thread
-    if mode in ("local", "custom"):
+    if tunnel_watchdog_thread is not None and tunnel_watchdog_thread.is_alive():
         return
 
     def _watchdog_loop():
@@ -936,6 +1015,15 @@ def start_tunnel_watchdog(mode: str, local_port: int, remote_port: int = 38480, 
             if is_shutting_down:
                 break
 
+            live_cfg = load_config()
+            live_mode = live_cfg.get("remote_mode", mode)
+            live_remote_port = int(live_cfg.get("remote_port", remote_port))
+            live_token = live_cfg.get("cloudflare_token") or os.getenv("TIKI_CLOUDFLARE_TOKEN", token)
+            live_domain = live_cfg.get("custom_domain") or os.getenv("TIKI_CUSTOM_DOMAIN", custom_domain)
+
+            if live_mode in ("local", "custom"):
+                continue
+
             needs_restart = False
             # 1. Process termination check
             if active_tunnel_proc is not None:
@@ -945,20 +1033,20 @@ def start_tunnel_watchdog(mode: str, local_port: int, remote_port: int = 38480, 
 
             # 2. Keepalive & zombie-socket probe (specifically for Bore)
             probe_counter += 5
-            if not needs_restart and mode == "bore" and probe_counter >= 30:
+            if not needs_restart and live_mode == "bore" and probe_counter >= 30:
                 probe_counter = 0
                 import socket
                 try:
                     # Probe bore.pub on the allocated remote port with 3s timeout
-                    with socket.create_connection(("bore.pub", remote_port), timeout=3.0) as sock:
+                    with socket.create_connection(("bore.pub", live_remote_port), timeout=3.0) as sock:
                         sock.sendall(b"HEAD /api/state HTTP/1.0\r\nHost: bore.pub\r\n\r\n")
                 except (ConnectionRefusedError, socket.timeout, OSError) as e:
-                    print(f"\n[Tunnel Watchdog] ⚠️ bore.pub:{remote_port} connection refused or timed out ({e}). Auto-healing tunnel...")
+                    print(f"\n[Tunnel Watchdog] ⚠️ bore.pub:{live_remote_port} connection refused or timed out ({e}). Auto-healing tunnel...")
                     needs_restart = True
 
             # 3. Active Cloudflare Quick Tunnel Keepalive (prevents idle edge drop)
             cf_probe_counter += 5
-            if not needs_restart and mode in ("cloudflare", "cloudflare_quick") and cf_probe_counter >= 20:
+            if not needs_restart and live_mode in ("cloudflare", "cloudflare_quick") and cf_probe_counter >= 20:
                 cf_probe_counter = 0
                 pub_host = os.environ.get("TIKI_PUBLIC_HOST", "").strip()
                 if pub_host and "trycloudflare.com" in pub_host:
@@ -990,12 +1078,12 @@ def start_tunnel_watchdog(mode: str, local_port: int, remote_port: int = 38480, 
 
                 time.sleep(1.0)
                 new_url = None
-                if mode == "bore":
-                    new_url, active_tunnel_proc = start_permanent_tunnel(local_port, remote_port)
-                elif mode in ("cloudflare", "cloudflare_quick"):
+                if live_mode == "bore":
+                    new_url, active_tunnel_proc = start_permanent_tunnel(local_port, live_remote_port)
+                elif live_mode in ("cloudflare", "cloudflare_quick"):
                     new_url, active_tunnel_proc = start_cloudflare_quick_tunnel(local_port)
-                elif mode == "cloudflare_named":
-                    new_url, active_tunnel_proc = start_cloudflare_named_tunnel(token, custom_domain)
+                elif live_mode == "cloudflare_named":
+                    new_url, active_tunnel_proc = start_cloudflare_named_tunnel(live_token, live_domain)
 
                 if new_url:
                     clean_host = new_url.replace("https://", "").replace("http://", "").rstrip("/")
@@ -1139,56 +1227,22 @@ def main():
     from config import refresh_globals
     refresh_globals()
 
-    remote_mode = cfg.get("remote_mode", "cloudflare_quick")
+    cli_override = None
     if args.local_only:
-        remote_mode = "local"
+        cli_override = "local"
     elif args.tunnel:
-        remote_mode = "cloudflare_quick"
+        cli_override = "cloudflare_quick"
     elif args.bore:
-        remote_mode = "bore"
+        cli_override = "bore"
 
-    public_url = None
-
-    if remote_mode in ("cloudflare", "cloudflare_quick"):
-        public_url, active_tunnel_proc = start_cloudflare_quick_tunnel(target_port)
-        if public_url:
-            print(f"🔒 [Cloudflare HTTPS Active] Public URL: {public_url}")
-    elif remote_mode == "cloudflare_named":
-        token = cfg.get("cloudflare_token") or os.getenv("TIKI_CLOUDFLARE_TOKEN", "")
-        custom_domain = cfg.get("custom_domain") or os.getenv("TIKI_CUSTOM_DOMAIN", "")
-        public_url, active_tunnel_proc = start_cloudflare_named_tunnel(token, custom_domain)
-        if public_url:
-            print(f"🔒 [Cloudflare Branded HTTPS Active] Public URL: {public_url}")
-    elif remote_mode == "tailscale":
-        tailnet_domain = cfg.get("tailscale_domain") or os.getenv("TIKI_TAILSCALE_DOMAIN", "")
-        public_url, active_tunnel_proc = start_tailscale_funnel(target_port, tailnet_domain)
-        if public_url:
-            print(f"🔒 [Tailscale Funnel Active] Public URL: {public_url}")
-    elif remote_mode == "duckdns":
-        domain = cfg.get("duckdns_domain") or os.getenv("TIKI_DUCKDNS_DOMAIN", "")
-        if domain:
-            public_url = f"https://{domain}.duckdns.org" if not domain.startswith("http") else domain
-            print(f"🔒 [DuckDNS SSL Active] Public URL: {public_url}")
-    elif remote_mode == "bore":
-        public_url, active_tunnel_proc = start_permanent_tunnel(target_port, args.remote_port)
-        if public_url:
-            print(f"🌐 [Bore Static URL Active] Public URL: {public_url}")
-    elif remote_mode == "custom" and cfg.get("public_host"):
-        public_url = cfg["public_host"]
+    remote_mode = cli_override or cfg.get("remote_mode", "cloudflare_quick")
+    public_url = apply_tunnel_configuration(target_port, cli_override_mode=cli_override, cli_remote_port=args.remote_port)
 
     if public_url:
-        clean_host = public_url.replace("https://", "").replace("http://", "").rstrip("/")
-        os.environ["TIKI_PUBLIC_HOST"] = clean_host
-        if public_url.startswith("https://"):
-            os.environ["TIKI_USE_HTTPS"] = "1"
-        from config import refresh_globals
-        refresh_globals()
         stage_url = f"{public_url}/stage"
         join_url = f"{public_url}/join"
         host_url = f"{public_url}/host?token={HOST_TOKEN}"
     else:
-        if remote_mode != "local":
-            print(f"ℹ️  [Notice] Remote tunnel ({remote_mode}) inactive or offline. Serving on Local Wi-Fi.")
         stage_url = f"{get_base_url()}/stage"
         join_url = f"{get_base_url()}/join"
         host_url = f"{get_base_url()}/host?token={HOST_TOKEN}"
@@ -1236,6 +1290,7 @@ def main():
         threading.Thread(target=_hard_exit, daemon=True).start()
 
     register_shutdown_trigger(trigger_server_shutdown)
+    register_tunnel_reload_trigger(lambda: apply_tunnel_configuration(target_port))
 
     global active_hub
     active_hub = None

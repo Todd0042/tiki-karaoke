@@ -11,10 +11,11 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILD_TMP="/tmp/tiki_build_$(date +%s)"
 OUT_DIR="${REPO_ROOT}/dist"
 APPDIR="/tmp/TikiKaraoke.AppDir"
-VERSION="${TIKI_VERSION:-1.0.6}"
+VERSION="${TIKI_VERSION:-1.0.8}"
 OUT_APPIMAGE="${OUT_DIR}/TikiKaraoke-Pro-v${VERSION}-x86_64.AppImage"
 
 echo "=== [1/5] Setting up build directories ==="
+rm -rf "$APPDIR" 2>/dev/null || true
 mkdir -p "$OUT_DIR"
 mkdir -p "$BUILD_TMP"
 mkdir -p "$APPDIR/usr/bin"
@@ -92,10 +93,28 @@ docker run --rm \
 echo "=== [3/5] Assembling AppDir ==="
 cp -r "${BUILD_TMP}/TikiKaraoke"/* "$APPDIR/usr/bin/"
 
+mkdir -p "${REPO_ROOT}/bin"
+if [ ! -f "${REPO_ROOT}/bin/cloudflared" ]; then
+    echo "Downloading cloudflared (linux-amd64)..."
+    curl -sL "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64" -o "${REPO_ROOT}/bin/cloudflared"
+    chmod +x "${REPO_ROOT}/bin/cloudflared"
+fi
+if [ ! -f "${REPO_ROOT}/bin/bore" ]; then
+    echo "Downloading bore (v0.5.2 x86_64-unknown-linux-musl)..."
+    curl -sL "https://github.com/ekzhang/bore/releases/download/v0.5.2/bore-v0.5.2-x86_64-unknown-linux-musl.tar.gz" | tar -xz -C "${REPO_ROOT}/bin" bore
+    chmod +x "${REPO_ROOT}/bin/bore"
+fi
+
 if [ -d "${REPO_ROOT}/bin" ]; then
     mkdir -p "$APPDIR/usr/bin/bin"
     cp -r "${REPO_ROOT}/bin"/* "$APPDIR/usr/bin/bin/" || true
     chmod +x "$APPDIR/usr/bin/bin/"* 2>/dev/null || true
+
+    if [ -d "$APPDIR/usr/bin/_internal" ]; then
+        mkdir -p "$APPDIR/usr/bin/_internal/bin"
+        cp -r "${REPO_ROOT}/bin"/* "$APPDIR/usr/bin/_internal/bin/" || true
+        chmod +x "$APPDIR/usr/bin/_internal/bin/"* 2>/dev/null || true
+    fi
 fi
 
 # Bundle Tiki Karaoke Smart Importer if built in sibling repo
@@ -132,19 +151,21 @@ EOF
 
 cp "$APPDIR/tiki-karaoke.desktop" "$APPDIR/usr/share/applications/tiki-karaoke.desktop"
 
-cat << 'EOF' > "$APPDIR/AppRun"
+cat << EOF > "$APPDIR/AppRun"
 #!/bin/bash
-SELF=$(readlink -f "$0")
-HERE=${SELF%/*}
+SELF=\$(readlink -f "\$0")
+HERE=\${SELF%/*}
+export APPDIR="\${HERE}"
+export TIKI_VERSION="\${TIKI_VERSION:-${VERSION}}"
 
 # Preserve host LD_LIBRARY_PATH for spawned external tools (browsers, xdg-open, /bin/sh)
-export LD_LIBRARY_PATH_ORIG="${LD_LIBRARY_PATH}"
+export LD_LIBRARY_PATH_ORIG="\${LD_LIBRARY_PATH}"
 unset LD_LIBRARY_PATH
 
-export PATH="${HERE}/usr/bin:${HERE}/usr/bin/bin:${PATH}"
+export PATH="\${HERE}/usr/bin:\${HERE}/usr/bin/bin:\${HERE}/usr/bin/_internal/bin:\${PATH}"
 
-cd "${HERE}/usr/bin"
-exec "${HERE}/usr/bin/TikiKaraoke" "$@"
+cd "\${HERE}/usr/bin"
+exec "\${HERE}/usr/bin/TikiKaraoke" "\$@"
 EOF
 
 chmod +x "$APPDIR/AppRun"

@@ -96,14 +96,19 @@ function initAudio() {
     applyAudioSink();
 
     document.body.addEventListener("click", () => {
-        resumeStagePlayback();
+        if (!isMutedAudio && audioDSP && audioDSP.ctx && audioDSP.ctx.state === "suspended") {
+            audioDSP.resume();
+        }
     });
 }
 
 function resumeStagePlayback() {
     const videoEl = document.getElementById("localVideo");
+    const fillerVideo = document.getElementById("fillerVideo");
+    const ytContainer = document.getElementById("youtubeContainer");
     if (isMutedAudio) {
         if (videoEl) videoEl.muted = true;
+        if (fillerVideo) fillerVideo.muted = true;
         const bgm = document.getElementById("bgmPlayer");
         if (bgm) bgm.muted = true;
     } else if (audioDSP) {
@@ -111,11 +116,11 @@ function resumeStagePlayback() {
         audioDSP.resume();
     }
     const bgm = document.getElementById("bgmPlayer");
-    if (bgm && bgm.paused && isIntermission && !isMutedAudio) {
+    if (bgm && bgm.paused && isIntermission && !isFillerPlaying && !currentTrack && !isMutedAudio) {
         bgm.play().catch(() => {});
     }
-    if (videoEl && videoEl.style.display !== "none") {
-        if (currentTrack && currentTrack.elapsed_seconds && videoEl.currentTime < currentTrack.elapsed_seconds - 3) {
+    if (videoEl && videoEl.style.display !== "none" && currentTrack) {
+        if (currentTrack.elapsed_seconds && videoEl.currentTime < currentTrack.elapsed_seconds - 3) {
             videoEl.currentTime = currentTrack.elapsed_seconds;
         }
         if (isMutedAudio) videoEl.muted = true;
@@ -124,7 +129,11 @@ function resumeStagePlayback() {
             if (unmute) unmute.style.display = "none";
         }).catch(e => console.log(e));
     }
-    if (ytPlayer && ytPlayer.playVideo) {
+    if (fillerVideo && fillerVideo.style.display !== "none" && isFillerPlaying) {
+        if (isMutedAudio) fillerVideo.muted = true;
+        fillerVideo.play().catch(e => console.log(e));
+    }
+    if (ytPlayer && ytPlayer.playVideo && ytContainer && ytContainer.style.display !== "none" && (currentTrack || isFillerPlaying)) {
         if (isMutedAudio && ytPlayer.mute) ytPlayer.mute();
         ytPlayer.playVideo();
     }
@@ -370,6 +379,8 @@ function initYouTubeAPI() {
                 onReady: () => console.log("[YouTube] IFrame API Ready"),
                 onStateChange: onYouTubeStateChange,
                 onError: (e) => {
+                    const ytContainer = document.getElementById("youtubeContainer");
+                    if (!ytContainer || ytContainer.style.display === "none") return;
                     console.error("[YouTube] Player error code:", e.data);
                     onPlaybackFailure(`YouTube error code ${e.data}`, currentTrack);
                 }
@@ -379,6 +390,8 @@ function initYouTubeAPI() {
 }
 
 function onYouTubeStateChange(event) {
+    const ytContainer = document.getElementById("youtubeContainer");
+    if (!ytContainer || ytContainer.style.display === "none") return;
     if (event.data === YT.PlayerState.ENDED) {
         if (isFillerPlaying) {
             if (!isSpectatorViewer) {
@@ -871,23 +884,35 @@ function playNextBGM() {
     }
 }
 
+let bgmFadeInterval = null;
+
 function fadeOutBGM() {
+    if (bgmFadeInterval) {
+        clearInterval(bgmFadeInterval);
+        bgmFadeInterval = null;
+    }
     const bgm = document.getElementById("bgmPlayer");
     if (!bgm) return;
     let vol = bgm.volume;
-    const interval = setInterval(() => {
+    bgmFadeInterval = setInterval(() => {
         if (vol > 0.05) {
             vol -= 0.05;
             bgm.volume = Math.max(0, vol);
         } else {
             bgm.volume = 0;
             bgm.pause();
-            clearInterval(interval);
+            clearInterval(bgmFadeInterval);
+            bgmFadeInterval = null;
         }
     }, 100);
 }
 
 function fadeInBGM() {
+    if (currentTrack || isFillerPlaying) return;
+    if (bgmFadeInterval) {
+        clearInterval(bgmFadeInterval);
+        bgmFadeInterval = null;
+    }
     const bgm = document.getElementById("bgmPlayer");
     if (!bgm) return;
     if (isMutedAudio) {
@@ -900,12 +925,20 @@ function fadeInBGM() {
     bgm.volume = 0;
     bgm.play().catch(() => {});
     let vol = 0;
-    const interval = setInterval(() => {
+    bgmFadeInterval = setInterval(() => {
+        if (currentTrack || isFillerPlaying) {
+            bgm.volume = 0;
+            bgm.pause();
+            clearInterval(bgmFadeInterval);
+            bgmFadeInterval = null;
+            return;
+        }
         if (vol < 0.25) {
             vol += 0.05;
             bgm.volume = Math.min(0.25, vol);
         } else {
-            clearInterval(interval);
+            clearInterval(bgmFadeInterval);
+            bgmFadeInterval = null;
         }
     }, 150);
 }
@@ -1621,10 +1654,14 @@ function updateNextTicker(queue) {
 function setupEventListeners() {
     // Keyboard shortcuts for Host DJ
     window.addEventListener("keydown", (e) => {
+        const tag = (e.target && e.target.tagName) ? e.target.tagName.toUpperCase() : "";
+        if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+
         if (e.key === "h" || e.key === "H") {
             toggleHostQRModal();
         } else if (e.key === " ") {
             // Space to Pause/Resume
+            e.preventDefault();
             pausePlayback();
         } else if (e.key === "n" || e.key === "N") {
             // N for Next/Skip
@@ -1638,10 +1675,16 @@ function setupEventListeners() {
             }
         } else if (e.key === "[") {
             // Pitch down 1 semitone
-            if (audioDSP) audioDSP.setPitch(audioDSP.currentPitch - 1);
+            if (audioDSP) {
+                audioDSP.setPitch(audioDSP.currentPitch - 1);
+                updatePitchBadge(audioDSP.currentPitch);
+            }
         } else if (e.key === "]") {
             // Pitch up 1 semitone
-            if (audioDSP) audioDSP.setPitch(audioDSP.currentPitch + 1);
+            if (audioDSP) {
+                audioDSP.setPitch(audioDSP.currentPitch + 1);
+                updatePitchBadge(audioDSP.currentPitch);
+            }
         } else if (e.key === "p" || e.key === "P") {
             // P for Microphone Mute/Live toggle
             toggleStageMic();
@@ -1904,8 +1947,7 @@ function startFillerPlayback(track) {
     const bufferOverlay = document.getElementById("fillerBufferOverlay");
     if (bufferOverlay) bufferOverlay.style.display = "none";
 
-    const intermission = document.getElementById("intermissionOverlay");
-    if (intermission) intermission.style.display = "none";
+    stopIntermission();
 
     const nowBar = document.getElementById("nowPlayingBar");
     if (nowBar) nowBar.style.display = "none";
@@ -2359,6 +2401,7 @@ async function populateHostMicDevices() {
 
 let hostMicMuted = true;
 let hostMicVolume = 80;
+let hostMicReverb = false;
 let hostDuckingEnabled = true;
 let hostDuckingDb = -6;
 let hostMicAvailable = null;   // null = unknown yet; true/false from backend router
@@ -2379,6 +2422,33 @@ fetch("/api/host/mic-state")
                 hostMonitoringMode = st.monitoring_mode;
                 const modeSel = document.getElementById("hostMonitoringModeSelect");
                 if (modeSel) modeSel.value = hostMonitoringMode;
+            }
+            if (st.reverb !== undefined) {
+                hostMicReverb = Boolean(st.reverb);
+                const revToggle = document.getElementById("modalMicReverbToggle");
+                if (revToggle) revToggle.checked = hostMicReverb;
+                if (audioDSP) audioDSP.setMicReverb(hostMicReverb);
+            }
+            if (st.ducking_enabled !== undefined) {
+                hostDuckingEnabled = Boolean(st.ducking_enabled);
+                const duck = document.getElementById("modalDuckingToggle");
+                if (duck) duck.checked = hostDuckingEnabled;
+            }
+            if (st.ducking_db !== undefined) {
+                hostDuckingDb = Number(st.ducking_db) || -6;
+                if (audioDSP) audioDSP.duckingDb = hostDuckingDb;
+                const dbSel = document.getElementById("modalDuckingDbSelect");
+                if (dbSel) dbSel.value = String(st.ducking_db);
+            }
+            if (st.cdg_theme) {
+                const cdgSel = document.getElementById("cdgThemeSelect");
+                if (cdgSel) cdgSel.value = st.cdg_theme;
+                onCdgThemeChange(st.cdg_theme);
+            }
+            if (st.cdg_glow !== undefined) {
+                const cdgGlow = document.getElementById("cdgGlowToggle");
+                if (cdgGlow) cdgGlow.checked = Boolean(st.cdg_glow);
+                onCdgGlowChange(Boolean(st.cdg_glow));
             }
             renderMicAvailability();
             renderMonitoringModeGating();
@@ -2453,6 +2523,7 @@ async function syncBrowserWebRtcState() {
         }
         audioDSP.setMicMuted(hostMicMuted);
         audioDSP.setMicVolume(hostMicVolume / 100.0);
+        audioDSP.setMicReverb(hostMicReverb);
     } else {
         // If not in browser WebRTC mode, mute the Web Audio mic so it does not echo with native route
         if (audioDSP) {
@@ -2569,6 +2640,8 @@ function onHostMicVolumeChange(val) {
 }
 
 function onHostMicReverbChange(checked) {
+    hostMicReverb = !!checked;
+    if (audioDSP) audioDSP.setMicReverb(hostMicReverb);
     broadcastHostMicState();
 }
 
@@ -2590,6 +2663,7 @@ function broadcastHostMicState() {
             device: localStorage.getItem("tiki_mic_device") || "default",
             muted: hostMicMuted,
             volume: hostMicVolume,
+            reverb: hostMicReverb,
             monitoring_mode: hostMonitoringMode,
             ducking_enabled: hostDuckingEnabled,
             ducking_db: hostDuckingDb
@@ -2631,6 +2705,7 @@ function handleHostMicSettings(data) {
     if (data.muted !== undefined) {
         hostMicMuted = Boolean(data.muted);
         updateHostMicUI(hostMicMuted);
+        syncBrowserWebRtcState();
 
         // Intelligent Between-Song Intermission Ducking on stage player
         if (audioDSP) {
@@ -2647,6 +2722,13 @@ function handleHostMicSettings(data) {
         if (slider) slider.value = hostMicVolume;
         const txt = document.getElementById("modalMicVolumeText");
         if (txt) txt.innerText = `${hostMicVolume}%`;
+        syncBrowserWebRtcState();
+    }
+    if (data.reverb !== undefined) {
+        hostMicReverb = Boolean(data.reverb);
+        const revToggle = document.getElementById("modalMicReverbToggle");
+        if (revToggle) revToggle.checked = hostMicReverb;
+        if (audioDSP) audioDSP.setMicReverb(hostMicReverb);
     }
     if (data.ducking_enabled !== undefined) {
         hostDuckingEnabled = Boolean(data.ducking_enabled);
@@ -2658,6 +2740,16 @@ function handleHostMicSettings(data) {
         if (audioDSP) audioDSP.duckingDb = hostDuckingDb;
         const dbSel = document.getElementById("modalDuckingDbSelect");
         if (dbSel) dbSel.value = String(data.ducking_db);
+    }
+    if (data.cdg_theme !== undefined && data.cdg_theme) {
+        const cdgSel = document.getElementById("cdgThemeSelect");
+        if (cdgSel) cdgSel.value = data.cdg_theme;
+        onCdgThemeChange(data.cdg_theme);
+    }
+    if (data.cdg_glow !== undefined) {
+        const cdgGlow = document.getElementById("cdgGlowToggle");
+        if (cdgGlow) cdgGlow.checked = Boolean(data.cdg_glow);
+        onCdgGlowChange(Boolean(data.cdg_glow));
     }
 }
 

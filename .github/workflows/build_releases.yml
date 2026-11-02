@@ -43,7 +43,7 @@ jobs:
           elif [[ "$RAW_TAG" =~ ^v[0-9] ]]; then
             V="${RAW_TAG#v}"
           else
-            V="1.0.7"
+            V="1.0.8"
           fi
           echo "version=$V" >> "$GITHUB_OUTPUT"
 
@@ -94,7 +94,7 @@ jobs:
           elif [[ "$RAW_TAG" =~ ^v[0-9] ]]; then
             V="${RAW_TAG#v}"
           else
-            V="1.0.7"
+            V="1.0.8"
           fi
           echo "version=$V" >> "$GITHUB_OUTPUT"
 

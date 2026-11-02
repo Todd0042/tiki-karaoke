@@ -117,15 +117,15 @@ if (-not (Test-Path "$LocalDist\TikiKaraoke\TikiKaraoke.exe")) {
     exit 1
 }
 
-# Ensure tiki-mic-router.exe is physically inside the bundle's bin directory
-if (Test-Path "$ScriptDir\bin\tiki-mic-router.exe") {
+# Ensure all bundled helper binaries (tiki-mic-router.exe, cloudflared.exe, bore.exe, ffmpeg.exe, ffprobe.exe) are physically inside both bin and _internal\bin
+if (Test-Path "$ScriptDir\bin") {
     $targetBins = @(
         "$LocalDist\TikiKaraoke\bin",
         "$LocalDist\TikiKaraoke\_internal\bin"
     )
     foreach ($tb in $targetBins) {
         if (-not (Test-Path $tb)) { New-Item -ItemType Directory -Force -Path $tb | Out-Null }
-        Copy-Item "$ScriptDir\bin\tiki-mic-router.exe" "$tb\" -Force -ErrorAction SilentlyContinue
+        Copy-Item "$ScriptDir\bin\*.exe" "$tb\" -Force -ErrorAction SilentlyContinue
     }
 }
 
@@ -155,17 +155,17 @@ if (-not (Test-Path $DistExe)) {
     $DistExe = "$LocalDist\TikiKaraoke\TikiKaraoke.exe"
 }
 
-# Also ensure dist has tiki-mic-router.exe and TikiKaraokeImporter.exe
-if (Test-Path "$ScriptDir\bin\tiki-mic-router.exe") {
+# Also ensure dist has all bundled helper binaries and TikiKaraokeImporter.exe
+if (Test-Path "$ScriptDir\bin") {
     $distBins = @(
         "$ScriptDir\dist\TikiKaraoke\bin",
         "$ScriptDir\dist\TikiKaraoke\_internal\bin"
     )
     foreach ($db in $distBins) {
         if (-not (Test-Path $db)) { New-Item -ItemType Directory -Force -Path $db | Out-Null }
-        Copy-Item "$ScriptDir\bin\tiki-mic-router.exe" "$db\" -Force -ErrorAction SilentlyContinue
+        Copy-Item "$ScriptDir\bin\*.exe" "$db\" -Force -ErrorAction SilentlyContinue
     }
-    Write-Host "[OK] Verified tiki-mic-router.exe in dist bundle." -ForegroundColor Green
+    Write-Host "[OK] Verified bundled helper binaries in dist bundle." -ForegroundColor Green
 }
 
 foreach ($cand in $importerCandidates) {
@@ -206,7 +206,7 @@ if ($Version) {
     }
 }
 if (-not $AppVersion) {
-    $AppVersion = "1.0.6"
+    $AppVersion = "1.0.8"
 }
 Write-Host "Target Version: $AppVersion" -ForegroundColor Cyan
 

@@ -1651,6 +1651,96 @@ class TestAPIEndpoints(unittest.TestCase):
         res_open = open_url_in_preferred_browser("http://127.0.0.1:8000/setup")
         self.assertTrue(res_open)
 
+    def test_video_quality_profiles_and_temporary_cache_mode(self):
+        """Verifies 1080p/720p/480p format selection, Temporary Cache Mode (stream_only) auto-pruning, and AppImage binary lookup."""
+        from config import HOST_TOKEN, get_bundled_binary_path, get_tracks_dir
+        from downloader import get_ydl_video_format
+        from database import save_track, update_track_download_status, get_track_by_id, set_queue_status, set_setting
+
+        # 1. Verify yt-dlp format strings for all profiles
+        set_setting("video_quality_profile", "pro")
+        self.assertIn("height<=1080", get_ydl_video_format("default"))
+        self.assertIn("height<=720", get_ydl_video_format("balanced_720p"))
+        self.assertIn("height<=480", get_ydl_video_format("compact_480p"))
+        self.assertIn("height<=480", get_ydl_video_format("inept"))
+        self.assertIn("height<=480", get_ydl_video_format("stream_only"))
+
+        # 2. Verify Temporary Cache Mode (stream_only) auto-deletes buffered YouTube track after completion
+        set_setting("video_quality_profile", "stream_only")
+        tracks_dir = get_tracks_dir()
+        tracks_dir.mkdir(parents=True, exist_ok=True)
+        temp_video = tracks_dir / "temp_yt_cache_01.mp4"
+        temp_video.write_bytes(b"temporary buffered video bytes")
+
+        tid = save_track("temp_yt_cache_01", "Temp Song", "Temp Artist", "Temp Artist - Temp Song")
+        update_track_download_status(tid, "ready", str(temp_video))
+        self.assertTrue(temp_video.exists())
+
+        self.client.post("/api/singer/register", json={
+            "token": "singer_temp_cache",
+            "name": "Cache Tester",
+            "avatar": "🌺"
+        })
+        q_res = self.client.post("/api/queue", json={
+            "track_id": tid,
+            "video_id": "temp_yt_cache_01",
+            "title": "Temp Song",
+            "artist": "Temp Artist",
+            "singer_token": "singer_temp_cache",
+            "force": True
+        }, headers={"X-Host-Token": HOST_TOKEN}).json()
+        qid = q_res["queue_id"]
+        set_queue_status(qid, "playing")
+
+        res = self.client.post(f"/api/queue/{qid}/complete", headers={"X-Host-Token": HOST_TOKEN})
+        self.assertEqual(res.status_code, 200)
+
+        # File should be pruned from disk and track marked not downloaded
+        self.assertFalse(temp_video.exists())
+        updated_track = get_track_by_id(tid)
+        self.assertEqual(updated_track["is_downloaded"], 0)
+
+        # 3. Verify imported local tracks are NEVER deleted in Temporary Cache Mode
+        imported_video = tracks_dir / "local_imported_keep.mp4"
+        imported_video.write_bytes(b"permanent imported video bytes")
+        tid_imp = save_track("local_imported_keep", "Keep Song", "Keep Artist", "Keep Artist - Keep Song", media_source="imported")
+        update_track_download_status(tid_imp, "ready", str(imported_video))
+
+        q_imp_res = self.client.post("/api/queue", json={
+            "track_id": tid_imp,
+            "video_id": "local_imported_keep",
+            "title": "Keep Song",
+            "artist": "Keep Artist",
+            "singer_token": "singer_temp_cache",
+            "force": True
+        }, headers={"X-Host-Token": HOST_TOKEN}).json()
+        qid_imp = q_imp_res["queue_id"]
+        set_queue_status(qid_imp, "playing")
+        res_imp = self.client.post(f"/api/queue/{qid_imp}/complete", headers={"X-Host-Token": HOST_TOKEN})
+        self.assertEqual(res_imp.status_code, 200)
+        self.assertTrue(imported_video.exists())
+        if imported_video.exists():
+            imported_video.unlink()
+
+        set_setting("video_quality_profile", "pro")
+
+        # 4. Verify AppImage APPDIR binary resolution
+        with tempfile.TemporaryDirectory(prefix="tiki_appdir_test_") as tmp_appdir:
+            bin_dir = Path(tmp_appdir) / "usr" / "bin" / "bin"
+            bin_dir.mkdir(parents=True, exist_ok=True)
+            mock_bin = bin_dir / ("cloudflared.exe" if sys.platform == "win32" else "cloudflared")
+            mock_bin.write_bytes(b"mock binary")
+            old_appdir = os.environ.get("APPDIR")
+            try:
+                os.environ["APPDIR"] = tmp_appdir
+                resolved = get_bundled_binary_path("cloudflared")
+                self.assertEqual(resolved, mock_bin)
+            finally:
+                if old_appdir is None:
+                    os.environ.pop("APPDIR", None)
+                else:
+                    os.environ["APPDIR"] = old_appdir
+
 if __name__ == "__main__":
     unittest.main()
 

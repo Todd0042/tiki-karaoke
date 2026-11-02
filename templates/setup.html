@@ -385,22 +385,29 @@
                         <label class="radio-card profile-card {% if config.video_quality_profile == 'pro' or not config.video_quality_profile %}active{% endif %}" id="cardProfilePro" onclick="selectQualityProfile('pro')">
                             <input type="radio" name="video_quality_profile" value="pro" style="margin-top: 4px;" {% if config.video_quality_profile == 'pro' or not config.video_quality_profile %}checked{% endif %}>
                             <div>
-                                <div style="font-weight: 700; color: var(--neon-cyan);">🏆 "I'm a Pro" (Highest Quality / Maximum Storage)</div>
-                                <div class="field-desc">Downloads full 1080p/720p HD video & audio, pre-normalizes to -23.0 LUFS. Zero-lag playback on stage.</div>
+                                <div style="font-weight: 700; color: var(--neon-cyan);">🏆 Studio Full HD (1080p — Maximum Quality)</div>
+                                <div class="field-desc">Downloads full 1080p HD video & audio and pre-normalizes loudness. Crispest visuals for large venue TVs.</div>
                             </div>
                         </label>
-                        <label class="radio-card profile-card {% if config.video_quality_profile == 'inept' %}active{% endif %}" id="cardProfileInept" onclick="selectQualityProfile('inept')">
-                            <input type="radio" name="video_quality_profile" value="inept" style="margin-top: 4px;" {% if config.video_quality_profile == 'inept' %}checked{% endif %}>
+                        <label class="radio-card profile-card {% if config.video_quality_profile == 'balanced_720p' %}active{% endif %}" id="cardProfileBalanced" onclick="selectQualityProfile('balanced_720p')">
+                            <input type="radio" name="video_quality_profile" value="balanced_720p" style="margin-top: 4px;" {% if config.video_quality_profile == 'balanced_720p' %}checked{% endif %}>
                             <div>
-                                <div style="font-weight: 700; color: var(--neon-gold);">💾 "I'm Inept" (Space Saver / Compact 480p)</div>
-                                <div class="field-desc">Downloads lightweight 480p/360p video files (~70% smaller file sizes) for mini-PCs, SD cards, or tight drives.</div>
+                                <div style="font-weight: 700; color: var(--neon-lime);">⚖️ Balanced HD (720p — Recommended Sweet Spot)</div>
+                                <div class="field-desc">Downloads standard 720p HD video & audio (~50% smaller files than 1080p). Sharp lyrics on big screens with faster downloads and half the storage footprint.</div>
+                            </div>
+                        </label>
+                        <label class="radio-card profile-card {% if config.video_quality_profile in ('compact_480p', 'inept') %}active{% endif %}" id="cardProfileCompact" onclick="selectQualityProfile('compact_480p')">
+                            <input type="radio" name="video_quality_profile" value="compact_480p" style="margin-top: 4px;" {% if config.video_quality_profile in ('compact_480p', 'inept') %}checked{% endif %}>
+                            <div>
+                                <div style="font-weight: 700; color: var(--neon-gold);">💾 Compact Space Saver (480p — Low Storage)</div>
+                                <div class="field-desc">Downloads lightweight 480p SD video files (~75% smaller files than 1080p) for mini-PCs, slower Wi-Fi, or smaller drives.</div>
                             </div>
                         </label>
                         <label class="radio-card profile-card {% if config.video_quality_profile == 'stream_only' %}active{% endif %}" id="cardProfileStream" onclick="selectQualityProfile('stream_only')">
                             <input type="radio" name="video_quality_profile" value="stream_only" style="margin-top: 4px;" {% if config.video_quality_profile == 'stream_only' %}checked{% endif %}>
                             <div>
-                                <div style="font-weight: 700; color: var(--neon-pink);">⚡ "Live Only: I'm a Pro, but This is a Budget Setup" (Zero Disk)</div>
-                                <div class="field-desc">Zero video downloads. Streams karaoke tracks live on stage via YouTube player. Save hits with 1 tap from Host History.</div>
+                                <div style="font-weight: 700; color: var(--neon-pink);">⚡ Temporary Cache Mode (Auto-Deletes After Song)</div>
+                                <div class="field-desc">Temporarily buffers each requested song (480p) so pitch shifting and embed-restricted videos play reliably, then automatically deletes the video file from disk as soon as the song finishes.</div>
                             </div>
                         </label>
                     </div>
@@ -634,13 +641,16 @@
         }
 
         function selectQualityProfile(profile) {
+            if (profile === 'inept') profile = 'compact_480p';
             document.querySelectorAll('.profile-card').forEach(c => c.classList.remove('active'));
             const radio = document.querySelector(`input[name="video_quality_profile"][value="${profile}"]`);
             if (radio) radio.checked = true;
 
             const cardMap = {
                 'pro': 'cardProfilePro',
-                'inept': 'cardProfileInept',
+                'balanced_720p': 'cardProfileBalanced',
+                'compact_480p': 'cardProfileCompact',
+                'inept': 'cardProfileCompact',
                 'stream_only': 'cardProfileStream'
             };
             const activeCard = document.getElementById(cardMap[profile]);
@@ -1246,6 +1256,7 @@
                 host_display_width: parseInt(formData.get('host_display_width') || "1920"),
                 host_display_height: parseInt(formData.get('host_display_height') || "1080"),
                 host_kiosk_mode: formData.get('host_kiosk_mode') === 'true',
+                video_quality_profile: formData.get('video_quality_profile') || 'pro',
                 mic_monitoring_mode: document.getElementById('micMonitoringModeSelect')?.value || 'native'
             };
 
