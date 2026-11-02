@@ -43,7 +43,7 @@ jobs:
           elif [[ "$RAW_TAG" =~ ^v[0-9] ]]; then
             V="${RAW_TAG#v}"
           else
-            V="1.0.6"
+            V="1.0.7"
           fi
           echo "version=$V" >> "$GITHUB_OUTPUT"
 
@@ -94,7 +94,7 @@ jobs:
           elif [[ "$RAW_TAG" =~ ^v[0-9] ]]; then
             V="${RAW_TAG#v}"
           else
-            V="1.0.6"
+            V="1.0.7"
           fi
           echo "version=$V" >> "$GITHUB_OUTPUT"
 
@@ -176,13 +176,13 @@ jobs:
     needs: publish-github-release
     runs-on: ubuntu-latest
     env:
-      BUTLER_KEY: ${{ secrets.BUTLER_API_KEY }}
+      BUTLER_API_KEY: ${{ secrets.BUTLER_API_KEY }}
     steps:
       - name: Check Butler Credentials
         id: check_auth
         shell: bash
         run: |
-          if [ -z "$BUTLER_KEY" ]; then
+          if [ -z "$BUTLER_API_KEY" ]; then
             echo "::notice ::BUTLER_API_KEY secret is not set. Skipping Itch.io deployment."
             echo "has_key=false" >> "$GITHUB_OUTPUT"
           else
@@ -195,19 +195,41 @@ jobs:
         with:
           path: itch_artifacts/
 
-      - name: Setup Butler
+      - name: Install Butler
         if: steps.check_auth.outputs.has_key == 'true'
-        uses: josephp91/action-butler@v1.1.0
-        with:
-          version: '15.21.0'
+        shell: bash
+        run: |
+          curl -L -A "Mozilla/5.0" -o butler.zip https://broth.itch.zone/butler/linux-amd64/LATEST/archive/default
+          sudo unzip -o butler.zip -d /usr/local/bin
+          sudo chmod +x /usr/local/bin/butler
+          rm -f butler.zip
+          butler -V
 
       - name: Push to Itch.io Channels
         if: steps.check_auth.outputs.has_key == 'true'
         shell: bash
         run: |
-          echo "Deploying to Itch.io..."
-          # Customize these targets to match your exact Itch.io slugs when ready:
-          # butler push itch_artifacts/windows-Pro-installer/*.exe todd0042/tiki-karaoke-pro:windows --userversion ${{ github.ref_name }}
-          # butler push itch_artifacts/linux-Pro-appimage/*.AppImage todd0042/tiki-karaoke-pro:linux --userversion ${{ github.ref_name }}
-          # butler push itch_artifacts/windows-Free-installer/*.exe todd0042/tiki-karaoke-free:windows --userversion ${{ github.ref_name }}
-          # butler push itch_artifacts/linux-Free-appimage/*.AppImage todd0042/tiki-karaoke-free:linux --userversion ${{ github.ref_name }}
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            REL_VER="${{ github.event.inputs.version }}"
+          elif [[ "${{ github.ref_name }}" =~ ^v[0-9] ]]; then
+            RAW_TAG="${{ github.ref_name }}"
+            REL_VER="${RAW_TAG#v}"
+          else
+            REL_VER="${{ github.ref_name }}"
+          fi
+
+          echo "=========================================="
+          echo "Deploying Tiki Karaoke Lounge v$REL_VER to Itch.io"
+          echo "=========================================="
+
+          echo "--- Pro Edition: todd0042/tiki-karaoke-lounge ---"
+          butler push itch_artifacts/linux-Pro-appimage/*.AppImage todd0042/tiki-karaoke-lounge:linux --userversion "$REL_VER"
+          butler push itch_artifacts/windows-Pro-installer/*.exe todd0042/tiki-karaoke-lounge:windows --userversion "$REL_VER"
+          butler push itch_artifacts/windows-Pro-portable/*.zip todd0042/tiki-karaoke-lounge:windows-portable --userversion "$REL_VER"
+
+          echo "--- Free Edition: todd0042/tiki-karaoke-lounge-ad-based ---"
+          butler push itch_artifacts/linux-Free-appimage/*.AppImage todd0042/tiki-karaoke-lounge-ad-based:linux --userversion "$REL_VER"
+          butler push itch_artifacts/windows-Free-installer/*.exe todd0042/tiki-karaoke-lounge-ad-based:windows --userversion "$REL_VER"
+          butler push itch_artifacts/windows-Free-portable/*.zip todd0042/tiki-karaoke-lounge-ad-based:windows-portable --userversion "$REL_VER"
+
+          echo "Itch.io deployments completed successfully!"
