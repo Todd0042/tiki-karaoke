@@ -1,3 +1,11 @@
+<p align="center">
+  <a href="https://ko-fi.com/todd0042">
+    <img src="https://raw.githubusercontent.com/Todd0042/creator-assets/main/banners/todd_creator_banner_v1.0.png" alt="Support Todd on Ko-fi" width="100%" />
+  </a>
+</p>
+
+---
+
 # 🌴 Tiki Karaoke Lounge & Neon Bar
 
 [![Version](https://img.shields.io/badge/Version-1.1.0-ff2a85.svg)](https://github.com/Todd0042/tiki-karaoke/releases)
@@ -538,3 +546,12 @@ Tiki Karaoke Lounge is built around three core ethical commitments: **honest sof
     <img src="https://img.shields.io/badge/☕_Support_Tiki_Karaoke_on_Ko--fi-F16061?style=for-the-badge&logo=ko-fi&logoColor=white" alt="Support on Ko-fi">
   </a>
 </p>
+
+---
+
+<p align="center">
+  <a href="https://ko-fi.com/todd0042">
+    <img src="https://raw.githubusercontent.com/Todd0042/creator-assets/main/banners/todd_creator_banner_v2.0.png" alt="Support Todd on Ko-fi" width="100%" />
+  </a>
+</p>
+
