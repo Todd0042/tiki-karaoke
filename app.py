@@ -2816,7 +2816,12 @@ def find_importer_executable() -> Optional[Tuple[List[str], Optional[Path]]]:
             if c.is_file() and os.access(c, os.X_OK):
                 return ([str(c)], c.parent)
 
-    # 2. Check sibling repository: ../tiki-karaoke-importer
+    # 2. Check internal merged module: current_dir / "importer" / "main.py"
+    internal_importer = current_dir / "importer"
+    if (internal_importer / "main.py").is_file():
+        return ([sys.executable, str(internal_importer / "main.py")], internal_importer)
+
+    # 3. Check sibling repository: ../tiki-karaoke-importer
     importer_repo = current_dir.parent / "tiki-karaoke-importer"
     if importer_repo.is_dir():
         if sys.platform == "win32":
