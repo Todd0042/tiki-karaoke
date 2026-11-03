@@ -18,7 +18,7 @@ source=(
     "tiki-karaoke.desktop"
 )
 sha256sums=(
-    '817961820f5fae7080e57453a4e001876b6a751bb9f1c8822646b63e5e442582'
+    'e7b0bec3413ccb2b775482fff1dd5571779e57f86cae373715158bf1c4add383'
     'SKIP'
 )
 

@@ -1,0 +1,60 @@
+name: Continuous Integration & Packaging Linter
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate-config:
+    name: Config Drift Validator
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate Configuration & Documentation Drift
+        run: |
+          python scripts/validate_config.py
+
+  lint-aur-packaging:
+    name: AUR Packaging & .SRCINFO Linter
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Initialize Arch environment and dependencies
+        run: |
+          pacman-key --init
+          pacman-key --populate archlinux
+          pacman -Sy --noconfirm archlinux-keyring
+          pacman -Syu --noconfirm --needed base-devel git
+
+      - name: Lint .SRCINFO vs PKGBUILD
+        run: |
+          useradd -m -d /home/builder builder
+          chown -R builder:builder .
+          su builder -c "
+            set -e
+            cd packaging/aur
+            makepkg --printsrcinfo > /tmp/.SRCINFO.generated
+            if ! diff -u .SRCINFO /tmp/.SRCINFO.generated; then
+              echo '::error::packaging/aur/.SRCINFO is out of sync with packaging/aur/PKGBUILD!'
+              echo '::notice::Run \`makepkg --printsrcinfo > packaging/aur/.SRCINFO\` locally and commit the result.'
+              exit 1
+            fi
+            echo '✅ packaging/aur/.SRCINFO is perfectly synchronized with PKGBUILD.'
+          "

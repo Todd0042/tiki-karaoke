@@ -394,26 +394,54 @@ Stored at `./config.json` (source/portable mode) or `~/.config/TikiKaraoke/confi
 
 | Key | Default | Description |
 | :--- | :--- | :--- |
+| `configured` | `false` | First-run setup wizard flag. Set to `true` once initial configuration completes. |
 | `bar_name` | `"The Tiki Hut Karaoke Lounge"` | Lounge title shown on the TV Stage, Mobile Songbook, and printed Table Tents. |
 | `host_pin` | `"1234"` | 4-to-8 digit PIN required to unlock the Host DJ Desk. |
 | `port` | `8000` | Local HTTP/WebSocket listening port. |
-| `remote_mode` | `"cloudflare_quick"` | Connectivity mode (`cloudflare_quick`, `cloudflare_named`, `tailscale`, `duckdns`, `local`, `bore`). |
-| `hotspot_enabled` | `false` | When `true` in `local` mode, shows the "Step 1: Join Wi-Fi" QR code on the TV stage and Table Tents. |
-| `hotspot_ssid` / `hotspot_password` | `""` | Wi-Fi SSID and WPA2/WPA3 password encoded into the `/qr/wifi` QR code. |
-| `target_lufs` | `-16.0` | Target integrated loudness (EBU R128 LUFS) for 2-pass FFmpeg track normalization (`-14.0`, `-16.0`, `-20.0`, `-23.0`). |
+| `remote_mode` | `"cloudflare_quick"` | Remote connectivity mode (`cloudflare_quick`, `cloudflare_named`, `tailscale`, `duckdns`, `local`, `bore`). |
+| `remote_port` | `38480` | Port used for reverse tunnel forwarding in `bore` or manual port mappings. |
+| `public_host` | `""` | Public hostname or IP for manual port forwarding or reverse proxy setups. |
+| `cloudflare_token` | `""` | Tunnel token for Cloudflare Named Tunnels (`cloudflare_named` mode). |
+| `custom_domain` | `""` | Custom domain mapped to Cloudflare Named Tunnel or Caddy reverse proxy. |
+| `tailscale_domain` | `""` | MagicDNS domain name for Tailscale Funnel mode. |
+| `duckdns_domain` | `""` | DuckDNS subdomain name for automated dynamic DNS. |
+| `duckdns_token` | `""` | DuckDNS account security token for dynamic IP updates. |
+| `google_client_id` | `""` | Optional Google API OAuth client ID for YouTube API v3 search fallback. |
+| `google_client_secret` | `""` | Optional Google API OAuth client secret. |
+| `hotspot_enabled` | `false` | When `true` in `local` mode, displays the "Step 1: Join Wi-Fi" QR code on the TV stage. |
+| `hotspot_ssid` | `""` | Wi-Fi network SSID encoded into the `/qr/wifi` QR code. |
+| `hotspot_password` | `""` | Wi-Fi network password (WPA2/WPA3) encoded into the `/qr/wifi` QR code. |
+| `target_lufs` | `-16.0` | Target integrated loudness (EBU R128 LUFS) for 2-pass FFmpeg normalization (`-14.0`, `-16.0`, `-20.0`, `-23.0`). |
 | `intermission_seconds` | `15` | Countdown duration (seconds) between songs while the next singer walks to the stage. |
-| `video_quality_profile` | `"pro"` | Download/storage profile (`pro` 1080p, `balanced_720p`, `compact_480p`, `stream_only` Temporary Cache). |
-| `mic_monitoring_mode` | `"native"` | Microphone routing mode (`native`, `hardware_direct`, `browser`). |
-| `bgm_enabled` / `bgm_volume` | `true` / `0.25` | Enables ambient background music during countdowns and sets default BGM gain (`0.0–1.0`). |
 | `tts_enabled` | `false` | Enables automated Virtual DJ voice announcements for upcoming singers. |
-| `library_dir` | `~/Music/Karaoke/Tiki` | Root directory for `tracks/`, `sing_along/`, `filler/`, and `playlists_m3u/`. |
-| `data_dir` | `~/Music/Karaoke/Tiki/db` | Directory for `karaoke.db` (SQLite) and `host_token.txt`. |
-| `recordings_dir` | `~/Music/Karaoke/Tiki/performance_recordings` | Directory for live singer MP3 souvenir recordings. |
-| `stage_display` / `kiosk_mode` | `0` / `false` | Target monitor index and fullscreen kiosk toggle for the TV Stage window. |
-| `host_display_enabled` / `host_display` | `false` / `1` | Automatically opens the Host DJ Desk window on a secondary monitor at startup. |
-| `preferred_browser` | `"auto"` | Browser launcher preference (`auto`, `firefox`, `chrome`, `edge`, `brave`, `chromium`, `default`). |
-| `audio_output_device` / `audio_input_device` | `"default"` | System sink and source identifiers for stage playback and microphone capture. |
+| `bgm_enabled` | `true` | Enables ambient background music during countdowns and intermissions. |
+| `bgm_volume` | `0.25` | Default volume gain (`0.0–1.0`) for ambient background music. |
+| `library_dir` | `""` | Root directory for `tracks/`, `sing_along/`, `filler/`, and `playlists_m3u/` (defaults to `~/Music/Karaoke/Tiki`). |
+| `data_dir` | `""` | Directory for `karaoke.db` (SQLite WAL) and `host_token.txt` (defaults to `~/Music/Karaoke/Tiki/db`). |
+| `recordings_dir` | `""` | Directory for live singer MP3 souvenir recordings (defaults to `~/Music/Karaoke/Tiki/performance_recordings`). |
+| `stage_display` | `0` | Physical monitor index for the primary TV Stage lyrics window. |
+| `stage_display_name` | `"Primary Display"` | Human-readable label of the display assigned to the stage. |
+| `stage_display_x` | `0` | Horizontal pixel coordinate offset for positioning the stage window. |
+| `stage_display_y` | `0` | Vertical pixel coordinate offset for positioning the stage window. |
+| `stage_display_width` | `1920` | Native horizontal resolution in pixels of the stage display monitor. |
+| `stage_display_height` | `1080` | Native vertical resolution in pixels of the stage display monitor. |
+| `kiosk_mode` | `false` | Launches the TV Stage window in borderless, chromeless fullscreen kiosk mode. |
+| `host_display_enabled` | `false` | Automatically opens the Host DJ Desk window on a secondary monitor at startup. |
+| `host_display` | `1` | Physical monitor index for the Host DJ Desk window. |
+| `host_display_name` | `"Secondary Display"` | Human-readable label of the display assigned to the host desk. |
+| `host_display_x` | `0` | Horizontal pixel coordinate offset for positioning the host desk window. |
+| `host_display_y` | `0` | Vertical pixel coordinate offset for positioning the host desk window. |
+| `host_display_width` | `1920` | Native horizontal resolution in pixels of the host desk monitor. |
+| `host_display_height` | `1080` | Native vertical resolution in pixels of the host desk monitor. |
+| `host_kiosk_mode` | `false` | Launches the Host DJ Desk window in borderless fullscreen mode. |
+| `preferred_browser` | `"auto"` | Web browser executable preference (`auto`, `firefox`, `chrome`, `edge`, `brave`, `chromium`, `default`). |
+| `audio_output_device` | `"default"` | System audio sink identifier for stage playback. |
+| `audio_output_name` | `"System Default Audio Output"` | Human-readable label of the chosen audio output device. |
+| `audio_input_device` | `"default"` | System audio source identifier for microphone capture. |
+| `audio_input_name` | `"System Default Microphone / Input"` | Human-readable label of the chosen microphone/input device. |
+| `video_quality_profile` | `"pro"` | Download/storage profile (`pro` 1080p, `balanced_720p`, `compact_480p`, `stream_only` Temporary Cache). |
 | `marquee_scroll_speed` | `85` | Stage announcement marquee scroll speed in pixels per second (`30–300`). |
+| `mic_monitoring_mode` | `"native"` | Microphone routing mode (`native` OS loopback, `hardware_direct` mixer, `browser` Web Audio). |
 
 ### Environment Variables Override
 Any key can be overridden via environment variables: `TIKI_PORT`, `TIKI_HOST_PIN`, `TIKI_BAR_NAME`, `TIKI_REMOTE_MODE`, `TIKI_PUBLIC_HOST`, `TIKI_LIBRARY_DIR`, `TIKI_DATA_DIR`, `TIKI_RECORDINGS_DIR`, `TIKI_CLOUDFLARE_TOKEN`, `TIKI_CUSTOM_DOMAIN`, `TIKI_TAILSCALE_DOMAIN`, `TIKI_DUCKDNS_DOMAIN`, `TIKI_DUCKDNS_TOKEN`, and `TIKI_VERSION`.

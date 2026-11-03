@@ -1,0 +1,56 @@
+name: AUR Package Sync (Standby)
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+jobs:
+  publish-aur:
+    name: Publish to Arch User Repository (AUR)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check AUR SSH Key Secret Availability
+        id: check-secret
+        env:
+          AUR_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+        run: |
+          if [ -z "$AUR_KEY" ]; then
+            echo "has_secret=false" >> $GITHUB_OUTPUT
+            echo "::notice title=AUR Sync Skipped::AUR_SSH_PRIVATE_KEY secret is not configured. When aur.archlinux.org account is created, add the SSH private key to GitHub secrets to activate turnkey AUR publishing."
+          else
+            echo "has_secret=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Publish to aur.archlinux.org/tiki-karaoke-bin
+        if: steps.check-secret.outputs.has_secret == 'true'
+        env:
+          AUR_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$AUR_KEY" > ~/.ssh/aur
+          chmod 600 ~/.ssh/aur
+          ssh-keyscan -H aur.archlinux.org >> ~/.ssh/known_hosts
+
+          git config --global user.name "Todd"
+          git config --global user.email "todd.0042.git@gmail.com"
+
+          GIT_SSH_COMMAND="ssh -i ~/.ssh/aur" git clone ssh://aur@aur.archlinux.org/tiki-karaoke-bin.git /tmp/aur-repo
+
+          cp packaging/aur/PKGBUILD /tmp/aur-repo/
+          cp packaging/aur/.SRCINFO /tmp/aur-repo/
+          cp packaging/aur/tiki-karaoke.desktop /tmp/aur-repo/
+
+          cd /tmp/aur-repo
+          if git diff --quiet PKGBUILD .SRCINFO; then
+            echo "No changes to AUR package metadata."
+          else
+            git add PKGBUILD .SRCINFO tiki-karaoke.desktop
+            git commit -m "Update tiki-karaoke-bin to ${{ github.ref_name }}"
+            GIT_SSH_COMMAND="ssh -i ~/.ssh/aur" git push origin master
+            echo "✅ Successfully published ${{ github.ref_name }} to aur.archlinux.org/tiki-karaoke-bin!"
+          fi
