@@ -1,6 +1,6 @@
 # 🌴 Tiki Karaoke Lounge & Neon Bar
 
-[![Version](https://img.shields.io/badge/Version-1.0.9-ff2a85.svg)](https://github.com/Todd0042/tiki-karaoke/releases)
+[![Version](https://img.shields.io/badge/Version-1.1.0-ff2a85.svg)](https://github.com/Todd0042/tiki-karaoke/releases)
 [![License: PolyForm Noncommercial](https://img.shields.io/badge/License-PolyForm%20Noncommercial%201.0.0-00f0ff.svg)](LICENSE)
 [![Platform: Linux & Windows](https://img.shields.io/badge/Platform-Linux%20(AppImage)%20%7C%20Windows-orange.svg)](https://github.com/Todd0042/tiki-karaoke/releases)
 [![Python: 3.10+](https://img.shields.io/badge/Python-3.10%2B-39ff14.svg)]()
@@ -20,6 +20,7 @@
 * **Part 1 — Consumer Overview & Quick Start**
   * [🍹 What Is Tiki Karaoke Lounge?](#-what-is-tiki-karaoke-lounge)
   * [🎉 How a Party Works in 3 Steps](#-how-a-party-works-in-3-steps)
+  * [🌺 Companion Studio: Tiki Rehearsal Lounge](#-companion-studio-tiki-rehearsal-lounge)
   * [📸 Visual Tour](#-visual-tour)
   * [✨ Party Highlights at a Glance](#-party-highlights-at-a-glance)
   * [🚀 Quick Download & Installation (Linux & Windows)](#-quick-download--installation)
@@ -56,6 +57,20 @@ Instead of passing around a keyboard or fighting with dated desktop interfaces, 
 1. **Launch & Connect Your TV**: Start Tiki Karaoke on your Linux or Windows PC. Use the Desktop Control Hub (or First-Run Setup Wizard) to pick which screen is your TV Stage and which audio output/microphone you're using.
 2. **Guests Scan to Join**: Friends scan the QR code on the TV screen (or on printed 3D Table Tents) to open the mobile songbook in Safari, Chrome, or Firefox.
 3. **Sing, Cheer & Keep Souvenirs**: The Fair Round-Robin Queue automatically rotates turns so everyone gets stage time. Between songs, the stage plays crowd sing-alongs or music videos automatically, and singers can even download a souvenir MP3 recording and retro 45 RPM vinyl album jacket of their performance!
+
+---
+
+## 🌺 Companion Studio: Tiki Rehearsal Lounge
+
+Want to warm up your voice or dial in your optimal key before taking the stage?
+
+**[Tiki Rehearsal Lounge](https://github.com/Todd0042/tiki-rehearsal-lounge)** is the official standalone & companion practice studio for Tiki Karaoke. When installed on the same system, the **Desktop Control Hub** automatically detects it and adds a **"🌺 Launch Tiki Rehearsal Lounge"** button.
+
+* **🎯 2-Step Vocal Calibration**: Measure your natural speaking anchor note and siren pitch sweep ($Ooo \rightarrow Aaa$) with high-resolution autocorrelation to detect your vocal category (Bass to Soprano) and comfort sweet spot.
+* **✨ Smart Key Recommendation**: Compares your vocal profile against any song in your library and suggests the optimal transposition between **-3 and +3 semitones** so you never strain on high notes.
+* **🎹 6-Voice Harmonic Tone Generator**: Zero-latency procedural reference tones (Grand Piano, Rhodes, Cello, Strings, Synth Flute, Brass) for warming up.
+* **📊 Post-Take Vocal Report Cards**: Records your rehearsal take, tracks pitch stability and cents deviation, and provides encouraging vocal coaching feedback.
+* **🔗 Get Rehearsal Lounge**: Available on [GitHub](https://github.com/Todd0042/tiki-rehearsal-lounge) and downloadable on [itch.io](https://todd0042.itch.io/tiki-karaoke-lounge) under the `rehearsal-linux` channel!
 
 ---
 
@@ -101,16 +116,16 @@ Full live transport, 3-mode microphone mixing with dual-singer VU meters, Venue 
 ## 🚀 Quick Download & Installation
 
 ### 🐧 Universal Linux AppImage (Ubuntu, Debian, Fedora, Mint, Arch, SteamOS)
-Download `TikiKaraoke-Pro-v1.0.9-x86_64.AppImage` directly from [GitHub Releases](https://github.com/Todd0042/tiki-karaoke/releases):
+Download `TikiKaraoke-Pro-v1.1.0-x86_64.AppImage` directly from [GitHub Releases](https://github.com/Todd0042/tiki-karaoke/releases):
 ```bash
-chmod +x TikiKaraoke-Pro-v1.0.9-x86_64.AppImage
-./TikiKaraoke-Pro-v1.0.9-x86_64.AppImage
+chmod +x TikiKaraoke-Pro-v1.1.0-x86_64.AppImage
+./TikiKaraoke-Pro-v1.1.0-x86_64.AppImage
 ```
 
 ### 🪟 Windows 10 & 11 (64-Bit)
 Download the standalone Windows release on **[itch.io (Tiki Karaoke Lounge)](https://todd0042.itch.io/tiki-karaoke-lounge)**:
-* **Standalone Installer**: Run `TikiKaraokeSetup-Pro-1.0.9.exe` to install to your Desktop and Start Menu.
-* **Portable ZIP**: Extract `TikiKaraoke-Pro-Windows-v1.0.9-Portable.zip` anywhere and launch `TikiKaraoke.exe` (no administrative privileges required; FFmpeg and WASAPI mic router come pre-bundled).
+* **Standalone Installer**: Run `TikiKaraokeSetup-Pro-1.1.0.exe` to install to your Desktop and Start Menu.
+* **Portable ZIP**: Extract `TikiKaraoke-Pro-Windows-v1.1.0-Portable.zip` anywhere and launch `TikiKaraoke.exe` (no administrative privileges required; FFmpeg and WASAPI mic router come pre-bundled).
 
 ### 🛠️ Run from Source (Cross-Platform)
 Tiki Karaoke is fully open-source and can be run directly from source on any operating system:
