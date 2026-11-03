@@ -69,7 +69,7 @@ Borderless fullscreen stage with synchronized lyrics, audio-reactive neon Tiki t
 </p>
 
 ### 📱 Guest Smartphone Songbook (Zero App Install)
-Guests browse the instant local library or search online, transpose key/pitch ($\pm 6$ semitones), add duet partners or song dedications, and cheer from their seats:
+Guests browse the instant local library or search online, transpose key/pitch ($\pm 3$ semitones), add duet partners or song dedications, and cheer from their seats:
 
 | 🔍 Instant Search & Sing-Along Toggle | 🎵 Key/Pitch Shift, Duets & Dedications | 📜 Fair Queue & Live Emoji Hype |
 | :---: | :---: | :---: |
@@ -89,7 +89,7 @@ Full live transport, 3-mode microphone mixing with dual-singer VU meters, Venue 
 
 * **⚖️ Fair Round-Robin Queue**: Automatically balances turns across all singers so newcomers never get buried behind someone who queued 10 songs in a row. Guests can also tap **"Pause My Turn (Step Away)"** while grabbing a drink without losing their spot.
 * **👥 Sing-Along Mode for Shy Singers**: A 1-tap toggle lets guests browse and request tracks *with* lead guide vocals included so the whole room can sing together.
-* **🎵 Real-Time Key/Pitch Shifting & Vocal DSP**: Shift any song from `-6` to `+6` semitones in real time without changing tempo, plus optional warm vocal plate reverb, dual-singer VU meters, and automatic between-song BGM speech ducking.
+* **🎵 Real-Time Key/Pitch Shifting & Vocal DSP**: Shift any song from `-3` to `+3` semitones in real time without changing tempo, plus optional warm vocal plate reverb, dual-singer VU meters, and automatic between-song BGM speech ducking.
 * **💿 Classic Karaoke CD (`CD+G`) & Modern Video Support**: Plays `.mp4`, `.mkv`, `.webm`, and classic `.mp3` + `.cdg` (or `.zip`) discs with 4 modernized neon color themes—plus a built-in optical CD+G disc ripper.
 * **🌴 Non-Stop Intermission Autopilot**: Never suffer awkward dead air between singers. Automatically plays crowd sing-alongs or music videos matched to the era and genre of tonight's singers, with a 90-minute cooldown so it never spoils a song someone just sang.
 * **🎙️ Souvenir Live Recordings & Retro Vinyl Art**: Optionally records live performances (vocals + backing music summed to MP3) and generates a downloadable **1080×1080 Retro 45 RPM Vinyl Record Jacket** for the singer's camera roll.
@@ -229,13 +229,13 @@ Every local video and CD+G audio stream on the TV Stage is routed through the We
 ```
 MediaElementAudioSourceNode
   ──► 3-Band Track EQ (100Hz LowShelf / 1kHz Peaking / 5kHz HighShelf)
-  ──► Dry / Pitch-Shift Crossfade Matrix (Jungle Dual-Grain Delay Line: -6 to +6 Semitones)
+  ──► Dry / Pitch-Shift Crossfade Matrix (Jungle Dual-Grain Delay Line: -3 to +3 Semitones)
   ──► Center-Channel Vocal Attenuation Matrix (L - R Phase Inverter + 130Hz Bass Mono Bypass)
   ──► Venue A/V Sync DelayNode (0ms to +500ms Audio Delay)
   ──► Master GainNode ──► AudioContext.destination (+ MediaStreamAudioDestinationNode for Live Recording)
 ```
 
-* **Real-Time Key / Pitch Shifting ($\pm 6$ Semitones)**:
+* **Real-Time Key / Pitch Shifting ($\pm 3$ Semitones)**:
   * Uses a continuous dual-grain sawtooth delay-line pitch shifter ([`Jungle`](static/js/audio-dsp.js)) with $100\text{ms}$ grain buffers and raised-cosine fade windows.
   * Pitch ratio is computed as:
     $$\text{Pitch Ratio} = 2^{\left(\frac{\text{semitones}}{12}\right)}, \quad \text{Modulator Gain} = \left|1 - 2^{\left(\frac{\text{semitones}}{12}\right)}\right|$$

@@ -50,7 +50,7 @@ B. PORTABLE ZIP EDITION (TikiKaraoke-Pro-Windows-v1.0.9-Portable.zip):
    - Works instantly in mobile Safari, Chrome, Firefox, or Edge.
    - Singers choose their nickname (or roll a random Tiki Persona) and avatar.
    - Fair Round-Robin queue automatically balances turns across all singers.
-   - Features Key/Pitch shifting (-6 to +6 semitones), Duet joining, Song
+   - Features Key/Pitch shifting (-3 to +3 semitones), Duet joining, Song
      Dedications, Private Rehearsal preview, "You're Up in ~30s" alerts, and
      downloadable Souvenir Live MP3 Recordings with custom 45 RPM Vinyl Album Art!
 
