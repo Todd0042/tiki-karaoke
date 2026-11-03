@@ -60,7 +60,7 @@ Instead of passing around a keyboard or fighting with dated desktop interfaces, 
 
 ---
 
-## 🌺 Companion Studio: Tiki Rehearsal Lounge
+## 🌺 Companion Studio: Tiki Rehearsal Lounge (v1.0.5)
 
 Want to warm up your voice or dial in your optimal key before taking the stage?
 
@@ -69,8 +69,9 @@ Want to warm up your voice or dial in your optimal key before taking the stage?
 * **🎯 2-Step Vocal Calibration**: Measure your natural speaking anchor note and siren pitch sweep ($Ooo \rightarrow Aaa$) with high-resolution autocorrelation to detect your vocal category (Bass to Soprano) and comfort sweet spot.
 * **✨ Smart Key Recommendation**: Compares your vocal profile against any song in your library and suggests the optimal transposition between **-3 and +3 semitones** so you never strain on high notes.
 * **🎹 6-Voice Harmonic Tone Generator**: Zero-latency procedural reference tones (Grand Piano, Rhodes, Cello, Strings, Synth Flute, Brass) for warming up.
-* **📊 Post-Take Vocal Report Cards**: Records your rehearsal take, tracks pitch stability and cents deviation, and provides encouraging vocal coaching feedback.
-* **🔗 Get Rehearsal Lounge**: Available on [GitHub](https://github.com/Todd0042/tiki-rehearsal-lounge) and downloadable on [itch.io](https://todd0042.itch.io/tiki-karaoke-lounge) under the `rehearsal-linux` channel!
+* **📊 Post-Take Vocal Report Cards with Bleed Suppression**: Records your rehearsal take, suppresses ambient backing track speaker bleed to prevent false high scores on silence, and scores pitch, intonation, and rhythm pocket.
+* **🧠 100% Offline AI Vocal Coach & Progression Tracker**: Powered by a bundled standalone `llama.cpp` engine running local open-weights models (Qwen 2.5 1.5B or 3B) on CPU. Tracks take-over-take growth in an isolated rolling database (`rehearsal_history.db`) with zero telemetry or cloud dependencies.
+* **🔗 Get Rehearsal Lounge**: Available on [GitHub](https://github.com/Todd0042/tiki-rehearsal-lounge) and downloadable on [itch.io](https://todd0042.itch.io/tiki-karaoke-lounge) for **Windows** (`rehearsal-windows`, `rehearsal-windows-portable`) and **Linux** (`rehearsal-linux`)!
 
 ---
 
