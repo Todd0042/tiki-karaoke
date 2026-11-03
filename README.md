@@ -2,7 +2,7 @@
 
 [![Version](https://img.shields.io/badge/Version-1.0.9-ff2a85.svg)](https://github.com/Todd0042/tiki-karaoke/releases)
 [![License: PolyForm Noncommercial](https://img.shields.io/badge/License-PolyForm%20Noncommercial%201.0.0-00f0ff.svg)](LICENSE)
-[![Platform: Linux & Windows](https://img.shields.io/badge/Platform-Linux%20(AUR%20%7C%20AppImage)%20%7C%20Windows-orange.svg)](https://github.com/Todd0042/tiki-karaoke/releases)
+[![Platform: Linux & Windows](https://img.shields.io/badge/Platform-Linux%20(AppImage)%20%7C%20Windows-orange.svg)](https://github.com/Todd0042/tiki-karaoke/releases)
 [![Python: 3.10+](https://img.shields.io/badge/Python-3.10%2B-39ff14.svg)]()
 [![FastAPI + WebSockets](https://img.shields.io/badge/Backend-FastAPI%20%2B%20WebSockets-teal.svg)]()
 [![Support on Ko-fi](https://img.shields.io/badge/Ko--fi-Support%20Creator-F16061?style=flat&logo=ko-fi&logoColor=white)](https://ko-fi.com/todd0042)
@@ -22,7 +22,7 @@
   * [🎉 How a Party Works in 3 Steps](#-how-a-party-works-in-3-steps)
   * [📸 Visual Tour](#-visual-tour)
   * [✨ Party Highlights at a Glance](#-party-highlights-at-a-glance)
-  * [🚀 Quick Download & Installation (Linux, AUR & Windows)](#-quick-download--installation)
+  * [🚀 Quick Download & Installation (Linux & Windows)](#-quick-download--installation)
 * **Part 2 — Consolidated Technical Documentation & Architecture Reference**
   * [1. System Architecture & Real-Time WebSocket Engine](#1-system-architecture--real-time-websocket-engine)
   * [2. Audio Routing & 3-Mode Microphone Monitoring](#2-audio-routing--3-mode-microphone-monitoring)
@@ -100,39 +100,31 @@ Full live transport, 3-mode microphone mixing with dual-singer VU meters, Venue 
 
 ## 🚀 Quick Download & Installation
 
-### 🐧 Arch Linux / Manjaro / EndeavourOS (AUR)
-```bash
-yay -S tiki-karaoke-bin
-# or: paru -S tiki-karaoke-bin
-```
-Then launch **Tiki Karaoke Lounge** from your application launcher or run `tiki-karaoke`.
-
 ### 🐧 Universal Linux AppImage (Ubuntu, Debian, Fedora, Mint, Arch, SteamOS)
-Download `TikiKaraoke-Pro-v1.0.9-x86_64.AppImage` from [GitHub Releases](https://github.com/Todd0042/tiki-karaoke/releases):
+Download `TikiKaraoke-Pro-v1.0.9-x86_64.AppImage` directly from [GitHub Releases](https://github.com/Todd0042/tiki-karaoke/releases):
 ```bash
 chmod +x TikiKaraoke-Pro-v1.0.9-x86_64.AppImage
 ./TikiKaraoke-Pro-v1.0.9-x86_64.AppImage
 ```
 
 ### 🪟 Windows 10 & 11 (64-Bit)
-Download from [GitHub Releases](https://github.com/Todd0042/tiki-karaoke/releases):
-* **Installer**: Run `TikiKaraokeSetup-Pro-1.0.9.exe` and launch from your Desktop or Start Menu.
-* **Portable ZIP**: Extract `TikiKaraoke-Pro-Windows-v1.0.9-Portable.zip` anywhere and double-click `TikiKaraoke.exe` (zero admin rights required; FFmpeg and WASAPI mic router come pre-bundled).
+Download the standalone Windows release on **[itch.io (Tiki Karaoke Lounge)](https://todd0042.itch.io/tiki-karaoke-lounge)**:
+* **Standalone Installer**: Run `TikiKaraokeSetup-Pro-1.0.9.exe` to install to your Desktop and Start Menu.
+* **Portable ZIP**: Extract `TikiKaraoke-Pro-Windows-v1.0.9-Portable.zip` anywhere and launch `TikiKaraoke.exe` (no administrative privileges required; FFmpeg and WASAPI mic router come pre-bundled).
 
-### 🛠️ Run from Source (Linux / Windows)
+### 🛠️ Run from Source (Cross-Platform)
+Tiki Karaoke is fully open-source and can be run directly from source on any operating system:
 ```bash
-# 1. Install system prerequisites (Python 3.10+ and FFmpeg)
-# Ubuntu/Debian: sudo apt update && sudo apt install -y ffmpeg python3-venv python3-tk
-# Arch Linux:    sudo pacman -S ffmpeg python tk
-# Fedora:        sudo dnf install -y ffmpeg python3 python3-tkinter
-
-# 2. Clone and run the automated installer
+# 1. Clone the repository
 git clone https://github.com/Todd0042/tiki-karaoke.git
 cd tiki-karaoke
-./install.sh
 
-# 3. Launch the Lounge!
-./start.sh
+# 2. Linux automated installation
+./install.sh && ./start.sh
+
+# Or Windows manual launch:
+pip install -r requirements.txt
+start.bat
 ```
 
 ---
@@ -390,7 +382,7 @@ python main.py [OPTIONS]
 | `--cdg-ripper` | Opens the standalone Tkinter **CD+G Optical Disc Ripper** utility. |
 
 ### `config.json` Schema Reference ([config.example.json](config.example.json))
-Stored at `./config.json` (source/portable mode) or `~/.config/TikiKaraoke/config.json` (AppImage/AUR mode):
+Stored at `./config.json` (source/portable mode) or `~/.config/TikiKaraoke/config.json` (AppImage / Linux system mode):
 
 | Key | Default | Description |
 | :--- | :--- | :--- |
