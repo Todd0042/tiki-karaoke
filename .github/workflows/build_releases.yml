@@ -227,7 +227,4 @@ jobs:
           chmod -R u+rwX itch_artifacts/pro-portable-dir
           butler push itch_artifacts/pro-portable-dir todd0042/tiki-karaoke-lounge:windows-portable --userversion "$REL_VER"
 
-          echo "--- Free Page: todd0042/tiki-karaoke-lounge-ad-based (Linux AppImage) ---"
-          butler push itch_artifacts/linux-Pro-appimage/*.AppImage todd0042/tiki-karaoke-lounge-ad-based:linux --userversion "$REL_VER"
-
           echo "Itch.io deployments completed successfully!"

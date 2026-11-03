@@ -12,4 +12,4 @@ Preserve the absolute purity, ethical standing, and clean-room provenance of the
    - Never commit copyrighted audio samples, ripped soundboards, or unlicensed stock music to this repository.
 3. **Platform Distribution Segregation**:
    - **GitHub Releases**: Contains ONLY the Linux AppImage (`TikiKaraoke-Pro-v*-x86_64.AppImage`) for Linux users and Arch AUR packaging. Pre-built Windows binaries are NEVER attached to GitHub Releases.
-   - **Itch.io (Butler)**: Serves Windows builds (Installer and Portable ZIP) and Linux AppImage packages.
+   - **Itch.io (Butler)**: Deploys strictly and exclusively to the normal Pro page (`todd0042/tiki-karaoke-lounge`) for Windows builds (Installer and Portable ZIP) and the free Linux AppImage. Automated workflows must NEVER push to or interact with the ad-supported page (`todd0042/tiki-karaoke-lounge-ad-based`), which is managed manually.
