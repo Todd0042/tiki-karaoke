@@ -143,7 +143,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p final_assets/
-          find release_assets/ -type f -name "*.AppImage" -exec cp -v {} final_assets/ \;
+          find release_assets/ -type f \( -name "*.AppImage" -o -name "*.exe" -o -name "*.zip" \) -exec cp -v {} final_assets/ \;
           ls -la final_assets/
 
       - name: Determine Release Tag
