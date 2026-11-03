@@ -2833,6 +2833,82 @@ def find_importer_executable() -> Optional[Tuple[List[str], Optional[Path]]]:
     return None
 
 
+def find_rehearsal_lounge_executable() -> Optional[Tuple[List[str], Optional[Path]]]:
+    """
+    Locates the Tiki Rehearsal Lounge executable, AppImage, or development script.
+    Returns (cmd_args, working_dir) or None.
+    """
+    current_dir = Path(__file__).resolve().parent
+
+    # 1. Bundled or local binaries (Windows .exe or Linux binary)
+    if sys.platform == "win32":
+        candidates = [
+            current_dir / "TikiRehearsalLounge.exe",
+            current_dir / "bin" / "TikiRehearsalLounge.exe",
+            current_dir.parent / "TikiRehearsalLounge.exe",
+            current_dir.parent / "bin" / "TikiRehearsalLounge.exe",
+        ]
+        for c in candidates:
+            if c.is_file():
+                return ([str(c)], c.parent)
+    else:
+        # Check PATH and system locations
+        for bin_name in ["tiki-rehearsal-lounge", "TikiRehearsalLounge"]:
+            which_path = shutil.which(bin_name)
+            if which_path and os.access(which_path, os.X_OK):
+                p = Path(which_path)
+                return ([str(p)], p.parent)
+
+        direct_bins = [
+            current_dir / "TikiRehearsalLounge",
+            current_dir / "bin" / "TikiRehearsalLounge",
+            Path.home() / ".local" / "bin" / "tiki-rehearsal-lounge",
+            Path("/usr/local/bin/tiki-rehearsal-lounge"),
+            Path("/usr/bin/tiki-rehearsal-lounge"),
+        ]
+        for b in direct_bins:
+            if b.is_file() and os.access(b, os.X_OK):
+                return ([str(b)], b.parent)
+
+        # Check AppImages in current, parent, and Applications directories
+        appimage_dirs = [
+            current_dir,
+            current_dir.parent,
+            Path.home() / "Applications",
+            Path.home() / "Desktop",
+            Path.home() / "Downloads",
+        ]
+        for search_dir in appimage_dirs:
+            if not search_dir.is_dir():
+                continue
+            for pattern in ["*Rehearsal*.AppImage", "*rehearsal*.AppImage", "TikiRehearsalLounge*.AppImage"]:
+                for appimage in sorted(search_dir.glob(pattern), key=lambda p: p.stat().st_mtime, reverse=True):
+                    if appimage.is_file() and os.access(appimage, os.X_OK):
+                        return ([str(appimage)], appimage.parent)
+
+    # 2. Check sibling repository: ../tiki-rehearsal-lounge
+    rehearsal_repo = current_dir.parent / "tiki-rehearsal-lounge"
+    if rehearsal_repo.is_dir():
+        if sys.platform == "win32":
+            win_exe = rehearsal_repo / "dist" / "windows" / "TikiRehearsalLounge.exe"
+            if win_exe.is_file():
+                return ([str(win_exe)], win_exe.parent)
+        else:
+            dist_dir = rehearsal_repo / "dist"
+            if dist_dir.is_dir():
+                for pattern in ["*Rehearsal*.AppImage", "*rehearsal*.AppImage", "TikiRehearsalLounge*.AppImage"]:
+                    for appimage in sorted(dist_dir.glob(pattern), key=lambda p: p.stat().st_mtime, reverse=True):
+                        if appimage.is_file() and os.access(appimage, os.X_OK):
+                            return ([str(appimage)], appimage.parent)
+
+        main_py = rehearsal_repo / "main.py"
+        if main_py.is_file():
+            return ([sys.executable, str(main_py)], rehearsal_repo)
+
+    return None
+
+
+
 @app.post("/api/host/launch-importer")
 async def api_launch_importer(request: Request):
     if not (is_host_request(request) or is_local_request(request)):
@@ -2898,7 +2974,40 @@ async def api_launch_cdg_ripper(request: Request):
         "cmd": cmd[0]
     }
 
+
+@app.post("/api/host/launch-rehearsal-lounge")
+async def api_launch_rehearsal_lounge(request: Request):
+    if not (is_host_request(request) or is_local_request(request)):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
+
+    found = find_rehearsal_lounge_executable()
+    if not found:
+        raise HTTPException(
+            status_code=404,
+            detail="Tiki Rehearsal Lounge executable not found."
+        )
+
+    cmd_base, work_dir = found
+    cmd = list(cmd_base)
+
+    try:
+        if sys.platform == "win32":
+            flags = 0x00000008 | subprocess.CREATE_NEW_PROCESS_GROUP
+            subprocess.Popen(cmd, cwd=str(work_dir) if work_dir else None, creationflags=flags)
+        else:
+            subprocess.Popen(cmd, cwd=str(work_dir) if work_dir else None, start_new_session=True)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to launch Tiki Rehearsal Lounge: {e}")
+
+    return {
+        "status": "ok",
+        "message": "Tiki Rehearsal Lounge launched successfully on desktop",
+        "cmd": cmd[0]
+    }
+
+
 @app.post("/api/host/filler/import-from-song/{track_id}")
+
 async def api_import_filler_from_song(track_id: int, request: Request):
     if not is_host_request(request):
         raise HTTPException(status_code=403, detail="Host DJ authorization required")
