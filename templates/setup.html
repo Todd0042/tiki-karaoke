@@ -425,7 +425,17 @@
             <div class="form-section">
                 <div class="section-header">🖥️ 4. Main Stage Display Chooser</div>
                 <div class="field-desc" style="margin-bottom: 14px;">
-                    Choose which monitor or TV window will host the Main Stage karaoke display when the computer starts up.
+                    Choose which monitor or TV window will host the Main Stage karaoke display when the computer starts up or when opened from the Control Hub.
+                </div>
+
+                <div style="margin-bottom: 14px;">
+                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 1rem; font-weight: 600; color: var(--neon-cyan);">
+                        <input type="checkbox" id="stageDisplayEnabledCheck" name="stage_display_enabled" value="true" {% if config.stage_display_enabled is not false and config.stage_display_enabled != "false" %}checked{% endif %}>
+                        <span>📺 Automatically open Main Stage Window on startup</span>
+                    </label>
+                    <div class="field-desc" style="margin-left: 26px; margin-top: 4px;">
+                        Leave unchecked if you only want to open the Desktop Control Hub when Tiki Karaoke loads.
+                    </div>
                 </div>
 
                 <div class="field-group">
@@ -459,7 +469,7 @@
 
                 <div style="margin-bottom: 10px;">
                     <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 1rem; font-weight: 600; color: var(--neon-gold);">
-                        <input type="checkbox" id="hostDisplayEnabledCheck" name="host_display_enabled" value="true" onchange="toggleHostDisplayControls()" {% if config.host_display_enabled %}checked{% endif %}>
+                        <input type="checkbox" id="hostDisplayEnabledCheck" name="host_display_enabled" value="true" {% if config.host_display_enabled %}checked{% endif %}>
                         <span>👑 Automatically open Host Desk Window on startup (Multi-Monitor)</span>
                     </label>
                     <div class="field-desc" style="margin-left: 26px; margin-top: 4px;">
@@ -467,7 +477,7 @@
                     </div>
                 </div>
 
-                <div id="hostDisplayFields" style="{% if not config.host_display_enabled %}display: none;{% endif %} margin-top: 14px; padding-left: 26px;">
+                <div id="hostDisplayFields" style="margin-top: 14px; padding-left: 26px;">
                     <div class="field-group">
                         <label for="hostDisplaySelect">Target Monitor for Host Desk</label>
                         <div style="display: flex; gap: 8px;">
@@ -1244,6 +1254,7 @@
                 data_dir: formData.get('data_dir') || "",
                 recordings_dir: formData.get('recordings_dir') || "",
                 migrate_files: formData.get('migrate_files') === 'true',
+                stage_display_enabled: formData.get('stage_display_enabled') === 'true',
                 stage_display: parseInt(formData.get('stage_display') || "0"),
                 stage_display_name: formData.get('stage_display_name') || "",
                 stage_display_x: parseInt(formData.get('stage_display_x') || "0"),

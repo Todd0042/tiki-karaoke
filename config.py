@@ -398,6 +398,7 @@ DEFAULT_CONFIG = {
     "stage_display_y": 0,
     "stage_display_width": 1920,
     "stage_display_height": 1080,
+    "stage_display_enabled": True,
     "kiosk_mode": False,
     "preferred_browser": "auto",
     "audio_output_device": "default",

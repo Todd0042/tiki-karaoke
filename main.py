@@ -627,19 +627,14 @@ def launch_display_window(
         return False
 
 
-def open_browser_delayed(stage_url: str, host_url: str = "", delay: float = 1.5):
-    time.sleep(delay)
-    if not is_configured():
-        base_origin = stage_url.split("/stage")[0] if "/stage" in stage_url else "http://127.0.0.1:8000"
-        setup_url = f"{base_origin}/setup"
-        print(f"[Launcher] Fresh installation detected. Opening single Setup Wizard window: {setup_url}")
-        open_url_in_preferred_browser(setup_url)
-        return
-
+def launch_configured_stage_display(stage_url: str) -> bool:
+    """
+    Opens the Main Stage display window on its configured monitor with proper
+    coordinates, resolution, fullscreen kiosk mode, audio sink/source routing, and preferred browser.
+    """
     cfg = load_config()
     pref_browser = str(cfg.get("preferred_browser", "auto"))
 
-    # 1. Main Stage Display Window
     stage_disp_idx = int(cfg.get("stage_display", 0))
     stage_disp_name = cfg.get("stage_display_name", "Primary Display")
     stage_disp_x = int(cfg.get("stage_display_x", 0))
@@ -676,7 +671,7 @@ def open_browser_delayed(stage_url: str, host_url: str = "", delay: float = 1.5)
         stage_env["PULSE_SOURCE"] = audio_input
         print(f"[Launcher] 🎤 Routing Stage Microphone directly to source: {audio_input}")
 
-    launch_display_window(
+    return launch_display_window(
         target_url=stage_target_url,
         window_name="Stage Display",
         disp_idx=stage_disp_idx,
@@ -689,47 +684,78 @@ def open_browser_delayed(stage_url: str, host_url: str = "", delay: float = 1.5)
         custom_env=stage_env
     )
 
+
+def launch_configured_host_display(host_url: str) -> bool:
+    """
+    Opens the Host DJ Control Desk window on its configured target monitor with proper
+    coordinates, resolution, fullscreen kiosk mode, and preferred browser.
+    """
+    cfg = load_config()
+    pref_browser = str(cfg.get("preferred_browser", "auto"))
+
+    host_disp_idx = int(cfg.get("host_display", 1))
+    host_disp_name = cfg.get("host_display_name", f"Monitor {host_disp_idx}")
+    host_disp_x = int(cfg.get("host_display_x", 0))
+    host_disp_y = int(cfg.get("host_display_y", 0))
+    host_disp_w = int(cfg.get("host_display_width", 1920))
+    host_disp_h = int(cfg.get("host_display_height", 1080))
+    host_kiosk = bool(cfg.get("host_kiosk_mode", False))
+
+    try:
+        available_monitors = get_available_displays()
+        matched_host = next((d for d in available_monitors if d.get("id") == host_disp_idx), None)
+        if matched_host:
+            host_disp_x = matched_host.get("x", host_disp_x)
+            host_disp_y = matched_host.get("y", host_disp_y)
+            host_disp_w = matched_host.get("width", host_disp_w)
+            host_disp_h = matched_host.get("height", host_disp_h)
+            host_disp_name = matched_host.get("name", host_disp_name)
+    except Exception as e:
+        print(f"[Launcher] Notice: could not enrich host display info: {e}")
+
+    host_sep = "&" if "?" in host_url else "?"
+    host_target_url = f"{host_url}{host_sep}disp_x={host_disp_x}&disp_y={host_disp_y}&disp_w={host_disp_w}&disp_h={host_disp_h}&kiosk={'true' if host_kiosk else 'false'}"
+
+    host_mode_label = "Fullscreen Kiosk" if host_kiosk else "App Window"
+    print(f"[Launcher] Opening Host DJ Control on Monitor {host_disp_idx} ({host_disp_name}, {host_mode_label}, {host_disp_x},{host_disp_y}) [Browser: {pref_browser}]: {host_target_url}")
+
+    return launch_display_window(
+        target_url=host_target_url,
+        window_name="Host DJ Control",
+        disp_idx=host_disp_idx,
+        disp_x=host_disp_x,
+        disp_y=host_disp_y,
+        disp_w=host_disp_w,
+        disp_h=host_disp_h,
+        is_kiosk=host_kiosk,
+        pref_browser=pref_browser
+    )
+
+
+def open_browser_delayed(stage_url: str, host_url: str = "", delay: float = 1.5):
+    time.sleep(delay)
+    if not is_configured():
+        base_origin = stage_url.split("/stage")[0] if "/stage" in stage_url else "http://127.0.0.1:8000"
+        setup_url = f"{base_origin}/setup"
+        print(f"[Launcher] Fresh installation detected. Opening single Setup Wizard window: {setup_url}")
+        open_url_in_preferred_browser(setup_url)
+        return
+
+    cfg = load_config()
+    pref_browser = str(cfg.get("preferred_browser", "auto"))
+
+    # 1. Main Stage Display Window (if enabled in settings)
+    stage_disp_enabled = bool(cfg.get("stage_display_enabled", True))
+    if stage_disp_enabled and stage_url:
+        launch_configured_stage_display(stage_url)
+    else:
+        print("[Launcher] Stage Display auto-launch is disabled in settings. Skipping startup stage window.")
+
     # 2. Host DJ Control Window (for multi-display setups)
     host_disp_enabled = bool(cfg.get("host_display_enabled", False))
     if host_disp_enabled and host_url:
         time.sleep(1.0)
-        host_disp_idx = int(cfg.get("host_display", 1))
-        host_disp_name = cfg.get("host_display_name", f"Monitor {host_disp_idx}")
-        host_disp_x = int(cfg.get("host_display_x", 0))
-        host_disp_y = int(cfg.get("host_display_y", 0))
-        host_disp_w = int(cfg.get("host_display_width", 1920))
-        host_disp_h = int(cfg.get("host_display_height", 1080))
-        host_kiosk = bool(cfg.get("host_kiosk_mode", False))
-
-        try:
-            available_monitors = get_available_displays()
-            matched_host = next((d for d in available_monitors if d.get("id") == host_disp_idx), None)
-            if matched_host:
-                host_disp_x = matched_host.get("x", host_disp_x)
-                host_disp_y = matched_host.get("y", host_disp_y)
-                host_disp_w = matched_host.get("width", host_disp_w)
-                host_disp_h = matched_host.get("height", host_disp_h)
-                host_disp_name = matched_host.get("name", host_disp_name)
-        except Exception as e:
-            print(f"[Launcher] Notice: could not enrich host display info: {e}")
-
-        host_sep = "&" if "?" in host_url else "?"
-        host_target_url = f"{host_url}{host_sep}disp_x={host_disp_x}&disp_y={host_disp_y}&disp_w={host_disp_w}&disp_h={host_disp_h}&kiosk={'true' if host_kiosk else 'false'}"
-
-        host_mode_label = "Fullscreen Kiosk" if host_kiosk else "App Window"
-        print(f"[Launcher] Opening Host DJ Control on Monitor {host_disp_idx} ({host_disp_name}, {host_mode_label}, {host_disp_x},{host_disp_y}) [Browser: {pref_browser}]: {host_target_url}")
-
-        launch_display_window(
-            target_url=host_target_url,
-            window_name="Host DJ Control",
-            disp_idx=host_disp_idx,
-            disp_x=host_disp_x,
-            disp_y=host_disp_y,
-            disp_w=host_disp_w,
-            disp_h=host_disp_h,
-            is_kiosk=host_kiosk,
-            pref_browser=pref_browser
-        )
+        launch_configured_host_display(host_url)
 
 def start_cloudflare_quick_tunnel(port: int):
     bin_path = get_bundled_binary_path("cloudflared")
@@ -1359,7 +1385,9 @@ def main():
                 bar_name=cfg.get("bar_name", "The Tiki Hut Karaoke Lounge"),
                 host_pin=pin,
                 log_file=LOG_FILE,
-                is_tray_active=(not args.no_tray)
+                is_tray_active=(not args.no_tray),
+                on_launch_stage=lambda: launch_configured_stage_display(local_stage_url),
+                on_launch_host=lambda: launch_configured_host_display(local_host_url)
             )
             active_hub = hub
             hub.start()

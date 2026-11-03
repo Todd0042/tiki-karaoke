@@ -42,7 +42,9 @@ class TikiControlHub:
         bar_name: str = "Tiki Karaoke Lounge",
         host_pin: str = "1234",
         log_file: Optional[Path] = None,
-        is_tray_active: bool = False
+        is_tray_active: bool = False,
+        on_launch_stage: Optional[Callable] = None,
+        on_launch_host: Optional[Callable] = None
     ):
         self.urls = urls
         self.on_shutdown = on_shutdown
@@ -50,6 +52,8 @@ class TikiControlHub:
         self.host_pin = host_pin
         self.log_file = log_file
         self.is_tray_active = is_tray_active
+        self.on_launch_stage = on_launch_stage
+        self.on_launch_host = on_launch_host
         self.root: Optional[tk.Tk] = None
         self._is_closing = False
         self._qr_images = []  # keep references to prevent GC
@@ -241,7 +245,7 @@ class TikiControlHub:
             relief="flat",
             cursor="hand2",
             pady=8,
-            command=lambda: open_url_in_preferred_browser(self.urls.get("host", "http://127.0.0.1:8000/host"))
+            command=self._launch_host_desk
         )
         host_btn.pack(fill="x", pady=3)
 
@@ -257,7 +261,7 @@ class TikiControlHub:
             relief="flat",
             cursor="hand2",
             pady=8,
-            command=lambda: open_url_in_preferred_browser(self.urls.get("stage", "http://127.0.0.1:8000/stage"))
+            command=self._launch_stage_display
         )
         stage_btn.pack(fill="x", pady=3)
 
@@ -371,6 +375,36 @@ class TikiControlHub:
                 except Exception:
                     pass
             self.root.after(0, _apply)
+
+    def _launch_host_desk(self):
+        def _call():
+            try:
+                if self.on_launch_host:
+                    self.on_launch_host()
+                else:
+                    open_url_in_preferred_browser(self.urls.get("host", "http://127.0.0.1:8000/host"))
+                self._flash_toast("👑 Host Desk launched on configured display!")
+            except Exception as e:
+                print(f"[Control Hub] Host Desk launch notice: {e}")
+                open_url_in_preferred_browser(self.urls.get("host", "http://127.0.0.1:8000/host"))
+                self._flash_toast("👑 Host Desk opened!")
+
+        threading.Thread(target=_call, daemon=True).start()
+
+    def _launch_stage_display(self):
+        def _call():
+            try:
+                if self.on_launch_stage:
+                    self.on_launch_stage()
+                else:
+                    open_url_in_preferred_browser(self.urls.get("stage", "http://127.0.0.1:8000/stage"))
+                self._flash_toast("📺 Stage Screen launched on target display!")
+            except Exception as e:
+                print(f"[Control Hub] Stage Screen launch notice: {e}")
+                open_url_in_preferred_browser(self.urls.get("stage", "http://127.0.0.1:8000/stage"))
+                self._flash_toast("📺 Stage Screen opened!")
+
+        threading.Thread(target=_call, daemon=True).start()
 
     def _launch_importer(self):
         def _call():

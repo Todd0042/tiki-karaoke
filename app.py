@@ -1342,6 +1342,8 @@ async def api_save_setup(payload: Dict[str, Any], request: Request, response: Re
             set_setting("tts_enabled", "true" if payload["tts_enabled"] else "false")
         if "bgm_enabled" in payload:
             set_setting("bgm_enabled", "true" if payload["bgm_enabled"] else "false")
+        if "stage_display_enabled" in payload:
+            set_setting("stage_display_enabled", "true" if payload["stage_display_enabled"] else "false")
         if "stage_display" in payload:
             set_setting("stage_display", str(payload["stage_display"]))
         if "stage_display_name" in payload:
