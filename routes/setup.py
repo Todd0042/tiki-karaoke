@@ -224,11 +224,16 @@ async def api_test_display(payload: Dict[str, Any], request: Request):
                     "--app=" + ident_url
                 ]
 
+            kwargs = {}
+            if sys.platform == "win32":
+                kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+            else:
+                kwargs["start_new_session"] = True
             subprocess.Popen(
                 cmd,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
-                start_new_session=True
+                **kwargs
             )
         except Exception as e:
             print(f"[Test Display] Identification popup error: {e}")

@@ -1,4 +1,5 @@
 import os
+import sys
 import shutil
 import subprocess
 from pathlib import Path
@@ -24,7 +25,10 @@ def probe_duration(file_path: str) -> int:
             ffprobe, "-v", "error", "-show_entries", "format=duration",
             "-of", "default=noprint_wrappers=1:nokey=1", file_path
         ]
-        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=5)
+        kwargs = {}
+        if sys.platform == "win32":
+            kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=5, **kwargs)
         val = res.stdout.strip()
         if val:
             return max(1, int(float(val)))

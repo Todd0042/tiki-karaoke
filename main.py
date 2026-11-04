@@ -861,7 +861,8 @@ def start_tailscale_funnel(port: int, tailnet_domain: str = ""):
             [ts_bin, "funnel", "--bg", str(port)],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            text=True
+            text=True,
+            **get_console_subprocess_kwargs()
         )
         proc.wait(timeout=5)
     except Exception as e:
@@ -872,7 +873,8 @@ def start_tailscale_funnel(port: int, tailnet_domain: str = ""):
         url = f"https://{tailnet_domain}" if not tailnet_domain.startswith("http") else tailnet_domain
     else:
         try:
-            res = subprocess.run([ts_bin, "status", "--json"], capture_output=True, text=True, timeout=3)
+            kwargs = get_console_subprocess_kwargs() if sys.platform == "win32" else {}
+            res = subprocess.run([ts_bin, "status", "--json"], capture_output=True, text=True, timeout=3, **kwargs)
             import json as _json
             data = _json.loads(res.stdout)
             dns_name = data.get("Self", {}).get("DNSName", "").rstrip(".")

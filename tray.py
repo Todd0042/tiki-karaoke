@@ -123,6 +123,9 @@ def find_qt_python(verbose: bool = False) -> Optional[str]:
         if candidate and os.path.exists(candidate):
             for qt_mod in ["PyQt6.QtWidgets", "PySide6.QtWidgets"]:
                 try:
+                    kwargs = {}
+                    if sys.platform == "win32":
+                        kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
                     res = subprocess.run(
                         [candidate, "-c", f"import {qt_mod}; print('OK')"],
                         stdout=subprocess.PIPE,
@@ -130,7 +133,8 @@ def find_qt_python(verbose: bool = False) -> Optional[str]:
                         env=clean_env,
                         text=True,
                         timeout=2.0,
-                        check=False
+                        check=False,
+                        **kwargs
                     )
                     if verbose:
                         print(f"[Tray Debug] {candidate} importing {qt_mod}: code={res.returncode}, out={res.stdout.strip()!r}, err={res.stderr.strip()!r}")
@@ -404,7 +408,8 @@ def start_tray(
         target = public_url or join_url
         try:
             if sys.platform == "win32":
-                subprocess.run("clip", input=target.strip().encode("utf-8"), check=False)
+                flags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+                subprocess.run("clip", input=target.strip().encode("utf-8"), check=False, creationflags=flags)
             elif shutil.which("wl-copy"):
                 subprocess.run(["wl-copy"], input=target.strip().encode("utf-8"), check=False)
             elif shutil.which("xclip"):

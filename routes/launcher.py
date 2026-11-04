@@ -26,6 +26,98 @@ from services.lifecycle import (
 router = APIRouter(tags=["launcher"])
 
 
+def _check_reg_key_for_exe(key, winreg_mod, exe_name: str) -> Optional[Path]:
+    """Helper to check InstallLocation and UninstallString values inside a registry key."""
+    try:
+        inst_dir, _ = winreg_mod.QueryValueEx(key, "InstallLocation")
+        if inst_dir:
+            p = Path(str(inst_dir).strip(' "')) / exe_name
+            if p.is_file():
+                return p
+    except OSError:
+        pass
+
+    for unins_val in ["QuietUninstallString", "UninstallString"]:
+        try:
+            unins, _ = winreg_mod.QueryValueEx(key, unins_val)
+            if unins:
+                clean_unins = str(unins).strip(' "')
+                p = Path(clean_unins).parent / exe_name
+                if p.is_file():
+                    return p
+        except OSError:
+            pass
+
+    return None
+
+
+def _find_windows_registry_app(app_id: str, exe_name: str, display_name: str = "") -> Optional[Path]:
+    """Queries Windows Registry uninstall and App Paths keys for an installed application."""
+    if sys.platform != "win32":
+        return None
+    try:
+        import winreg
+    except ImportError:
+        return None
+
+    hives = [winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER]
+    subpaths = [
+        r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+        r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall",
+    ]
+
+    for hive in hives:
+        for subpath in subpaths:
+            # 1. Direct AppId key check (Inno Setup creates {GUID}_is1)
+            try:
+                with winreg.OpenKey(hive, f"{subpath}\\{app_id}") as key:
+                    p = _check_reg_key_for_exe(key, winreg, exe_name)
+                    if p:
+                        return p
+            except OSError:
+                pass
+
+            # 2. Enumerate uninstall keys for matching DisplayName
+            if display_name:
+                try:
+                    with winreg.OpenKey(hive, subpath) as parent_key:
+                        num_subkeys = winreg.QueryInfoKey(parent_key)[0]
+                        for idx in range(num_subkeys):
+                            try:
+                                subkey_name = winreg.EnumKey(parent_key, idx)
+                                with winreg.OpenKey(parent_key, subkey_name) as child_key:
+                                    try:
+                                        d_name, _ = winreg.QueryValueEx(child_key, "DisplayName")
+                                        if d_name and display_name.lower() in str(d_name).lower():
+                                            p = _check_reg_key_for_exe(child_key, winreg, exe_name)
+                                            if p:
+                                                return p
+                                    except OSError:
+                                        pass
+                            except OSError:
+                                continue
+                except OSError:
+                    pass
+
+    # 3. App Paths check
+    for hive in hives:
+        for app_path_sub in [
+            rf"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\{exe_name}",
+            rf"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\App Paths\{exe_name}",
+        ]:
+            try:
+                with winreg.OpenKey(hive, app_path_sub) as key:
+                    val, _ = winreg.QueryValueEx(key, "")
+                    if val:
+                        p = Path(str(val).strip(' "'))
+                        if p.is_file():
+                            return p
+            except OSError:
+                continue
+
+    return None
+
+
 def find_importer_executable() -> Optional[Tuple[List[str], Optional[Path]]]:
     """
     Locates the Tiki Karaoke Smart Importer executable or script.
@@ -41,9 +133,27 @@ def find_importer_executable() -> Optional[Tuple[List[str], Optional[Path]]]:
             current_dir.parent / "TikiKaraokeImporter.exe",
             current_dir.parent / "bin" / "TikiKaraokeImporter.exe",
         ]
+        if getattr(sys, "frozen", False):
+            app_root = Path(sys.executable).resolve().parent
+            candidates.extend([
+                app_root / "TikiKaraokeImporter.exe",
+                app_root / "bin" / "TikiKaraokeImporter.exe",
+                app_root.parent / "Tiki Karaoke Importer" / "TikiKaraokeImporter.exe",
+                app_root.parent / "TikiKaraokeImporter" / "TikiKaraokeImporter.exe",
+            ])
         for c in candidates:
             if c.is_file():
                 return ([str(c)], c.parent)
+
+        # Windows Registry & standard Program Files checks
+        reg_importer = _find_windows_registry_app("{8F15A89B-4D4B-4811-A5C7-D57B06AE11E1}_is1", "TikiKaraokeImporter.exe", "Tiki Karaoke")
+        if reg_importer and reg_importer.is_file():
+            return ([str(reg_importer)], reg_importer.parent)
+
+        which_imp = shutil.which("TikiKaraokeImporter.exe") or shutil.which("TikiKaraokeImporter")
+        if which_imp and Path(which_imp).is_file():
+            p = Path(which_imp)
+            return ([str(p)], p.parent)
     else:
         candidates = [
             current_dir / "TikiKaraokeImporter",
@@ -94,23 +204,76 @@ def find_importer_executable() -> Optional[Tuple[List[str], Optional[Path]]]:
 def find_rehearsal_lounge_executable() -> Optional[Tuple[List[str], Optional[Path]]]:
     """
     Locates the Tiki Rehearsal Lounge executable, AppImage, or development script.
+    Checks Windows Registry, default Program Files installation directories, PATH,
+    portable sibling folders, and dev worktrees.
     Returns (cmd_args, working_dir) or None.
     """
     current_dir = Path(__file__).resolve().parent.parent
 
-    # 1. Bundled or local binaries (Windows .exe or Linux binary)
+    # 1. Windows platform detection
     if sys.platform == "win32":
-        candidates = [
-            current_dir / "TikiRehearsalLounge.exe",
-            current_dir / "bin" / "TikiRehearsalLounge.exe",
-            current_dir.parent / "TikiRehearsalLounge.exe",
-            current_dir.parent / "bin" / "TikiRehearsalLounge.exe",
+        # A. Windows Registry check (Inno Setup AppId: {A4B7D6E2-81C5-4A39-9A0B-48F06E662F81})
+        reg_exe = _find_windows_registry_app(
+            "{A4B7D6E2-81C5-4A39-9A0B-48F06E662F81}_is1",
+            "TikiRehearsalLounge.exe",
+            "Tiki Rehearsal Lounge"
+        )
+        if reg_exe and reg_exe.is_file():
+            return ([str(reg_exe)], reg_exe.parent)
+
+        # B. System PATH check
+        for bin_name in ["TikiRehearsalLounge.exe", "TikiRehearsalLounge"]:
+            which_path = shutil.which(bin_name)
+            if which_path and Path(which_path).is_file():
+                p = Path(which_path)
+                return ([str(p)], p.parent)
+
+        # C. Common installation locations (Inno Setup default: {autopf}\Tiki Rehearsal Lounge)
+        prog_roots = [
+            os.environ.get("ProgramFiles"),
+            os.environ.get("ProgramFiles(x86)"),
+            os.environ.get("ProgramW6432"),
+            r"C:\Program Files",
+            r"C:\Program Files (x86)",
+            r"D:\Program Files",
         ]
-        for c in candidates:
-            if c.is_file():
-                return ([str(c)], c.parent)
+        local_app = os.environ.get("LOCALAPPDATA")
+        app_data = os.environ.get("APPDATA")
+        user_home = Path.home()
+
+        search_dirs: List[Path] = []
+        for root in prog_roots:
+            if root:
+                search_dirs.append(Path(root) / "Tiki Rehearsal Lounge")
+                search_dirs.append(Path(root) / "tiki-rehearsal-lounge")
+        if local_app:
+            search_dirs.append(Path(local_app) / "Programs" / "Tiki Rehearsal Lounge")
+            search_dirs.append(Path(local_app) / "Tiki Rehearsal Lounge")
+        if app_data:
+            search_dirs.append(Path(app_data) / "Tiki Rehearsal Lounge")
+        search_dirs.append(user_home / "AppData" / "Local" / "Programs" / "Tiki Rehearsal Lounge")
+
+        # Sibling directories relative to current app executable / bundle
+        app_root = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else current_dir
+        search_dirs.extend([
+            app_root.parent / "Tiki Rehearsal Lounge",
+            app_root.parent / "tiki-rehearsal-lounge",
+            current_dir.parent / "Tiki Rehearsal Lounge",
+            current_dir.parent / "tiki-rehearsal-lounge",
+            app_root,
+            app_root / "bin",
+            current_dir,
+            current_dir / "bin",
+            current_dir.parent,
+            current_dir.parent / "bin",
+        ])
+
+        for sdir in search_dirs:
+            exe = sdir / "TikiRehearsalLounge.exe"
+            if exe.is_file():
+                return ([str(exe)], exe.parent)
     else:
-        # Check PATH and system locations
+        # Check PATH and system locations on Linux / macOS
         for bin_name in ["tiki-rehearsal-lounge", "TikiRehearsalLounge"]:
             which_path = shutil.which(bin_name)
             if which_path and os.access(which_path, os.X_OK):

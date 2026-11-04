@@ -10,6 +10,7 @@ Manages:
 
 import asyncio
 import os
+import sys
 import time
 import zipfile
 from pathlib import Path
@@ -415,7 +416,10 @@ def get_local_media_duration(file_path: str) -> int:
             ffprobe_bin, "-v", "error", "-show_entries", "format=duration",
             "-of", "default=noprint_wrappers=1:nokey=1", file_path
         ]
-        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=5)
+        kwargs = {}
+        if sys.platform == "win32":
+            kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=5, **kwargs)
         return int(float(res.stdout.strip()))
     except Exception:
         return 210

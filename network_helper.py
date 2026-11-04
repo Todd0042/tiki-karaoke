@@ -93,11 +93,19 @@ def is_internet_available(timeout: float = 1.2, force_recheck: bool = False) -> 
     _last_internet_check = now
     return False
 
+_cached_interface_ips: List[Tuple[str, str]] = []
+_last_interface_ips_check: float = 0.0
+
 def get_interface_ips() -> List[Tuple[str, str]]:
     """
     Returns list of (interface_name, ip_address) detected across network adapters.
     Works across Linux, Windows, and macOS.
     """
+    global _cached_interface_ips, _last_interface_ips_check
+    now = time.time()
+    if _cached_interface_ips and (now - _last_interface_ips_check < 3.0):
+        return list(_cached_interface_ips)
+
     results: List[Tuple[str, str]] = []
 
     # 1. Linux via `ip -4 -o addr`
@@ -117,6 +125,8 @@ def get_interface_ips() -> List[Tuple[str, str]]:
                     if ip and not ip.startswith("127."):
                         results.append((iface, ip))
             if results:
+                _cached_interface_ips = list(results)
+                _last_interface_ips_check = now
                 return results
         except Exception:
             pass
@@ -124,11 +134,13 @@ def get_interface_ips() -> List[Tuple[str, str]]:
     # 2. Windows via `ipconfig`
     if sys.platform == "win32":
         try:
+            win_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
             out = subprocess.check_output(
                 ["ipconfig"],
                 text=True,
                 stderr=subprocess.DEVNULL,
-                timeout=2.0
+                timeout=2.0,
+                creationflags=win_flags
             )
             current_adapter = "Adapter"
             for line in out.splitlines():
@@ -142,6 +154,8 @@ def get_interface_ips() -> List[Tuple[str, str]]:
                         if ip and not ip.startswith("127."):
                             results.append((current_adapter, ip))
             if results:
+                _cached_interface_ips = list(results)
+                _last_interface_ips_check = now
                 return results
         except Exception:
             pass
@@ -171,6 +185,9 @@ def get_interface_ips() -> List[Tuple[str, str]]:
         except Exception:
             pass
 
+    if results:
+        _cached_interface_ips = list(results)
+        _last_interface_ips_check = now
     return results
 
 def get_best_local_ip() -> str:

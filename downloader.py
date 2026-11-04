@@ -1,4 +1,5 @@
 import os
+import sys
 import re
 import shutil
 import asyncio
@@ -72,7 +73,10 @@ def normalize_audio_loudness(input_path: Path, output_path: Path, target_lufs: f
         str(output_path)
     ]
     try:
-        res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+        kwargs = {}
+        if sys.platform == "win32":
+            kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+        res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True, **kwargs)
         return res.returncode == 0
     except Exception as e:
         print(f"[Downloader] Loudnorm error: {e}")
