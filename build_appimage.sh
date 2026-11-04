@@ -11,7 +11,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILD_TMP="/tmp/tiki_build_$(date +%s)"
 OUT_DIR="${REPO_ROOT}/dist"
 APPDIR="/tmp/TikiKaraoke.AppDir"
-VERSION="${TIKI_VERSION:-1.1.2}"
+VERSION="${TIKI_VERSION:-1.1.3}"
 OUT_APPIMAGE="${OUT_DIR}/TikiKaraoke-Pro-v${VERSION}-x86_64.AppImage"
 
 USE_DOCKER=1

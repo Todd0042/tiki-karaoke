@@ -18,7 +18,7 @@ else:
 BASE_DIR = BUNDLE_DIR
 STATIC_DIR = BUNDLE_DIR / "static"
 TEMPLATES_DIR = BUNDLE_DIR / "templates"
-APP_VERSION = os.getenv("TIKI_VERSION", "").strip() or "1.1.2"
+APP_VERSION = os.getenv("TIKI_VERSION", "").strip() or "1.1.3"
 
 def get_user_data_root() -> Path:
     """Returns safe persistent user data root across installed, portable, and AppImage modes."""

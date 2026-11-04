@@ -7,7 +7,7 @@
 
 #define MyAppName "Tiki Karaoke Lounge"
 #ifndef MyAppVersion
-  #define MyAppVersion "1.1.2"
+  #define MyAppVersion "1.1.3"
 #endif
 #define MyAppPublisher "Todd"
 #define MyAppURL "https://github.com/Todd0042/tiki-karaoke"
