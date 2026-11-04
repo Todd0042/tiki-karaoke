@@ -435,6 +435,7 @@ Stored at `./config.json` (source/portable mode) or `~/.config/TikiKaraoke/confi
 | `library_dir` | `""` | Root directory for `tracks/`, `sing_along/`, `filler/`, and `playlists_m3u/` (defaults to `~/Music/Karaoke/Tiki`). |
 | `data_dir` | `""` | Directory for `karaoke.db` (SQLite WAL) and `host_token.txt` (defaults to `~/Music/Karaoke/Tiki/db`). |
 | `recordings_dir` | `""` | Directory for live singer MP3 souvenir recordings (defaults to `~/Music/Karaoke/Tiki/performance_recordings`). |
+| `stage_display_enabled` | `true` | Automatically opens the TV Stage display window on the assigned monitor at startup. |
 | `stage_display` | `0` | Physical monitor index for the primary TV Stage lyrics window. |
 | `stage_display_name` | `"Primary Display"` | Human-readable label of the display assigned to the stage. |
 | `stage_display_x` | `0` | Horizontal pixel coordinate offset for positioning the stage window. |

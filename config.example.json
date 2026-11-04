@@ -24,6 +24,7 @@
   "library_dir": "",
   "data_dir": "",
   "recordings_dir": "",
+  "stage_display_enabled": true,
   "stage_display": 0,
   "stage_display_name": "Primary Display",
   "stage_display_x": 0,
