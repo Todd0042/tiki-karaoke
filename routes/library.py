@@ -6,6 +6,7 @@ track pruning, metadata editing, track type conversion, and host track downloads
 
 import time
 import asyncio
+import sys
 from typing import List, Dict, Any, Optional
 
 from fastapi import APIRouter, Request, HTTPException
@@ -58,7 +59,8 @@ async def api_search(request: Request, q: str = "", force_online: bool = False, 
         attempts.append(now)
         search_requests_by_ip[client_ip] = attempts
 
-    return await asyncio.to_thread(tiered_search, q, force_online=force_online, sing_along=sing_along, page=page)
+    search_fn = getattr(sys.modules.get("app"), "tiered_search", tiered_search)
+    return await asyncio.to_thread(search_fn, q, force_online=force_online, sing_along=sing_along, page=page)
 
 
 @router.get("/api/library")
