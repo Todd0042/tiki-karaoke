@@ -14,6 +14,11 @@ APPDIR="/tmp/TikiKaraoke.AppDir"
 VERSION="${TIKI_VERSION:-1.1.1}"
 OUT_APPIMAGE="${OUT_DIR}/TikiKaraoke-Pro-v${VERSION}-x86_64.AppImage"
 
+USE_DOCKER=1
+if [ "$1" = "--host" ] || [ "$1" = "--no-docker" ] || [ "${NO_DOCKER}" = "1" ]; then
+    USE_DOCKER=0
+fi
+
 echo "=== [1/5] Setting up build directories ==="
 rm -rf "$APPDIR" 2>/dev/null || true
 mkdir -p "$OUT_DIR"
@@ -22,8 +27,59 @@ mkdir -p "$APPDIR/usr/bin"
 mkdir -p "$APPDIR/usr/share/icons/hicolor/512x512/apps"
 mkdir -p "$APPDIR/usr/share/applications"
 
-echo "=== [2/5] Compiling standalone binary inside Debian container ==="
-cat << 'EOF' > "${BUILD_TMP}/docker_build.sh"
+PYI_COMMON_ARGS=(
+    --clean -y --onedir
+    --name TikiKaraoke
+    --hidden-import uvicorn
+    --hidden-import uvicorn.logging
+    --hidden-import uvicorn.loops
+    --hidden-import uvicorn.loops.auto
+    --hidden-import uvicorn.loops.asyncio
+    --hidden-import uvicorn.protocols
+    --hidden-import uvicorn.protocols.http
+    --hidden-import uvicorn.protocols.http.auto
+    --hidden-import uvicorn.protocols.http.h11_impl
+    --hidden-import uvicorn.protocols.websockets
+    --hidden-import uvicorn.protocols.websockets.auto
+    --hidden-import uvicorn.protocols.websockets.websockets_impl
+    --hidden-import uvicorn.lifespan
+    --hidden-import uvicorn.lifespan.on
+    --hidden-import uvicorn.lifespan.off
+    --hidden-import engineio.async_drivers.asgi
+    --collect-all yt_dlp
+    --hidden-import qrcode
+    --hidden-import jinja2
+    --hidden-import pydantic
+    --hidden-import pydantic_core
+    --hidden-import starlette
+    --hidden-import fastapi
+    --hidden-import sqlite3
+    --hidden-import wave
+    --hidden-import tray
+    --hidden-import audio_router
+    --hidden-import network_helper
+    --hidden-import pystray
+    --collect-all pystray
+    --hidden-import Xlib
+    --collect-all Xlib
+    --collect-all tkinter
+    --collect-all PIL
+    --hidden-import PIL._tkinter_finder
+    --hidden-import tkinter
+    --hidden-import tkinter.messagebox
+    --collect-all importer
+    --hidden-import importer
+    --hidden-import importer.main
+    --hidden-import importer.ui.app_window
+    --hidden-import importer.ui.cdg_ripper_window
+    --hidden-import importer.ui.compuhost_window
+    --collect-all routes
+    --collect-all services
+)
+
+if [ "$USE_DOCKER" = "1" ]; then
+    echo "=== [2/5] Compiling standalone binary inside Debian container ==="
+    cat << 'EOF' > "${BUILD_TMP}/docker_build.sh"
 #!/bin/bash
 set -e
 apt-get update
@@ -86,15 +142,28 @@ pyinstaller --clean -y --onedir \
     --hidden-import importer.ui.app_window \
     --hidden-import importer.ui.cdg_ripper_window \
     --hidden-import importer.ui.compuhost_window \
+    --collect-all routes \
+    --collect-all services \
     /src/main.py
 EOF
 
-chmod +x "${BUILD_TMP}/docker_build.sh"
-docker run --rm \
-    -v "${REPO_ROOT}:/src:ro" \
-    -v "${BUILD_TMP}:/out" \
-    -v "${BUILD_TMP}/docker_build.sh:/build.sh:ro" \
-    debian:bookworm-slim /bin/bash /build.sh
+    chmod +x "${BUILD_TMP}/docker_build.sh"
+    docker run --rm \
+        -v "${REPO_ROOT}:/src:ro" \
+        -v "${BUILD_TMP}:/out" \
+        -v "${BUILD_TMP}/docker_build.sh:/build.sh:ro" \
+        debian:bookworm-slim /bin/bash /build.sh
+else
+    echo "=== [2/5] Compiling standalone binary directly on host (non-Docker) ==="
+    mkdir -p /tmp/pyi_work /tmp/pyi_spec
+    "${REPO_ROOT}/venv/bin/pyinstaller" "${PYI_COMMON_ARGS[@]}" \
+        --add-data "${REPO_ROOT}/static:static" \
+        --add-data "${REPO_ROOT}/templates:templates" \
+        --distpath "${BUILD_TMP}" \
+        --workpath /tmp/pyi_work \
+        --specpath /tmp/pyi_spec \
+        "${REPO_ROOT}/main.py"
+fi
 
 echo "=== [3/5] Assembling AppDir ==="
 cp -r "${BUILD_TMP}/TikiKaraoke"/* "$APPDIR/usr/bin/"
@@ -208,8 +277,10 @@ export ARCH=x86_64
 chmod +x "$OUT_APPIMAGE"
 
 echo "=== [5/5] Cleaning up temporary build files ==="
-docker run --rm -v "${BUILD_TMP}:/b" debian:bookworm-slim rm -rf /b 2>/dev/null || true
-rm -rf "$BUILD_TMP" "$APPDIR" 2>/dev/null || true
+if [ "$USE_DOCKER" = "1" ]; then
+    docker run --rm -v "${BUILD_TMP}:/b" debian:bookworm-slim rm -rf /b 2>/dev/null || true
+fi
+rm -rf "$BUILD_TMP" "$APPDIR" /tmp/pyi_work /tmp/pyi_spec 2>/dev/null || true
 
 echo "================================================================="
 echo "✅ AppImage build complete: ${OUT_APPIMAGE}"
