@@ -617,8 +617,10 @@ async def add_no_cache_headers(request: Request, call_next):
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 from services.templates import templates
 from routes.setup import router as setup_router
+from routes.stream import router as stream_router
 
 app.include_router(setup_router)
+app.include_router(stream_router)
 
 @app.get("/favicon.ico", include_in_schema=False)
 async def favicon():
@@ -853,45 +855,6 @@ async def host_qr(request: Request):
     buf.seek(0)
     return StreamingResponse(buf, media_type="image/png")
 
-# Local Video Stream
-@app.get("/stream/{track_id}")
-async def stream_local_video(track_id: int):
-    track = get_track_by_id(track_id)
-    if not track or not track["is_downloaded"] or not track["local_path"]:
-        raise HTTPException(status_code=404, detail="Track not available locally")
-    
-    file_path = track["local_path"]
-    if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="File missing on disk")
-
-    import mimetypes
-    mime, _ = mimetypes.guess_type(file_path)
-    return FileResponse(file_path, media_type=mime or "video/mp4")
-
-# Local CDG Subcode Stream
-@app.get("/stream-cdg/{track_id}")
-async def stream_local_cdg(track_id: int):
-    track = get_track_by_id(track_id)
-    if not track or not track.get("cdg_path"):
-        raise HTTPException(status_code=404, detail="CDG lyrics not available for this track")
-    
-    cdg_path = track["cdg_path"]
-    if not os.path.exists(cdg_path):
-        raise HTTPException(status_code=404, detail="CDG file missing on disk")
-
-    return FileResponse(cdg_path, media_type="application/octet-stream")
-
-@app.get("/stream/filler/{filler_id}")
-async def stream_filler_video(filler_id: int):
-    track = get_filler_track_by_id(filler_id)
-    if not track or not track["is_downloaded"] or not track["local_path"]:
-        raise HTTPException(status_code=404, detail="Filler video not available locally")
-    
-    file_path = track["local_path"]
-    if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="Filler video file missing on disk")
-
-    return FileResponse(file_path, media_type="video/mp4")
 
 # Search API
 search_requests_by_ip: Dict[str, List[float]] = {}
