@@ -11,8 +11,8 @@ try:
 except ImportError:
     HAS_GUI = False
 
-from tiki_importer.config import get_default_compuhost_path, get_default_db_path
-from tiki_importer.engine import TikiImportEngine
+from importer.tiki_importer.config import get_default_compuhost_path, get_default_db_path
+from importer.tiki_importer.engine import TikiImportEngine
 
 
 class CompuHostMigrationWindow:

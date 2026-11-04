@@ -408,6 +408,17 @@ class TikiControlHub:
 
     def _launch_importer(self):
         def _call():
+            # 1. Try launching in-process directly (fastest, guaranteed inside standalone AppImage / EXE)
+            try:
+                from importer.ui.app_window import TikiImporterApp
+                from app import get_db_path, get_tracks_dir
+                self.root.after(0, lambda: TikiImporterApp(initial_folder=str(get_tracks_dir()), initial_db=str(get_db_path())))
+                self._flash_toast("🚀 Smart Media Importer launched!")
+                return
+            except Exception as direct_err:
+                pass
+
+            # 2. Fallback to API route
             try:
                 import urllib.request
                 import json
@@ -446,6 +457,17 @@ class TikiControlHub:
 
     def _launch_cdg_ripper(self):
         def _call():
+            # 1. Try launching in-process directly (fastest, guaranteed inside standalone AppImage / EXE)
+            try:
+                from importer.ui.cdg_ripper_window import CdgRipperWindow
+                from app import get_tracks_dir
+                self.root.after(0, lambda: CdgRipperWindow(target_tracks_dir=str(get_tracks_dir())))
+                self._flash_toast("📀 CD+G Disc Ripper launched!")
+                return
+            except Exception as direct_err:
+                pass
+
+            # 2. Fallback to API route
             try:
                 import urllib.request
                 import json

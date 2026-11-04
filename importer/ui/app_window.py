@@ -21,8 +21,8 @@ except Exception as e:
     _gui_import_error = str(e)
 
 if HAS_GUI:
-    from tiki_importer.config import get_default_db_path, get_default_library_path
-    from tiki_importer.engine import TikiImportEngine
+    from importer.tiki_importer.config import get_default_db_path, get_default_library_path
+    from importer.tiki_importer.engine import TikiImportEngine
 
 
 class TikiImporterApp:

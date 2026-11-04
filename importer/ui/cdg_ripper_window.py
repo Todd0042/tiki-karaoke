@@ -21,8 +21,8 @@ try:
 except ImportError:
     HAS_GUI = False
 
-from tiki_importer.config import get_default_library_path
-from tiki_importer.cdg_ripper import (
+from importer.tiki_importer.config import get_default_library_path
+from importer.tiki_importer.cdg_ripper import (
     list_optical_drives,
     eject_optical_drive,
     read_disc_toc,

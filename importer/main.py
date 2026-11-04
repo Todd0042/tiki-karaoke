@@ -21,9 +21,9 @@ REPO_ROOT = Path(__file__).resolve().parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from tiki_importer.config import get_default_db_path, get_default_library_path
-from tiki_importer.engine import TikiImportEngine
-from ui.app_window import HAS_GUI, TikiImporterApp
+from importer.tiki_importer.config import get_default_db_path, get_default_library_path
+from importer.tiki_importer.engine import TikiImportEngine
+from importer.ui.app_window import HAS_GUI, TikiImporterApp
 
 
 def run_cli_import(
@@ -197,7 +197,7 @@ def main():
 
     # Direct CD+G Ripper dedicated window mode
     if args.cdg_ripper:
-        from ui.cdg_ripper_window import CdgRipperWindow
+        from importer.ui.cdg_ripper_window import CdgRipperWindow
         app = CdgRipperWindow(target_tracks_dir=default_folder)
         app.win.mainloop()
         return
