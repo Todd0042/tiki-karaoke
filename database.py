@@ -857,24 +857,57 @@ def rebalance_queue_round_robin(conn=None):
                 "created_at": r["created_at"]
             })
 
-        # Sort key:
-        # (1) is_on_break ASC (Active singers play before singers on break)
-        # (2) effective_round ASC (Round 1 songs before Round 2)
-        # (3) completed_count ASC (Singers with fewer completed songs go first in their round)
-        # (4) last_played ASC ("" sorts first for singers who haven't sung yet tonight)
-        # (5) created_at ASC (Earlier queue time)
-        # (6) id ASC
-        annotated.sort(key=lambda x: (
-            x["is_on_break"],
-            x["effective_round"],
-            x["completed_count"],
-            x["last_played"],
-            x["created_at"],
-            x["id"]
-        ))
+        # Track the simulated last turn position of each singer.
+        # Position 0 represents the stage.
+        last_turn_pos = {}
+        if playing_singer_id:
+            last_turn_pos[playing_singer_id] = 0
+
+        # For singers not on stage, initialize last_turn_pos based on completed count and last_played:
+        # Singers with fewer completed songs start with a smaller (earlier) position.
+        # Singers who have never sung tonight start with lowest position (-10000).
+        for item in annotated:
+            s_id = item["singer_id"]
+            if s_id not in last_turn_pos:
+                cc = item["completed_count"]
+                if cc == 0:
+                    last_turn_pos[s_id] = -10000
+                else:
+                    last_turn_pos[s_id] = -5000 + cc
+
+        # Process rounds in strict order:
+        # First active singers (is_on_break = 0) by round 1, 2, 3...
+        # Then singers on break (is_on_break = 1) by round 1, 2, 3...
+        ordered_items = []
+        current_pos = 1
+
+        for on_break_val in (0, 1):
+            subset = [x for x in annotated if x["is_on_break"] == on_break_val]
+            if not subset:
+                continue
+            round_nums = sorted(list(set(x["effective_round"] for x in subset)))
+            for r in round_nums:
+                round_items = [x for x in subset if x["effective_round"] == r]
+                # Sort singers within this round:
+                # 1. Who has waited longest since their last turn (smallest last_turn_pos)
+                # 2. Fewer completed songs tonight
+                # 3. Last played timestamp ASC ("" sorts first)
+                # 4. Initial queue creation time ASC
+                # 5. ID ASC
+                round_items.sort(key=lambda x: (
+                    last_turn_pos.get(x["singer_id"], -9999),
+                    x["completed_count"],
+                    x["last_played"],
+                    x["created_at"],
+                    x["id"]
+                ))
+                for item in round_items:
+                    ordered_items.append(item)
+                    last_turn_pos[item["singer_id"]] = current_pos
+                    current_pos += 1
 
         # Update sort_order in database
-        for idx, item in enumerate(annotated):
+        for idx, item in enumerate(ordered_items):
             conn.execute("UPDATE queue SET sort_order = ? WHERE id = ?", (float(idx + 1), item["id"]))
         if close_conn:
             conn.commit()

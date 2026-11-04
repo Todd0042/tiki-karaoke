@@ -157,6 +157,53 @@ class TestTikiKaraoke(unittest.TestCase):
         self.assertGreaterEqual(len(history), 1)
         self.assertEqual(history[0]["title"], "Song A1")
 
+    def test_05b_multi_song_anti_clumping(self):
+        # Singer Todd has completed songs tonight
+        s_todd = get_or_create_singer("s_todd", "Todd_Test", "🎤")
+        # Singer Samuel is brand new with 0 completed songs
+        s_sam = get_or_create_singer("s_samuel", "Samuel_Test", "🎸")
+
+        # Simulate Todd having completed previous songs
+        t_old1 = save_track("v_old1", "Old 1", "Artist", "Artist - Old 1")
+        t_old2 = save_track("v_old2", "Old 2", "Artist", "Artist - Old 2")
+        from database import get_db
+        conn = get_db()
+        with conn:
+            conn.execute("INSERT INTO history (singer_id, track_id, played_at) VALUES (?, ?, '2026-01-01 10:00:00')", (s_todd["id"], t_old1))
+            conn.execute("INSERT INTO history (singer_id, track_id, played_at) VALUES (?, ?, '2026-01-01 10:15:00')", (s_todd["id"], t_old2))
+        conn.close()
+
+        # Todd is currently playing a song and has 1 song pending in queue
+        t_t1 = save_track("v_t1", "Todd Song 1", "Artist T", "Artist T - Todd Song 1")
+        t_t2 = save_track("v_t2", "Todd Song 2", "Artist T", "Artist T - Todd Song 2")
+        t_s1 = save_track("v_s1", "Sam Song 1", "Artist S", "Artist S - Sam Song 1")
+        t_s2 = save_track("v_s2", "Sam Song 2", "Artist S", "Artist S - Sam Song 2")
+
+        q_t1 = enqueue_song(t_t1, s_todd["id"])
+        set_queue_status(q_t1, "playing")
+        q_t2 = enqueue_song(t_t2, s_todd["id"])
+
+        # Samuel queues 2 songs while Todd is playing
+        q_s1 = enqueue_song(t_s1, s_sam["id"])
+        q_s2 = enqueue_song(t_s2, s_sam["id"])
+
+        # Expected fair interleaving:
+        # [0]: Todd Song 1 (playing)
+        # [1]: Samuel Song 1 (Round 1 for Samuel - fresh singer gets on deck)
+        # [2]: Todd Song 2 (Round 2 for Todd - Todd played at pos 0, while Samuel played at pos 1)
+        # [3]: Samuel Song 2 (Round 2 for Samuel)
+        # MUST NOT BE: Todd, Samuel, Samuel, Todd!
+        q = get_queue()
+        self.assertEqual(len(q), 4)
+        self.assertEqual(q[0]["queue_id"], q_t1)
+        self.assertEqual(q[0]["singer_name"], "Todd_Test")
+        self.assertEqual(q[1]["queue_id"], q_s1)
+        self.assertEqual(q[1]["singer_name"], "Samuel_Test")
+        self.assertEqual(q[2]["queue_id"], q_t2)
+        self.assertEqual(q[2]["singer_name"], "Todd_Test")
+        self.assertEqual(q[3]["queue_id"], q_s2)
+        self.assertEqual(q[3]["singer_name"], "Samuel_Test")
+
     def test_06_loudnorm_ffmpeg_helper(self):
         # Create a tiny test audio file and test normalization filter
         test_in = TRACKS_DIR / "test_in.mp4"
