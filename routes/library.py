@@ -22,6 +22,7 @@ from search import tiered_search
 from downloader import enqueue_download
 from services.auth import is_host_request, is_local_request
 from services.websocket_manager import manager
+from services.library_cache import get_cached_unique_artists, invalidate_library_cache
 
 router = APIRouter()
 
@@ -73,7 +74,7 @@ async def api_get_library(
     sing_along: bool = False
 ):
     data = get_browsable_tracks(page=page, limit=limit, sort=sort, artist=artist, search=q, sing_along=sing_along)
-    data["artists"] = get_unique_downloaded_artists(sing_along=sing_along)
+    data["artists"] = get_cached_unique_artists(sing_along=sing_along)
     return data
 
 
@@ -103,6 +104,7 @@ async def api_prune_tracks(req: PruneTracksRequest, request: Request):
         if prune_local_track(fid, is_filler=True):
             pruned_count += 1
     
+    invalidate_library_cache()
     await manager.broadcast({
         "type": "library_updated",
         "queue": get_queue()
@@ -121,6 +123,7 @@ async def api_edit_track_metadata(track_id: int, req: EditTrackMetadataRequest, 
     success = edit_track_metadata(track_id, req.title, req.artist, is_filler=req.is_filler)
     if not success:
         raise HTTPException(status_code=400, detail="Failed to update track metadata")
+    invalidate_library_cache()
     await manager.broadcast({
         "type": "library_updated",
         "queue": get_queue()
@@ -135,6 +138,7 @@ async def api_convert_track_type(track_id: int, req: ConvertTrackTypeRequest, re
     res = convert_track_type(track_id, req.target_type, source_type=req.source_type, is_filler=req.is_filler)
     if not res.get("success"):
         raise HTTPException(status_code=400, detail=res.get("error", "Conversion failed"))
+    invalidate_library_cache()
     await manager.broadcast({
         "type": "library_updated",
         "queue": get_queue()

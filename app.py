@@ -47,6 +47,7 @@ from services.network import (
     get_public_ip,
 )
 from services.websocket_manager import ConnectionManager, manager
+from services.library_cache import warm_library_cache
 
 main_event_loop: Optional[asyncio.AbstractEventLoop] = None
 
@@ -138,6 +139,7 @@ async def lifespan(app: FastAPI):
     filler_worker_task = asyncio.create_task(filler_downloader_worker())
     watchdog_task = asyncio.create_task(intermission_watchdog_loop())
     enricher_task = asyncio.create_task(background_metadata_enricher())
+    asyncio.create_task(asyncio.to_thread(warm_library_cache))
 
     # Resume any staged downloads from SQLite
     try:

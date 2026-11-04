@@ -1,5 +1,6 @@
 import os
 import re
+import shutil
 import asyncio
 import subprocess
 from pathlib import Path
@@ -113,6 +114,7 @@ def download_and_normalize_track(
     temp_path = artist_dir / f"temp_{video_id}.mp4"
     final_path = artist_dir / f"{title_clean} [{video_id}].mp4"
 
+    current_stream = [1]
     last_reported_percent = [-1.0]
 
     def ydl_progress_callback(d):
@@ -123,13 +125,20 @@ def download_and_normalize_track(
             total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
             downloaded = d.get("downloaded_bytes") or 0
             if total > 0:
-                pct = round((downloaded / total) * 100.0, 1)
-                if pct - last_reported_percent[0] >= 4.0 or pct >= 99.0:
-                    last_reported_percent[0] = pct
-                    progress_hook(track_id, pending_id, pct, "downloading")
+                stream_pct = (downloaded / total) * 100.0
+                # Scale dual-stream download (stream 1: 0-60%, stream 2: 60-90%)
+                if current_stream[0] == 1:
+                    overall_pct = round(stream_pct * 0.60, 1)
+                else:
+                    overall_pct = round(60.0 + stream_pct * 0.30, 1)
+
+                if overall_pct - last_reported_percent[0] >= 3.0 or overall_pct >= 89.0:
+                    last_reported_percent[0] = overall_pct
+                    progress_hook(track_id, pending_id, max(1.0, min(89.0, overall_pct)), "downloading")
         elif status == "finished":
-            last_reported_percent[0] = 100.0
-            progress_hook(track_id, pending_id, 100.0, "normalizing")
+            current_stream[0] += 1
+            last_reported_percent[0] = max(last_reported_percent[0], 60.0)
+            progress_hook(track_id, pending_id, 90.0, "normalizing")
 
     ydl_opts = {
         "format": get_ydl_video_format(quality_profile),
@@ -142,8 +151,11 @@ def download_and_normalize_track(
         "retries": 3,
         "fragment_retries": 3,
         "skip_unavailable_fragments": True,
+        "source_address": "0.0.0.0",  # Prevent 30-60s IPv6 timeouts
         "progress_hooks": [ydl_progress_callback]
     }
+    if shutil.which("node"):
+        ydl_opts["js_runtimes"] = {"node": {}}
     ffmpeg_bin = get_bundled_binary_path("ffmpeg")
     if ffmpeg_bin.exists():
         ydl_opts["ffmpeg_location"] = str(ffmpeg_bin.parent)
@@ -161,7 +173,7 @@ def download_and_normalize_track(
 
         # Apply FFmpeg Loudness Normalization (-16 LUFS)
         if progress_hook:
-            progress_hook(track_id, pending_id, 100.0, "normalizing")
+            progress_hook(track_id, pending_id, 92.0, "normalizing")
         success = normalize_audio_loudness(temp_path, final_path)
         if success and final_path.exists():
             if temp_path.exists():
@@ -173,6 +185,11 @@ def download_and_normalize_track(
             local_file = str(final_path)
 
         update_track_download_status(track_id, "ready", local_path=local_file, normalized_lufs=TARGET_LUFS)
+        try:
+            from services.library_cache import invalidate_library_cache
+            invalidate_library_cache()
+        except Exception:
+            pass
         if progress_hook:
             progress_hook(track_id, pending_id, 100.0, "ready")
         return local_file
@@ -347,8 +364,11 @@ def download_and_normalize_filler_track(filler_id: int) -> Optional[str]:
         "socket_timeout": 15,
         "retries": 3,
         "fragment_retries": 3,
-        "skip_unavailable_fragments": True
+        "skip_unavailable_fragments": True,
+        "source_address": "0.0.0.0",  # Prevent 30-60s IPv6 timeouts
     }
+    if shutil.which("node"):
+        ydl_opts["js_runtimes"] = {"node": {}}
     ffmpeg_bin = get_bundled_binary_path("ffmpeg")
     if ffmpeg_bin.exists():
         ydl_opts["ffmpeg_location"] = str(ffmpeg_bin.parent)

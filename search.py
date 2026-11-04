@@ -1,10 +1,33 @@
 import os
 import re
+import time
+import shutil
 from typing import List, Dict, Any, Tuple
 import yt_dlp
 from rapidfuzz import fuzz
 from database import search_local_tracks, save_track, get_setting
 from network_helper import is_internet_available
+
+# In-memory LRU/TTL cache for YouTube search results (10-minute cache)
+_YOUTUBE_SEARCH_CACHE: Dict[str, Tuple[float, List[Dict[str, Any]], bool]] = {}
+_CACHE_TTL_SECONDS: float = 600.0
+
+
+def get_search_ydl_opts(timeout: int = 5) -> Dict[str, Any]:
+    """Returns optimized yt-dlp flat extraction options with IPv4 enforcement."""
+    opts = {
+        "quiet": True,
+        "skip_download": True,
+        "extract_flat": True,
+        "no_warnings": True,
+        "socket_timeout": timeout,
+        "retries": 1,
+        "nocheckcertificate": True,
+        "source_address": "0.0.0.0",  # Prevent 30-60s IPv6 timeouts
+    }
+    if shutil.which("node"):
+        opts["js_runtimes"] = {"node": {}}
+    return opts
 
 # Regular expressions for cleaning metadata
 CHANNEL_BRANDS = [
@@ -201,15 +224,13 @@ def is_karaoke_track(title: str, uploader: str = "") -> bool:
     return has_karaoke_title or is_karaoke_channel
 
 def query_youtube_karaoke(query: str, page: int = 1, limit: int = 15) -> Tuple[List[Dict[str, Any]], bool]:
-    ydl_opts = {
-        "quiet": True,
-        "skip_download": True,
-        "extract_flat": True,
-        "no_warnings": True,
-        "socket_timeout": 8,
-        "retries": 2,
-        "nocheckcertificate": True,
-    }
+    cache_key = f"karaoke:{query.strip().lower()}:{page}:{limit}"
+    now = time.time()
+    cached = _YOUTUBE_SEARCH_CACHE.get(cache_key)
+    if cached and (now - cached[0] < _CACHE_TTL_SECONDS):
+        return cached[1], cached[2]
+
+    ydl_opts = get_search_ydl_opts(timeout=5)
     # Query progressively more candidates for deeper pages
     target_count = max(page * 25, 25)
     search_q = f"ytsearch{target_count}:{query} karaoke"
@@ -267,6 +288,7 @@ def query_youtube_karaoke(query: str, page: int = 1, limit: int = 15) -> Tuple[L
     end_idx = start_idx + limit
     page_items = grouped[start_idx:end_idx]
     has_more = len(grouped) > end_idx or (len(raw_entries) >= target_count and len(page_items) == limit)
+    _YOUTUBE_SEARCH_CACHE[cache_key] = (now, page_items, has_more)
     return page_items, has_more
 
 def is_sing_along_track(title: str, uploader: str = "") -> bool:
@@ -312,15 +334,13 @@ def is_sing_along_track(title: str, uploader: str = "") -> bool:
     return any(ind in t_lower for ind in lyric_indicators)
 
 def query_youtube_sing_along(query: str, page: int = 1, limit: int = 15) -> Tuple[List[Dict[str, Any]], bool]:
-    ydl_opts = {
-        "quiet": True,
-        "skip_download": True,
-        "extract_flat": True,
-        "no_warnings": True,
-        "socket_timeout": 8,
-        "retries": 2,
-        "nocheckcertificate": True,
-    }
+    cache_key = f"sing_along:{query.strip().lower()}:{page}:{limit}"
+    now = time.time()
+    cached = _YOUTUBE_SEARCH_CACHE.get(cache_key)
+    if cached and (now - cached[0] < _CACHE_TTL_SECONDS):
+        return cached[1], cached[2]
+
+    ydl_opts = get_search_ydl_opts(timeout=5)
     target_count = max(page * 25, 25)
     search_q = f"ytsearch{target_count}:{query} lyrics"
     
@@ -381,6 +401,7 @@ def query_youtube_sing_along(query: str, page: int = 1, limit: int = 15) -> Tupl
     end_idx = start_idx + limit
     page_items = grouped[start_idx:end_idx]
     has_more = len(grouped) > end_idx or (len(raw_entries) >= target_count and len(page_items) == limit)
+    _YOUTUBE_SEARCH_CACHE[cache_key] = (now, page_items, has_more)
     return page_items, has_more
 
 def tiered_search(query: str, force_online: bool = False, sing_along: bool = False, page: int = 1, limit: int = 15) -> Dict[str, Any]:
@@ -399,7 +420,11 @@ def tiered_search(query: str, force_online: bool = False, sing_along: bool = Fal
             "strict_mode": True
         }
 
-    local_matches = search_local_tracks(query_str, limit=25, sing_along_only=sing_along) if page == 1 else []
+    try:
+        from services.library_cache import search_cached_tracks
+        local_matches = search_cached_tracks(query_str, limit=25, sing_along_only=sing_along) if page == 1 else []
+    except Exception:
+        local_matches = search_local_tracks(query_str, limit=25, sing_along_only=sing_along) if page == 1 else []
     
     # Check internet connectivity for offline hotspot parties, or testing mode
     online = is_internet_available()
@@ -443,14 +468,7 @@ def query_youtube_music_videos(query: str, max_results: int = 15) -> List[Dict[s
     if not query_str:
         return []
 
-    ydl_opts = {
-        "quiet": True,
-        "skip_download": True,
-        "extract_flat": True,
-        "no_warnings": True,
-        "socket_timeout": 8,
-        "retries": 2,
-    }
+    ydl_opts = get_search_ydl_opts(timeout=5)
 
     # If query does not specify 'video' or 'official', append 'official music video'
     lower_q = query_str.lower()
