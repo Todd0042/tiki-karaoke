@@ -776,7 +776,7 @@ def start_cloudflare_quick_tunnel(port: int):
     print("[Tunnel] 🔒 Establishing secure Cloudflare Quick Tunnel (Trusted HTTPS)...")
     try:
         proc = subprocess.Popen(
-            [str(bin_path), "tunnel", "--url", f"http://127.0.0.1:{port}"],
+            [str(bin_path), "tunnel", "--no-autoupdate", "--url", f"http://127.0.0.1:{port}"],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -798,10 +798,11 @@ def start_cloudflare_quick_tunnel(port: int):
             url = m.group(0)
             break
 
-    # Background reader to prevent pipe lock
+    # Background reader to prevent pipe lock and log tunnel health
     def _drain(pipe):
-        for _ in iter(pipe.readline, ''):
-            pass
+        for line in iter(pipe.readline, ''):
+            if "error" in line.lower() or "retrying" in line.lower():
+                print(f"[Cloudflare Tunnel] {line.strip()}")
     threading.Thread(target=_drain, args=(proc.stdout,), daemon=True).start()
 
     return url, proc
@@ -1073,30 +1074,23 @@ def start_tunnel_watchdog(mode: str, local_port: int, remote_port: int = 38480, 
 
             # 3. Active Cloudflare Quick Tunnel Keepalive (prevents idle edge drop)
             cf_probe_counter += 5
-            if not needs_restart and live_mode in ("cloudflare", "cloudflare_quick") and cf_probe_counter >= 20:
+            if not needs_restart and live_mode in ("cloudflare", "cloudflare_quick") and cf_probe_counter >= 30:
                 cf_probe_counter = 0
                 pub_host = os.environ.get("TIKI_PUBLIC_HOST", "").strip()
                 if pub_host and "trycloudflare.com" in pub_host:
                     try:
                         import urllib.request
+                        import ssl
+                        ctx = ssl._create_unverified_context()
                         req = urllib.request.Request(
                             f"https://{pub_host}/api/state",
                             headers={"User-Agent": "TikiTunnelKeepalive/1.0"}
                         )
-                        with urllib.request.urlopen(req, timeout=4.0) as resp:
-                            if resp.status == 200:
-                                cf_fail_counter = 0
-                            else:
-                                cf_fail_counter += 1
-                    except Exception as e:
-                        cf_fail_counter += 1
-                        if cf_fail_counter >= 2:
-                            print(f"\n[Tunnel Watchdog] ⚠️ Cloudflare keepalive probe failed ({cf_fail_counter}/3): {e}")
-
-                    if cf_fail_counter >= 3:
-                        print(f"\n[Tunnel Watchdog] ⚠️ Cloudflare tunnel unresponsive after 3 probes. Auto-healing tunnel...")
-                        needs_restart = True
-                        cf_fail_counter = 0
+                        with urllib.request.urlopen(req, timeout=6.0, context=ctx) as resp:
+                            pass
+                    except Exception:
+                        # Non-fatal keepalive ping; cloudflared manages persistent edge connection
+                        pass
 
             if needs_restart and not is_shutting_down:
                 if active_tunnel_proc:
