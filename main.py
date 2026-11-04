@@ -1161,8 +1161,20 @@ def main():
     parser.add_argument("--local-only", action="store_true", help="Run on local network only (disable remote tunnels)")
     parser.add_argument("--tunnel", action="store_true", help="Force ephemeral Cloudflare HTTPS tunnel (Trusted SSL)")
     parser.add_argument("--bore", action="store_true", help="Force legacy Bore static port tunnel (HTTP)")
-    parser.add_argument("--debug-tray", action="store_true", help="Diagnose system tray icon and menu setup")
+    parser.add_argument("--importer", action="store_true", help="Launch the bundled Smart Media Importer UI directly")
+    parser.add_argument("--cdg-ripper", "--rip-cdg", action="store_true", help="Launch the bundled CD+G Optical Disc Ripper UI directly")
+    parser.add_argument("--folder", default="", help="Media directory to scan or rip to")
+    parser.add_argument("--db", default="", help="Database path for media import")
+    parser.add_argument("--compuhost", default="", help="CompuHost database path for migration")
     args = parser.parse_args()
+
+    if args.importer or args.cdg_ripper:
+        try:
+            from importer.main import main as importer_entry
+            sys.exit(importer_entry())
+        except Exception as e:
+            print(f"[Fatal] Failed to launch bundled importer: {e}")
+            sys.exit(1)
 
     if args.debug_tray:
         from tray import debug_tray_status

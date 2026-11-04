@@ -2816,12 +2816,18 @@ def find_importer_executable() -> Optional[Tuple[List[str], Optional[Path]]]:
             if c.is_file() and os.access(c, os.X_OK):
                 return ([str(c)], c.parent)
 
-    # 2. Check internal merged module: current_dir / "importer" / "main.py"
+    # 2. If running inside a standalone bundle (PyInstaller / AppImage), self-invoke with --importer
+    if getattr(sys, "frozen", False):
+        exe_path = Path(sys.executable).resolve()
+        if exe_path.is_file():
+            return ([str(exe_path), "--importer"], exe_path.parent)
+
+    # 3. Check internal merged module in development mode: current_dir / "importer" / "main.py"
     internal_importer = current_dir / "importer"
     if (internal_importer / "main.py").is_file():
         return ([sys.executable, str(internal_importer / "main.py")], internal_importer)
 
-    # 3. Check sibling repository: ../tiki-karaoke-importer
+    # 4. Check sibling repository: ../tiki-karaoke-importer
     importer_repo = current_dir.parent / "tiki-karaoke-importer"
     if importer_repo.is_dir():
         if sys.platform == "win32":

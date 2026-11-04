@@ -82,7 +82,22 @@ hiddenimports = [
     "tkinter",
     "tkinter.messagebox",
     "PIL.ImageTk",
+    "importer",
+    "importer.main",
+    "importer.ui.app_window",
+    "importer.ui.cdg_ripper_window",
+    "importer.ui.compuhost_window",
+    "importer.tiki_importer.engine",
+    "importer.tiki_importer.config",
+    "importer.tiki_importer.compuhost",
+    "importer.tiki_importer.tps_reader",
+    "importer.tiki_importer.cdg_ripper",
+    "importer.tiki_importer.cleaner",
+    "importer.tiki_importer.db_adapter",
+    "importer.tiki_importer.enricher",
 ]
+
+hiddenimports += collect_submodules("importer")
 
 # Explicitly collect all yt_dlp submodules (including youtube extractors) and data files
 hiddenimports += collect_submodules("yt_dlp")

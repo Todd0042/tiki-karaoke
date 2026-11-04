@@ -80,6 +80,12 @@ pyinstaller --clean -y --onedir \
     --hidden-import PIL._tkinter_finder \
     --hidden-import tkinter \
     --hidden-import tkinter.messagebox \
+    --collect-all importer \
+    --hidden-import importer \
+    --hidden-import importer.main \
+    --hidden-import importer.ui.app_window \
+    --hidden-import importer.ui.cdg_ripper_window \
+    --hidden-import importer.ui.compuhost_window \
     /src/main.py
 EOF
 
