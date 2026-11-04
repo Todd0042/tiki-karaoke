@@ -1166,11 +1166,14 @@ def main():
     parser.add_argument("--folder", default="", help="Media directory to scan or rip to")
     parser.add_argument("--db", default="", help="Database path for media import")
     parser.add_argument("--compuhost", default="", help="CompuHost database path for migration")
-    args = parser.parse_args()
+    parser.add_argument("--debug-tray", action="store_true", help="Diagnose system tray icon and menu setup")
+    args, unknown = parser.parse_known_args()
 
     if args.importer or args.cdg_ripper:
         try:
             from importer.main import main as importer_entry
+            # Clean sys.argv for the importer sub-parser
+            sys.argv = [sys.argv[0]] + [a for a in sys.argv[1:] if a != "--importer"]
             sys.exit(importer_entry())
         except Exception as e:
             print(f"[Fatal] Failed to launch bundled importer: {e}")
