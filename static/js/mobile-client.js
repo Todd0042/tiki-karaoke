@@ -859,6 +859,7 @@ function clearSearchInput() {
 let currentSearchQuery = "";
 let currentSearchForceOnline = false;
 let currentSearchPage = 1;
+let currentSearchAbortController = null;
 
 function performSearch(query, forceOnline = false, page = 1) {
     const resultsContainer = document.getElementById("searchResults");
@@ -867,6 +868,12 @@ function performSearch(query, forceOnline = false, page = 1) {
     currentSearchQuery = query;
     currentSearchForceOnline = forceOnline;
     currentSearchPage = page;
+
+    if (currentSearchAbortController) {
+        currentSearchAbortController.abort();
+    }
+    currentSearchAbortController = new AbortController();
+    const signal = currentSearchAbortController.signal;
 
     if (page === 1) {
         const searchMsg = isSingAlongMode ? "🍹 Searching Tiki Sing-Along Library & YouTube..." : "🍹 Searching Tiki Library & YouTube...";
@@ -879,8 +886,15 @@ function performSearch(query, forceOnline = false, page = 1) {
         }
     }
 
-    fetch(`/api/search?q=${encodeURIComponent(query)}&force_online=${forceOnline}&sing_along=${isSingAlongMode}&page=${page}`)
+    const timeoutId = setTimeout(() => {
+        if (currentSearchAbortController) {
+            currentSearchAbortController.abort();
+        }
+    }, 12000);
+
+    fetch(`/api/search?q=${encodeURIComponent(query)}&force_online=${forceOnline}&sing_along=${isSingAlongMode}&page=${page}`, { signal })
         .then(async res => {
+            clearTimeout(timeoutId);
             if (res.status === 429) {
                 const data = await res.json().catch(() => ({}));
                 throw new Error(data.detail || "Search rate limit reached. Please wait a few seconds.");
@@ -894,6 +908,11 @@ function performSearch(query, forceOnline = false, page = 1) {
             renderSearchResults(data, query, page > 1);
         })
         .catch(err => {
+            clearTimeout(timeoutId);
+            if (err.name === "AbortError") {
+                // Superseded by newer search keystroke; ignore silently
+                return;
+            }
             if (page === 1) {
                 resultsContainer.innerHTML = `<div style="text-align: center; color: #ffb703; padding: 20px;">⏳ ${err.message || "Search error. Check connection."}</div>`;
             } else {

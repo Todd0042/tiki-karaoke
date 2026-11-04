@@ -1,9 +1,10 @@
 import os
 import re
+import time
 import json
 import urllib.parse
 import urllib.request
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Tuple
 
 USER_AGENT = "TikiKaraoke/1.0 (https://github.com/tiki-karaoke/tiki-karaoke)"
 
@@ -127,29 +128,42 @@ def fetch_wikipedia_metadata(artist: str, title: str) -> Optional[Dict[str, Any]
     except Exception as e:
         print(f"[Metadata] Wikipedia fallback failed for '{term}': {e}")
 
-    return None
+_METADATA_CACHE: Dict[str, Tuple[float, Dict[str, Any]]] = {}
+_METADATA_CACHE_TTL: float = 3600.0
+
 
 def fetch_track_metadata(artist: str, title: str) -> Dict[str, Any]:
     """
     Enriches track with genre and release year.
     Tries iTunes API first, falls back to Wikipedia, defaults to ('Pop', 0).
+    Uses 1-hour TTL in-memory cache to prevent redundant outbound HTTP queries.
     """
     if os.environ.get("TIKI_TESTING"):
         return {"genre": "Pop", "release_year": 2000, "source": "test"}
 
-    # 1. Try iTunes
+    cache_key = f"{artist.strip().lower()} - {title.strip().lower()}"
+    now = time.time()
+    cached = _METADATA_CACHE.get(cache_key)
+    if cached and (now - cached[0] < _METADATA_CACHE_TTL):
+        return cached[1]
+
+    # 1. Try iTunes (fast 3.0s timeout)
     itunes_res = fetch_itunes_metadata(artist, title)
     if itunes_res:
+        _METADATA_CACHE[cache_key] = (now, itunes_res)
         return itunes_res
 
-    # 2. Try Wikipedia
+    # 2. Try Wikipedia (3.0s timeout)
     wiki_res = fetch_wikipedia_metadata(artist, title)
     if wiki_res:
+        _METADATA_CACHE[cache_key] = (now, wiki_res)
         return wiki_res
 
     # 3. Default fallback
-    return {
+    fallback = {
         "genre": "Pop",
         "release_year": 0,
         "source": "default"
     }
+    _METADATA_CACHE[cache_key] = (now, fallback)
+    return fallback

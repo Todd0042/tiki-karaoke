@@ -29,6 +29,30 @@ def is_hotspot_ip(ip: str) -> bool:
 
 _last_internet_check = 0.0
 _cached_internet_available = False
+_ipv4_prioritized = False
+
+def prioritize_ipv4() -> None:
+    """
+    Ensures socket.getaddrinfo returns IPv4 (AF_INET) addresses first.
+    Protects against 15-30 second socket timeouts on networks where IPv6 is configured
+    on the interface or glibc gai.conf, but upstream IPv6 routing is broken or dropped by ISP.
+    """
+    global _ipv4_prioritized
+    if _ipv4_prioritized:
+        return
+    orig_getaddrinfo = socket.getaddrinfo
+
+    def getaddrinfo_ipv4_first(host, port, family=0, type=0, proto=0, flags=0):
+        res = orig_getaddrinfo(host, port, family, type, proto, flags)
+        if family == 0 and res:  # AF_UNSPEC: sort IPv4 (AF_INET = 2) ahead of IPv6 (AF_INET6 = 10)
+            return sorted(res, key=lambda x: 0 if x[0] == socket.AF_INET else 1)
+        return res
+
+    socket.getaddrinfo = getaddrinfo_ipv4_first
+    _ipv4_prioritized = True
+
+# Automatically apply IPv4 prioritization on load
+prioritize_ipv4()
 
 def is_internet_available(timeout: float = 1.2, force_recheck: bool = False) -> bool:
     """
