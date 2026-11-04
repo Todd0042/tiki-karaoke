@@ -156,13 +156,13 @@ start.bat
 
 # Part 2 — Consolidated Technical Documentation & Architecture Reference
 
-> *The sections below provide an exhaustive, code-verified engineering reference of every module, DSP pipeline, database algorithm, API/WebSocket contract, and configuration parameter in Tiki Karaoke Lounge `v1.0.9`.*
+> *The sections below provide an exhaustive, code-verified engineering reference of every module, DSP pipeline, database algorithm, API/WebSocket contract, and configuration parameter in Tiki Karaoke Lounge `v1.1.0`.*
 
 ---
 
 ## 1. System Architecture & Real-Time WebSocket Engine
 
-Tiki Karaoke is built on an asynchronous Python backend ([app.py](app.py), [main.py](main.py)) powered by **FastAPI**, **Uvicorn**, and **SQLite (`aiosqlite` in WAL mode)**, paired with a zero-framework vanilla JavaScript/HTML5 Canvas/Web Audio API frontend.
+Tiki Karaoke is built on a modular asynchronous Python backend ([app.py](app.py), [main.py](main.py)) powered by **FastAPI**, **Uvicorn**, and **SQLite (`aiosqlite` in WAL mode)**, paired with a zero-framework vanilla JavaScript/HTML5 Canvas/Web Audio API frontend. The application server is cleanly partitioned into high-cohesion `routes/` and standalone background `services/`.
 
 ```mermaid
 flowchart TB
@@ -170,7 +170,9 @@ flowchart TB
         Main["main.py<br/>Process Supervisor & CLI"]
         Hub["control_hub.py<br/>Tkinter Desktop Control Hub"]
         Tray["tray.py<br/>PyQt6 SNI / pystray Daemon"]
-        FastAPI["app.py<br/>FastAPI + WebSocket Coordinator"]
+        FastAPI["app.py<br/>FastAPI Coordinator & Lifespan Router"]
+        Routes["routes/<br/>host_controls, queue, library, recordings, setup, launcher, stream, pages"]
+        Services["services/<br/>playback, library_cache, network, websocket_manager, lifecycle, temporary_cache, auth"]
         DB[("database.py<br/>SQLite WAL (9 Tables)")]
         AudioRouter["audio_router.py<br/>pactl / WASAPI Mic Loopback"]
         Downloader["downloader.py & search.py<br/>yt-dlp + FFmpeg loudnorm (-16 LUFS)"]
@@ -186,13 +188,16 @@ flowchart TB
     Main --> Hub
     Main --> Tray
     Main --> FastAPI
-    FastAPI <--> DB
-    FastAPI <--> AudioRouter
-    FastAPI <--> Downloader
+    FastAPI --> Routes
+    FastAPI --> Services
+    Routes <--> DB
+    Routes <--> AudioRouter
+    Routes <--> Downloader
+    Services <--> DB
     Main --> Net
-    FastAPI <==> Stage
-    FastAPI <==> Mobile
-    FastAPI <==> HostDesk
+    Services <==> Stage
+    Services <==> Mobile
+    Services <==> HostDesk
 ```
 
 ### Desktop Control Hub & System Tray Daemon
@@ -208,7 +213,7 @@ flowchart TB
   * Detects physical monitor geometry via `xrandr`, GDK, `/sys/class/drm` (Linux), or `Win32 GetMonitorInfo` / PowerShell (Windows), and launches the Stage and optional Host Desk windows directly onto their assigned displays with zero-click autoplay enabled (`media.autoplay.default=0` in Firefox profile or `--autoplay-policy=no-user-gesture-required` in Chromium).
 
 ### Real-Time WebSocket Event Catalog (`/ws`)
-[`ConnectionManager`](app.py) broadcasts JSON state envelopes to all connected Stage, Host, and Mobile clients:
+[`ConnectionManager`](services/websocket_manager.py) broadcasts JSON state envelopes to all connected Stage, Host, and Mobile clients:
 
 | Event `type` | Direction | Payload & Behavior |
 | :--- | :--- | :--- |
@@ -222,6 +227,9 @@ flowchart TB
 | `recording_ready` | Server $\rightarrow$ Mobile | Notifies the singer who just finished performing that their souvenir MP3 recording and vinyl album jacket are ready in their *My Songs* tab. |
 | `mic_vu_levels` | Stage $\rightarrow$ Server $\rightarrow$ Host | Streams real-time Left (Singer 1) and Right (Singer 2) microphone peak levels (`0–100%`) at ~5Hz to the Host DJ Desk. |
 | `soundboard` / `tts_announce` / `stage_marquee` | Host $\rightarrow$ Server $\rightarrow$ Stage | Triggers synthesized DJ sound effects (`airhorn`, `applause`, `rimshot`, `bird`), Web Speech API / Google TTS singer introductions, or timed scrolling announcements across the TV screen. |
+| `show_wrapped` | Host $\rightarrow$ Server $\rightarrow$ Stage | Broadcasts session highlight statistics (`get_party_wrapped_stats()`) and displays the retro synthwave Party Wrapped podium overlay with ambient lounge BGM when the host clicks **Stop Stage**. |
+| `renormalize_progress` | Server $\rightarrow$ Host | Real-time batch Loudness Calibration progress (`current`, `total`, `track_id`, `title`, `lufs`) during background library audio recalibration. |
+| `renormalize_complete` | Server $\rightarrow$ Host | Signals completion of the Library Loudness Calibration run with total recalibrated tracks count. |
 
 ---
 
@@ -272,6 +280,10 @@ MediaElementAudioSourceNode
   * Includes 1-tap Host Desk presets (**Direct `0ms`**, **TV Lag `+80ms`**, **Projector `+140ms`**, **Bluetooth `-150ms`**) and live $\pm 10\text{ms}$ nudge steppers.
 * **2-Pass EBU R128 Loudness Normalization (`-16.0 LUFS`)**:
   * In [downloader.py](downloader.py), downloaded tracks undergo a 2-pass `ffmpeg loudnorm` pipeline: Pass 1 measures integrated loudness (`input_i`), true peak (`input_tp`), loudness range (`input_lra`), and threshold; Pass 2 applies linear gain normalization targeting **`-16.0 LUFS`** (`TP = -1.5 dBTP`, `LRA = 11.0`) while copying the H.264/WebM video stream losslessly (`-c:v copy`).
+* **Dynamic LUFS Preview & Library Loudness Calibration**:
+  * **Host Desk Live LUFS Badge**: The Host DJ Desk displays a dynamic loudness badge (e.g., `🎚️ -16.0 LUFS`) directly on both the **Now Playing** and **Up Next** cue cards, giving the host immediate visual confidence before unmuting or transitioning.
+  * **1-Click Single-Track Recalibration (`POST /api/host/tracks/{track_id}/renormalize`)**: If an older track was normalized at a different loudness standard or if the host changes `target_lufs` in `config.json`, the host can trigger an on-the-fly 2-pass `ffmpeg loudnorm` recalibration directly from the cue card without touching external audio mixer dials.
+  * **Library Loudness Calibration Wizard (`GET /api/host/tracks/renormalize-audit` & `POST /api/host/tracks/renormalize-batch`)**: The Host Desk provides a batch calibration tool that audits the entire library against the currently configured `target_lufs` (`-14.0`, `-16.0`, `-20.0`, `-23.0`) and recalibrates all out-of-spec tracks in the background, streaming real-time progress (`renormalize_progress`, `renormalize_complete`) over WebSockets.
 
 ---
 
@@ -301,16 +313,19 @@ Tiki Karaoke includes a complete, clean-room JavaScript **CD+G (Compact Disc + G
 ## 5. Fair Round-Robin Queue & Singer Experience Mechanics
 
 ### Fair Round-Robin Queue Ordering ([database.py](database.py))
-Unlike simple FIFO queues where one guest can queue 8 songs and monopolize the stage for 35 minutes, [`get_queue()`](database.py) dynamically orders `waiting` entries using a 4-key Round-Robin tuple:
+Unlike simple FIFO queues where one guest can queue 8 songs and monopolize the stage for 35 minutes, [`rebalance_queue_round_robin()`](database.py) dynamically interleaves `pending` entries across multi-song rounds:
 
-$$\text{Sort Key} = \left(\text{round\_num ASC},\ \text{completed\_tonight ASC},\ \text{last\_sung\_order ASC},\ \text{queue\_id ASC}\right)$$
-
-1. `round_num`: Each singer's 1st waiting song is Round 0, their 2nd waiting song is Round 1, etc. All Round 0 songs play before any Round 1 song.
-2. `completed_tonight`: Within the same round, a newly arrived guest who has sung `0` songs tonight is automatically placed ahead of guests who have already sung `3` songs tonight.
-3. `last_sung_order`: Ties are broken by who has waited the longest since their last completed performance.
-4. **Host Pin Override (`position_order < 0`)**: If the Host DJ explicitly bumps a song to the top of the queue, it receives a negative `position_order` and bypasses round-robin rotation.
+1. **Effective Round Assignment**: Each singer gets at most 1 song per round. If a singer is currently on stage, their turn in Round 1 is live, placing their next pending song into Round 2. For all other singers, their 1st pending song is in Round 1, 2nd in Round 2, etc.
+2. **Dynamic Last-Turn Position Interleaving (`last_turn_pos`)**:
+   To prevent singer clustering across consecutive rounds, the engine tracks each singer's simulated stage/turn position. The live stage is position `0`. Singers not yet on stage are initialized based on performance history (singers with 0 completed songs start at `-10000`; singers with $C$ completed songs start at $-5000 + C$).
+   Within each round, candidates are sorted by:
+   $$\text{Sort Tuple} = \left(\text{last\_turn\_pos ASC},\ \text{completed\_tonight ASC},\ \text{last\_played ASC},\ \text{created\_at ASC},\ \text{id ASC}\right)$$
+   As each song is scheduled at position $P$, that singer's `last_turn_pos` is dynamically updated to $P$, naturally interleaving repeat singers behind newcomers across all subsequent rounds and eliminating multi-song clumping.
+3. **Active vs. On-Break Partitioning**: Singers who tap **"Pause My Turn (Step Away)"** are partitioned after active singers so the party flows without dead air, while strictly preserving their queue entries.
+4. **Host Pin & Pause-Show Retention (`sort_order = 0` / negative)**: Pinned tracks or songs paused via **"Pause Show"** receive `sort_order = 0`, keeping them permanently locked at the front of the line (#1) when playback resumes.
 
 ### Singer Experience Features ([static/js/mobile-client.js](static/js/mobile-client.js))
+* **Pause Show BGM Failover (`POST /api/host/pause`)**: When the host pauses the show, the current live song is returned to `pending` with `sort_order = 0` (guaranteeing front-of-line retention at #1) while the stage instantly cross-fades into ambient BGM lounge filler. When the host unpauses or advances, the singer resumes without having to re-queue.
 * **Pause My Turn ("Step Away / On Break")**: Guests can toggle their status between `active` and `on_break` (`POST /api/singers/self-status`). While `on_break`, the stage engine skips over their queued songs without deleting them; when they tap **"I'm Back!"**, they resume at the front of the current round.
 * **Duplicate Song Advisory & 1-Tap Duet Joining**: When a guest selects a song (`GET /api/songs/check-duplicate`), the app checks if the track is:
   1. Currently playing on stage
@@ -334,6 +349,10 @@ The Host DJ can switch between three autonomous intermission modes on the fly:
 1. **🎤 True Karaoke (`sing_along` — Default)**: Plays crowd sing-along tracks (with lead vocals and on-screen lyrics) between singers and when the queue is empty.
 2. **📼 Pure Filler (`pure_filler`)**: Plays official music videos from the BGM Video Crate between singers.
 3. **🧠 Smart Mashup (`intelligent_mashup`)**: Plays crowd sing-alongs when the queue runs empty, and switches to music videos when the host manually pauses the stage.
+
+### Intermission Pacing Guarantee & Party Wrapped Showcase
+* **Guaranteed Intermission Countdown Pacing**: When the host skips or when a live song finishes, the stage engine enforces the full configured countdown duration (`intermission_seconds`, default 15s) with ambient BGM whenever pending queued songs exist, giving the next singer ample time to walk up to the microphone. When the queue is empty and the stage is in ambient BGM filler mode, skipping advances directly into the next BGM track without triggering an unnecessary countdown.
+* **"Stop Stage" Party Wrapped Showcase (`show_wrapped`)**: Clicking **"Stop Stage"** (`POST /api/host/stop`) broadcasts session recap metrics (`get_party_wrapped_stats()`) and displays an animated retro synthwave podium overlay on the TV Stage with procedural 80s BGM, celebrating total songs sung, top rockstars of the night, and crowd-favorite tracks.
 
 ### 4-Stage Smart Track Selection Algorithm ([`get_next_smart_filler_track`](database.py))
 When selecting the next intermission track, Tiki Karaoke evaluates every ready candidate in the crate using a 4-stage scoring pipeline:
@@ -470,7 +489,24 @@ Any key can be overridden via environment variables: `TIKI_PORT`, `TIKI_HOST_PIN
 ```text
 tiki-karaoke/
 ├── main.py                      # Application entry point, CLI tools, Smart Importer & CD+G Ripper GUIs
-├── app.py                       # FastAPI REST endpoints, WebSocket coordinator & Range media streamer
+├── app.py                       # FastAPI application coordinator & lifespan router
+├── routes/                      # Modular FastAPI endpoint routers
+│   ├── host_controls.py         # Host desk controls, loudness calibration & transport
+│   ├── queue.py                 # Song request submission, duet pairing & fair queue
+│   ├── library.py               # Local & online song search, cached search & song info
+│   ├── recordings.py            # Souvenir audio upload, FFmpeg MP3 encoding & ID3 tagging
+│   ├── setup.py                 # Setup wizard, hardware probing & tunnel configuration
+│   ├── launcher.py              # Desktop companion launchers (Rehearsal, Importer, Ripper)
+│   ├── stream.py                # HTTP range-request media streamer for video & CD+G
+│   └── pages.py                 # HTML template endpoints (/stage, /host, /join, /setup)
+├── services/                    # Autonomous background services & subsystems
+│   ├── playback.py              # Playback state machine, drift sync & countdown manager
+│   ├── library_cache.py         # In-memory fast search cache with TTL & thread-safe invalidation
+│   ├── network.py               # Robust IPv4 prioritization & dual-stack socket binding
+│   ├── websocket_manager.py     # ConnectionManager client registry & JSON envelope broadcaster
+│   ├── temporary_cache.py       # Temporary Cache Mode auto-cleanup of downloaded videos
+│   ├── lifecycle.py             # Startup checks & graceful shutdown handlers
+│   └── auth.py                  # Host PIN validation, session cookies & host tokens
 ├── database.py                  # Async SQLite WAL engine, Fair Round-Robin queue & 4-stage Vibe Engine
 ├── config.py                    # Multi-monitor geometry, audio device probing & configuration manager
 ├── audio_router.py              # Native OS mic loopback manager (Linux pactl / Windows WASAPI helper)
@@ -503,13 +539,13 @@ tiki-karaoke/
 ├── packaging/
 │   ├── aur/                     # Arch User Repository (PKGBUILD, .SRCINFO, tiki-karaoke.desktop)
 │   └── windows/                 # Windows WASAPI C router (tiki_mic_router.c), PyInstaller spec & Inno Setup
-└── tests/                       # 57 automated unit, API, CD+G, and system integration tests
+└── tests/                       # 64 automated unit, API, CD+G, and system integration tests
 ```
 
 ### Running the Automated Test Suite
 Tiki Karaoke includes an isolated test suite (`tests/`) that runs against temporary SQLite databases (`TIKI_TESTING=1`) without touching your personal library or configuration:
 ```bash
-# Run all 57 unit, API, CD+G, and system integration tests:
+# Run all 64 unit, API, CD+G, and system integration tests:
 ./venv/bin/python -m unittest discover tests -v
 
 # Run the deep end-to-end subsystem verification script:
