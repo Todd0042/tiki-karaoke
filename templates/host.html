@@ -258,7 +258,10 @@
             </div>
             <h2 id="intermissionSinger" class="font-tiki neon-pink" style="font-size: 4rem; margin: 10px 0;">Next Singer</h2>
             <h3 id="intermissionSong" class="neon-cyan" style="font-size: 2rem; font-weight: 400; margin: 5px 0;">Song Title</h3>
-            <div id="intermissionKey" class="badge-key" style="font-size: 1.1rem; margin-top: 8px;">Key: Standard</div>
+            <div style="display: flex; gap: 8px; align-items: center; justify-content: center; flex-wrap: wrap;">
+                <div id="intermissionKey" class="badge-key" style="font-size: 1.1rem; margin-top: 8px;">Key: Standard</div>
+                <div id="intermissionLufs" class="badge-key" style="font-size: 1.1rem; margin-top: 8px; display: none; background: rgba(0,240,255,0.15); border-color: rgba(0,240,255,0.4); color: var(--neon-cyan);">🎚️ -16.0 LUFS</div>
+            </div>
 
             <!-- Center Stage QR Code when Queue is Open (Dual Wi-Fi & Songbook Cards) -->
             <div id="idleStageQRBox" style="display: none; flex-direction: column; align-items: center; margin: 16px auto;">
@@ -305,6 +308,43 @@
                 <span id="countdownNumber">20</span>
             </div>
             <p id="intermissionSubtext" style="color: var(--text-muted); font-size: 1.1rem;">Get ready! Head up to the microphone! 🌺</p>
+        </div>
+
+        <!-- Party Wrapped Stage Showcase Overlay -->
+        <div id="wrappedOverlay" style="display: none; position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 22; flex-direction: column; align-items: center; justify-content: center; background: radial-gradient(circle at center, rgba(16, 28, 45, 0.96) 0%, rgba(5, 8, 15, 0.98) 100%); backdrop-filter: blur(12px); text-align: center; padding: 30px;">
+            <div style="margin-bottom: 8px;">
+                <span class="badge-youtube font-tiki" style="font-size: 1.15rem; padding: 8px 24px; background: rgba(255, 183, 3, 0.2); border: 2px solid var(--neon-gold); color: var(--neon-gold); border-radius: 24px; box-shadow: 0 0 25px rgba(255,183,3,0.4);">
+                    🌴 TONIGHT'S TIKI PARTY WRAPPED 🏆
+                </span>
+            </div>
+            <h1 class="font-tiki neon-gold" style="font-size: 3.8rem; margin: 12px 0 6px 0; text-shadow: 0 0 25px #ffb703;">
+                What a Legendary Party!
+            </h1>
+            <p style="color: var(--neon-cyan); font-size: 1.35rem; font-weight: 700; margin-bottom: 24px; letter-spacing: 0.5px;">
+                🎉 <span id="wrappedTotalSongs" style="color: #fff; font-size: 1.6rem; font-weight: 800;">0</span> Songs Performed Tonight!
+            </p>
+
+            <!-- Top Singers Podium -->
+            <div style="font-size: 0.9rem; font-weight: 800; letter-spacing: 1.5px; color: var(--neon-pink); text-transform: uppercase; margin-bottom: 12px;">
+                👑 TOP ROCKSTARS OF THE NIGHT
+            </div>
+            <div id="wrappedPodium" style="display: flex; gap: 20px; justify-content: center; align-items: stretch; flex-wrap: wrap; margin-bottom: 24px; max-width: 900px;">
+                <!-- Populated dynamically -->
+            </div>
+
+            <!-- Top Songs -->
+            <div style="background: rgba(16, 28, 45, 0.85); border: 1px solid rgba(0, 240, 255, 0.3); border-radius: 16px; padding: 14px 28px; max-width: 600px; width: 100%; margin-bottom: 18px;">
+                <div style="font-size: 0.82rem; font-weight: 800; letter-spacing: 1px; color: var(--neon-cyan); text-transform: uppercase; margin-bottom: 6px;">
+                    🔥 Crowd Favorite Anthems
+                </div>
+                <div id="wrappedTopSongs">
+                    <!-- Populated dynamically -->
+                </div>
+            </div>
+
+            <p style="color: var(--text-muted); font-size: 1.1rem; margin-top: 8px;">
+                Thank you for singing with us at the Tiki Karaoke Lounge! 🌺 Aloha!
+            </p>
         </div>
 
         <!-- BGM Filler 15s Open Mic Buffer Overlay -->
@@ -362,6 +402,7 @@
 
             <div style="display: flex; align-items: center; gap: 12px;">
                 <div id="nowPitchBadge" class="badge-key" style="display: none;">Key: Standard</div>
+                <div id="nowLufsBadge" class="badge-key" style="display: none; background: rgba(0,240,255,0.15); border-color: rgba(0,240,255,0.4); color: var(--neon-cyan);">🎚️ -16.0 LUFS</div>
             </div>
         </div>
 

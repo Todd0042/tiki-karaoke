@@ -228,6 +228,9 @@ function handleSocketMessage(data) {
         case "stop_track":
             stopCurrentTrack(data.next_track);
             break;
+        case "show_wrapped":
+            showPartyWrappedStage(data.stats);
+            break;
         case "queue_empty":
             skipCurrentTrack();
             stopIntermission();
@@ -502,12 +505,14 @@ function startTrackPlayback(track) {
 
     document.getElementById("nowPlayingBar").style.display = "flex";
     document.getElementById("intermissionOverlay").style.display = "none";
+    hidePartyWrappedStage();
     const fillerBuffer = document.getElementById("fillerBufferOverlay");
     if (fillerBuffer) fillerBuffer.style.display = "none";
     const singerText = track.duet_partner ? `${track.singer_name} & ${track.duet_partner}` : track.singer_name;
     document.getElementById("nowSinger").innerText = singerText;
     document.getElementById("nowTitle").innerText = `${track.artist} - ${track.title}`;
     updatePitchBadge(track.pitch_shift || 0);
+    updateLufsBadge(track.normalized_lufs);
 
     try {
         renderStageMarquee();
@@ -667,6 +672,7 @@ function resumePlayback() {
 
 function updatePitchBadge(pitch) {
     const badge = document.getElementById("nowPitchBadge");
+    if (!badge) return;
     if (pitch === 0) {
         badge.innerText = "Key: Standard";
         badge.style.display = "inline-block";
@@ -677,11 +683,24 @@ function updatePitchBadge(pitch) {
     }
 }
 
+function updateLufsBadge(lufs) {
+    const badge = document.getElementById("nowLufsBadge");
+    if (!badge) return;
+    if (typeof lufs === "number") {
+        badge.innerText = `🎚️ ${lufs.toFixed(1)} LUFS`;
+        badge.style.display = "inline-block";
+    } else {
+        badge.style.display = "none";
+    }
+}
+
 // Intermission & Countdown Timer
 function triggerIntermission(nextTrack, duration = 20) {
     isIntermission = true;
+    hidePartyWrappedStage();
     if (audioDSP) audioDSP.setBetweenSongs(true);
-    intermissionRemaining = duration;
+    // Guarantee full countdown duration if nextTrack is queued
+    intermissionRemaining = nextTrack ? (duration > 0 ? duration : 15) : 0;
     stopFillerPlayback();
 
     const overlay = document.getElementById("intermissionOverlay");
@@ -717,6 +736,16 @@ function triggerIntermission(nextTrack, duration = 20) {
         document.getElementById("intermissionSong").innerText = `${nextTrack.artist} - ${nextTrack.title}${saBadge}`;
         document.getElementById("intermissionKey").innerText = nextTrack.pitch_shift !== 0 ? `Key: ${nextTrack.pitch_shift > 0 ? '+' : ''}${nextTrack.pitch_shift}` : "Key: Standard";
 
+        const lufsEl = document.getElementById("intermissionLufs");
+        if (lufsEl) {
+            if (typeof nextTrack.normalized_lufs === "number") {
+                lufsEl.innerText = `🎚️ ${nextTrack.normalized_lufs.toFixed(1)} LUFS`;
+                lufsEl.style.display = "inline-block";
+            } else {
+                lufsEl.style.display = "none";
+            }
+        }
+
         // Virtual DJ TTS Announcer (if enabled)
         speakAnnouncerIntro(nextSingerText, nextTrack.title);
     } else {
@@ -728,6 +757,8 @@ function triggerIntermission(nextTrack, duration = 20) {
         document.getElementById("intermissionSinger").innerText = "Queue is Open!";
         document.getElementById("intermissionSong").innerText = "The stage is yours! Pick your favorite song!";
         document.getElementById("intermissionKey").innerText = "";
+        const lufsEl = document.getElementById("intermissionLufs");
+        if (lufsEl) lufsEl.style.display = "none";
     }
 
     updateCountdownDisplay();
@@ -746,6 +777,7 @@ function triggerIntermission(nextTrack, duration = 20) {
 
 function stopCurrentTrack(nextTrack) {
     stopCdgPlayback();
+    hidePartyWrappedStage();
     if (audioDSP && audioDSP.mediaRecorder && audioDSP.mediaRecorder.state !== "inactive") {
         audioDSP.stopAndUploadPerformanceRecording();
     }
@@ -799,6 +831,15 @@ function stopCurrentTrack(nextTrack) {
         document.getElementById("intermissionSinger").innerText = nextSingerText;
         document.getElementById("intermissionSong").innerText = `${nextTrack.artist} - ${nextTrack.title}`;
         document.getElementById("intermissionKey").innerText = nextTrack.pitch_shift !== 0 ? `Key: ${nextTrack.pitch_shift > 0 ? '+' : ''}${nextTrack.pitch_shift}` : "Key: Standard";
+        const lufsEl = document.getElementById("intermissionLufs");
+        if (lufsEl) {
+            if (typeof nextTrack.normalized_lufs === "number") {
+                lufsEl.innerText = `🎚️ ${nextTrack.normalized_lufs.toFixed(1)} LUFS`;
+                lufsEl.style.display = "inline-block";
+            } else {
+                lufsEl.style.display = "none";
+            }
+        }
     } else {
         if (idleQRBox) idleQRBox.style.display = "flex";
         if (upNextBadge) upNextBadge.style.display = "none";
@@ -807,7 +848,75 @@ function stopCurrentTrack(nextTrack) {
         document.getElementById("intermissionSinger").innerText = "Queue is Open!";
         document.getElementById("intermissionSong").innerText = "The stage is yours! Pick your favorite song!";
         document.getElementById("intermissionKey").innerText = "";
+        const lufsEl = document.getElementById("intermissionLufs");
+        if (lufsEl) lufsEl.style.display = "none";
     }
+}
+
+function showPartyWrappedStage(stats) {
+    stopCdgPlayback();
+    stopFillerPlayback();
+    stopIntermission();
+    if (audioDSP && audioDSP.mediaRecorder && audioDSP.mediaRecorder.state !== "inactive") {
+        audioDSP.stopAndUploadPerformanceRecording();
+    }
+    const localVideo = document.getElementById("localVideo");
+    if (localVideo) {
+        localVideo.pause();
+        localVideo.style.display = "none";
+        localVideo.removeAttribute("src");
+        localVideo.load();
+    }
+    const ytContainer = document.getElementById("youtubeContainer");
+    if (ytContainer) ytContainer.style.display = "none";
+    if (ytPlayer && ytPlayer.stopVideo) ytPlayer.stopVideo();
+
+    const nowPlayingBar = document.getElementById("nowPlayingBar");
+    if (nowPlayingBar) nowPlayingBar.style.display = "none";
+
+    fadeInBGM();
+
+    const wrappedOverlay = document.getElementById("wrappedOverlay");
+    if (!wrappedOverlay) return;
+
+    const totalEl = document.getElementById("wrappedTotalSongs");
+    if (totalEl) totalEl.innerText = (stats && stats.total_songs) ? stats.total_songs : 0;
+
+    const podiumEl = document.getElementById("wrappedPodium");
+    if (podiumEl) {
+        if (stats && stats.top_singers && stats.top_singers.length > 0) {
+            const medals = ["🥇", "🥈", "🥉"];
+            podiumEl.innerHTML = stats.top_singers.map((s, idx) => `
+                <div style="background: rgba(16,28,45,0.92); border: 2px solid ${idx === 0 ? 'var(--neon-gold)' : (idx === 1 ? 'var(--neon-cyan)' : 'var(--neon-pink)')}; border-radius: 18px; padding: 16px 20px; text-align: center; min-width: 170px; box-shadow: 0 0 25px rgba(0,0,0,0.5);">
+                    <div style="font-size: 2.2rem; margin-bottom: 4px;">${medals[idx] || '🎖️'} ${s.avatar || '🎤'}</div>
+                    <div style="font-weight: 800; font-size: 1.25rem; color: #fff;">${escapeHtml(s.name)}</div>
+                    <div style="color: var(--neon-gold); font-size: 0.95rem; font-weight: 700; margin-top: 4px;">${s.song_count} songs</div>
+                </div>
+            `).join("");
+        } else {
+            podiumEl.innerHTML = `<div style="color: var(--text-muted); font-size: 1.1rem;">No songs completed yet tonight!</div>`;
+        }
+    }
+
+    const songsEl = document.getElementById("wrappedTopSongs");
+    if (songsEl) {
+        if (stats && stats.top_songs && stats.top_songs.length > 0) {
+            songsEl.innerHTML = stats.top_songs.map((song, idx) => `
+                <div style="font-size: 1.05rem; color: #fff; margin: 4px 0;">
+                    <span style="color: var(--neon-pink); font-weight: 700;">#${idx+1}</span> ${escapeHtml(song.title)} <span style="color: var(--neon-cyan);">(${escapeHtml(song.artist)})</span>
+                </div>
+            `).join("");
+        } else {
+            songsEl.innerHTML = `<div style="color: var(--text-muted);">No song history recorded yet.</div>`;
+        }
+    }
+
+    wrappedOverlay.style.display = "flex";
+}
+
+function hidePartyWrappedStage() {
+    const wrappedOverlay = document.getElementById("wrappedOverlay");
+    if (wrappedOverlay) wrappedOverlay.style.display = "none";
 }
 
 function stopIntermission() {

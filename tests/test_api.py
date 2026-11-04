@@ -1741,6 +1741,65 @@ class TestAPIEndpoints(unittest.TestCase):
                 else:
                     os.environ["APPDIR"] = old_appdir
 
+    def test_pause_show_moves_to_bgm_filler_and_retains_front_position(self):
+        from database import get_or_create_singer, save_track, enqueue_song, get_current_playing, get_queue
+        from config import HOST_TOKEN
+        # 1. Enqueue two songs
+        s = get_or_create_singer("s_pause_tok", "Pause Singer", "🎤")
+        t1 = save_track("v_p1", "Pause Song 1", "Artist P", "Artist P - Pause Song 1")
+        t2 = save_track("v_p2", "Pause Song 2", "Artist P", "Artist P - Pause Song 2")
+        q1 = enqueue_song(t1, s["id"])
+        q2 = enqueue_song(t2, s["id"])
+
+        # Start playing Song 1
+        self.client.post(f"/api/queue/{q1}/play", headers={"X-Host-Token": HOST_TOKEN})
+        curr = get_current_playing()
+        self.assertIsNotNone(curr)
+        self.assertEqual(curr["queue_id"], q1)
+
+        # Pause Show
+        res = self.client.post("/api/host/toggle-pause", headers={"X-Host-Token": HOST_TOKEN})
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json()["action"], "paused_to_filler")
+
+        # Now playing should be None
+        self.assertIsNone(get_current_playing())
+
+        # Song 1 must still be #1 at the front of the queue
+        q = get_queue()
+        self.assertEqual(len(q), 2)
+        self.assertEqual(q[0]["queue_id"], q1)
+        self.assertEqual(q[0]["status"], "pending")
+
+        # Resuming show triggers intermission countdown for Song 1
+        res_resume = self.client.post("/api/host/toggle-pause", headers={"X-Host-Token": HOST_TOKEN})
+        self.assertEqual(res_resume.status_code, 200)
+        self.assertEqual(res_resume.json()["action"], "resumed_to_intermission")
+
+    def test_stop_stage_wrapped_action(self):
+        from database import set_setting
+        from config import HOST_TOKEN
+        set_setting("stop_stage_action", "wrapped")
+        res = self.client.post("/api/host/stop", headers={"X-Host-Token": HOST_TOKEN})
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json()["action"], "wrapped")
+
+    def test_renormalize_track_and_audit_endpoints(self):
+        from database import save_track, update_track_download_status
+        from config import HOST_TOKEN
+        # Save a track and mark as -23.0 LUFS
+        t = save_track("v_loud_test", "Loud Test", "Artist L", "Artist L - Loud Test")
+        update_track_download_status(t, "ready", local_path="/tmp/dummy.mp4", normalized_lufs=-23.0)
+
+        # Audit endpoint detects it differs from target (-16.0)
+        res_audit = self.client.get("/api/host/tracks/renormalize-audit?target_lufs=-16.0", headers={"X-Host-Token": HOST_TOKEN})
+        self.assertEqual(res_audit.status_code, 200)
+        audit_data = res_audit.json()
+        self.assertGreaterEqual(audit_data["count"], 1)
+        matching = [x for x in audit_data["tracks"] if x["id"] == t]
+        self.assertEqual(len(matching), 1)
+        self.assertEqual(matching[0]["normalized_lufs"], -23.0)
+
 if __name__ == "__main__":
     unittest.main()
 

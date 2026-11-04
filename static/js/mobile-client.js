@@ -611,6 +611,15 @@ function initWebSocket() {
                     }
                 }
                 renderQueue(currentQueueCache);
+            } else if (data.type === "renormalize_progress") {
+                if (isHost) {
+                    showToast(`🎚️ Calibrating [${data.current}/${data.total}]: "${data.title}" (${data.percent}%)`);
+                }
+            } else if (data.type === "renormalize_complete") {
+                if (isHost) {
+                    showToast(`✅ Audio calibration complete for ${data.total} tracks!`);
+                    loadLiveQueue();
+                }
             } else if (data.type === "host_alert") {
                 if (isHost) {
                     showToast(`⚠️ ${data.message}`);
@@ -1419,6 +1428,14 @@ function renderQueue(queue) {
             ? `<div style="font-size: 0.76rem; color: var(--neon-gold); font-style: italic; margin-top: 3px;">💌 "${escapeHtml(item.dedication)}"</div>`
             : '';
 
+        const lufsVal = typeof item.normalized_lufs === "number" ? item.normalized_lufs : -16.0;
+        const isLufsOff = Math.abs(lufsVal - (-16.0)) > 1.5;
+        const lufsBadge = isHost ? `
+            <span class="badge" style="background: ${isLufsOff ? 'rgba(255, 170, 0, 0.2)' : 'rgba(0, 240, 255, 0.15)'}; color: ${isLufsOff ? 'var(--neon-gold)' : 'var(--neon-cyan)'}; border: 1px solid ${isLufsOff ? 'var(--neon-gold)' : 'rgba(0, 240, 255, 0.4)'}; font-size: 0.72rem; padding: 2px 6px; border-radius: 4px; cursor: pointer;" title="Normalized Loudness: ${lufsVal.toFixed(1)} LUFS (Tap to Re-normalize to target)" onclick="hostRenormalizeTrackPrompt(${item.track_id}, '${escapeHtml(item.title)}')">
+                🎚️ ${lufsVal.toFixed(1)} LUFS${isLufsOff ? ' ⚡' : ''}
+            </span>
+        ` : '';
+
         card.innerHTML = `
             <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px;">
                 <div style="display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0;">
@@ -1438,6 +1455,7 @@ function renderQueue(queue) {
                         <div style="display: flex; gap: 6px; align-items: center; margin-top: 4px; flex-wrap: wrap;">
                             <span class="badge-key">${pitchText}</span>
                             ${item.is_sing_along ? '<span class="badge-sing-along">🎙️ Sing-Along</span>' : ''}
+                            ${lufsBadge}
                         </div>
                     </div>
                 </div>
@@ -2016,11 +2034,93 @@ function hostSkip() {
 }
 
 function hostPauseResume() {
-    fetch("/api/host/toggle-pause", { method: "POST" });
+    fetch("/api/host/toggle-pause", { method: "POST" })
+        .then(r => r.json())
+        .then(data => {
+            if (data.action === "paused_to_filler") {
+                showToast("⏸️ Show paused! DJ Lounge music playing on stage.");
+            } else if (data.action === "resumed_to_intermission") {
+                showToast("▶️ Resuming show! Intermission countdown started.");
+            }
+            loadLiveQueue();
+        })
+        .catch(err => console.error("Pause/resume error:", err));
 }
 
 function hostStop() {
-    fetch("/api/host/stop", { method: "POST" });
+    fetch("/api/host/stop", { method: "POST" })
+        .then(r => r.json())
+        .then(data => {
+            if (data.action === "wrapped") {
+                showToast("🏆 Showing Tonight's Party Wrapped on Stage!");
+            } else {
+                showToast("⏹️ Stage stopped and placed on standby");
+            }
+            loadLiveQueue();
+        })
+        .catch(err => console.error("Stop error:", err));
+}
+
+function hostRenormalizeTrackPrompt(trackId, title) {
+    if (!confirm(`Re-normalize audio for "${title}" to target LUFS?`)) return;
+    fetch(`/api/host/tracks/${trackId}/renormalize`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({})
+    })
+    .then(r => r.json())
+    .then(res => {
+        if (res.status === "ok") {
+            showToast(`🎚️ Re-normalized "${title}" to ${res.normalized_lufs} LUFS!`);
+            loadLiveQueue();
+        } else {
+            showToast("Failed to re-normalize track");
+        }
+    })
+    .catch(err => {
+        console.error(err);
+        showToast("Error re-normalizing track");
+    });
+}
+
+function openRenormalizeWizardModal() {
+    fetch("/api/host/tracks/renormalize-audit")
+        .then(r => r.json())
+        .then(data => {
+            const count = data.count || 0;
+            const target = data.target_lufs || -16.0;
+            if (count === 0) {
+                alert(`✅ All local tracks are already calibrated to target (${target} LUFS)!`);
+                return;
+            }
+            if (confirm(`Found ${count} tracks with audio level differing from target (${target} LUFS).\n\nStart background loudness calibration?`)) {
+                runBatchRenormalize(target);
+            }
+        })
+        .catch(err => {
+            console.error(err);
+            showToast("Error checking track calibration");
+        });
+}
+
+function runBatchRenormalize(targetLufs) {
+    fetch("/api/host/tracks/renormalize-batch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ target_lufs: targetLufs })
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === "already_running") {
+            showToast("⏳ Loudness calibration is already running in background!");
+        } else {
+            showToast("🚀 Started loudness calibration in background!");
+        }
+    })
+    .catch(err => {
+        console.error(err);
+        showToast("Error starting batch calibration");
+    });
 }
 
 function hostStartNow() {

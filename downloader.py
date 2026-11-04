@@ -78,6 +78,38 @@ def normalize_audio_loudness(input_path: Path, output_path: Path, target_lufs: f
         print(f"[Downloader] Loudnorm error: {e}")
         return False
 
+def renormalize_local_track(track_id: int, target_lufs: float = TARGET_LUFS) -> bool:
+    """Re-normalizes an existing local track audio stream to the specified target LUFS."""
+    from database import get_track_by_id, update_track_lufs
+    track = get_track_by_id(track_id)
+    if not track or not track.get("local_path"):
+        return False
+    local_path = Path(track["local_path"])
+    if not local_path.exists():
+        return False
+
+    temp_path = local_path.with_name(f"renorm_{track_id}_{local_path.name}")
+    try:
+        ok = normalize_audio_loudness(local_path, temp_path, target_lufs=target_lufs)
+        if ok and temp_path.exists() and temp_path.stat().st_size > 1000:
+            temp_path.replace(local_path)
+            update_track_lufs(track_id, target_lufs)
+            try:
+                from services.library_cache import invalidate_library_cache
+                invalidate_library_cache()
+            except Exception:
+                pass
+            return True
+        else:
+            if temp_path.exists():
+                temp_path.unlink()
+            return False
+    except Exception as e:
+        print(f"[Downloader] Error renormalizing track {track_id}: {e}")
+        if temp_path.exists():
+            temp_path.unlink()
+        return False
+
 def download_and_normalize_track(
     track_id: int,
     pending_id: Optional[int] = None,

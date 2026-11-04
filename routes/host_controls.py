@@ -47,6 +47,7 @@ from config import (
     get_library_dir,
     get_user_data_root,
     load_config,
+    TARGET_LUFS,
 )
 from database import (
     add_filler_track,
@@ -54,6 +55,7 @@ from database import (
     delete_filler_track,
     get_all_settings,
     get_current_playing,
+    get_db,
     get_filler_track_by_id,
     get_filler_track_by_video_id,
     get_filler_tracks,
@@ -63,6 +65,7 @@ from database import (
     get_setting,
     get_singers_with_queue,
     get_track_by_id,
+    get_tracks_needing_renormalization,
     import_local_filler_track,
     import_local_track,
     purge_all_singers,
@@ -73,8 +76,9 @@ from database import (
     set_setting,
     set_singer_status,
     update_filler_track_status,
+    update_track_lufs,
 )
-from downloader import enqueue_filler_download
+from downloader import enqueue_filler_download, renormalize_local_track
 from metadata import fetch_track_metadata
 from playlist_sync import is_authenticated as is_yt_authenticated, sync_played_song_to_youtube
 from routes.queue import SingerStatusRequest
@@ -396,6 +400,8 @@ async def host_skip_action(request: Request):
         pending = [q for q in queue if q["status"] == "pending"]
         if pending:
             dur = int(get_setting("intermission_seconds", str(DEFAULT_INTERMISSION_SECONDS)))
+            if dur <= 0:
+                dur = DEFAULT_INTERMISSION_SECONDS or 15
             playback.set_intermission_end(time.time() + dur)
             await manager.broadcast({
                 "type": "start_intermission",
@@ -417,13 +423,15 @@ async def host_skip_action(request: Request):
         maybe_cleanup_temporary_track(skipped_track_id)
         await manager.broadcast({"type": "skip_track"})
         queue = get_queue()
-        pending = [q for q in queue if q["status"] == "pending"]
-        if pending:
+        remaining_pending = [q for q in queue if q["status"] == "pending"]
+        if remaining_pending:
             dur = int(get_setting("intermission_seconds", str(DEFAULT_INTERMISSION_SECONDS)))
+            if dur <= 0:
+                dur = DEFAULT_INTERMISSION_SECONDS or 15
             playback.set_intermission_end(time.time() + dur)
             await manager.broadcast({
                 "type": "start_intermission",
-                "next_track": pending[0],
+                "next_track": remaining_pending[0],
                 "duration": dur
             })
         else:
@@ -435,6 +443,7 @@ async def host_skip_action(request: Request):
         return {"status": "ok"}
 
     else:
+        # No queue: skip to the next BGM track directly (NO artificial countdown)
         bgm_video_on = get_setting("bgm_video_enabled", "true") == "true"
         current_id = playback.filler_current_track.get("id") if playback.filler_current_track else None
         last_artist = playback.filler_current_track.get("artist", "") if playback.filler_current_track else ""
@@ -483,16 +492,26 @@ async def host_stop_action(request: Request):
     pending = [q for q in queue if q["status"] == "pending"]
     next_track = pending[0] if pending else None
 
-    await manager.broadcast({
-        "type": "stop_track",
-        "next_track": next_track
-    })
-    await manager.broadcast({"type": "queue_updated", "queue": queue})
+    stop_action = get_setting("stop_stage_action", "wrapped")
+    if stop_action == "wrapped":
+        stats = get_party_wrapped_stats()
+        await manager.broadcast({
+            "type": "show_wrapped",
+            "stats": stats
+        })
+        await manager.broadcast({"type": "queue_updated", "queue": queue})
+        return {"status": "ok", "action": "wrapped"}
+    else:
+        await manager.broadcast({
+            "type": "stop_track",
+            "next_track": next_track
+        })
+        await manager.broadcast({"type": "queue_updated", "queue": queue})
 
-    if get_setting("bgm_video_enabled", "true") == "true":
-        await playback.trigger_filler_sequence(is_paused=True)
+        if get_setting("bgm_video_enabled", "true") == "true":
+            await playback.trigger_filler_sequence(is_paused=True)
 
-    return {"status": "ok"}
+        return {"status": "ok", "action": "stopped"}
 
 
 # ------------------------------------------------------------------------------
@@ -889,14 +908,134 @@ async def host_pause_action(request: Request):
     if not is_host_request(request):
         raise HTTPException(status_code=403, detail="Host DJ authorization required")
     current = get_current_playing()
-    if not current:
-        queue = get_queue()
-        pending = [q for q in queue if q["status"] == "pending"]
-        if pending:
-            await api_play_queue_item(pending[0]["queue_id"], request)
-            return {"status": "ok", "action": "started"}
-    await manager.broadcast({"type": "pause_track"})
-    return {"status": "ok"}
+    queue = get_queue()
+    pending = [q for q in queue if q["status"] == "pending"]
+
+    if current:
+        # Pause Show: Move to BGM filler, keeping current track at the very front of the line
+        set_queue_status(current["queue_id"], "pending")
+        conn = get_db()
+        with conn:
+            conn.execute("UPDATE queue SET sort_order = 0 WHERE id = ?", (current["queue_id"],))
+        conn.close()
+
+        playback.set_intermission_end(None)
+        updated_queue = get_queue()
+        top_track = updated_queue[0] if updated_queue else current
+
+        await manager.broadcast({
+            "type": "stop_track",
+            "next_track": top_track,
+            "paused_show": True
+        })
+        await manager.broadcast({"type": "queue_updated", "queue": updated_queue})
+
+        if get_setting("bgm_video_enabled", "true") == "true":
+            await playback.trigger_filler_sequence(is_paused=True)
+        else:
+            await manager.broadcast({"type": "skip_bgm"})
+
+        return {"status": "ok", "action": "paused_to_filler"}
+    elif pending:
+        # Resuming show: Start configured intermission countdown for #1 in line!
+        dur = int(get_setting("intermission_seconds", str(DEFAULT_INTERMISSION_SECONDS)))
+        if dur <= 0:
+            dur = DEFAULT_INTERMISSION_SECONDS or 15
+        playback.set_intermission_end(time.time() + dur)
+        await manager.broadcast({
+            "type": "start_intermission",
+            "next_track": pending[0],
+            "duration": dur
+        })
+        return {"status": "ok", "action": "resumed_to_intermission"}
+    else:
+        await manager.broadcast({"type": "pause_track"})
+        return {"status": "ok"}
+
+
+@router.post("/api/host/tracks/{track_id}/renormalize")
+async def host_renormalize_track(track_id: int, request: Request):
+    if not is_host_request(request):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    target = float(data.get("target_lufs", TARGET_LUFS))
+    success = await asyncio.to_thread(renormalize_local_track, track_id, target)
+    if not success:
+        raise HTTPException(status_code=400, detail="Failed to re-normalize track audio")
+    await manager.broadcast({"type": "queue_updated", "queue": get_queue()})
+    return {"status": "ok", "track_id": track_id, "normalized_lufs": target}
+
+
+@router.get("/api/host/tracks/renormalize-audit")
+async def host_renormalize_audit(request: Request, target_lufs: Optional[float] = None, tolerance: float = 0.5):
+    if not is_host_request(request):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
+    tgt = target_lufs if target_lufs is not None else TARGET_LUFS
+    tracks = get_tracks_needing_renormalization(tgt, tolerance)
+    return {
+        "target_lufs": tgt,
+        "count": len(tracks),
+        "tracks": tracks
+    }
+
+
+_batch_renorm_lock = threading.Lock()
+_batch_renorm_running = False
+
+@router.post("/api/host/tracks/renormalize-batch")
+async def host_renormalize_batch(request: Request):
+    global _batch_renorm_running
+    if not is_host_request(request):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    target = float(data.get("target_lufs", TARGET_LUFS))
+    tolerance = float(data.get("tolerance", 0.5))
+
+    with _batch_renorm_lock:
+        if _batch_renorm_running:
+            return {"status": "already_running"}
+        _batch_renorm_running = True
+
+    def run_batch():
+        global _batch_renorm_running
+        try:
+            candidates = get_tracks_needing_renormalization(target, tolerance)
+            total = len(candidates)
+            for idx, trk in enumerate(candidates):
+                renormalize_local_track(trk["id"], target)
+                pct = round(((idx + 1) / total) * 100.0, 1) if total > 0 else 100.0
+                try:
+                    loop = asyncio.new_event_loop()
+                    loop.run_until_complete(manager.broadcast({
+                        "type": "renormalize_progress",
+                        "current": idx + 1,
+                        "total": total,
+                        "percent": pct,
+                        "title": trk.get("title", "")
+                    }))
+                    loop.close()
+                except Exception:
+                    pass
+            try:
+                loop = asyncio.new_event_loop()
+                loop.run_until_complete(manager.broadcast({"type": "renormalize_complete", "total": total}))
+                loop.run_until_complete(manager.broadcast({"type": "queue_updated", "queue": get_queue()}))
+                loop.close()
+            except Exception:
+                pass
+        except Exception as e:
+            print(f"[HostControls] Batch renormalization error: {e}")
+        finally:
+            _batch_renorm_running = False
+
+    threading.Thread(target=run_batch, daemon=True).start()
+    return {"status": "started", "target_lufs": target}
 
 
 @router.post("/api/host/start-now")

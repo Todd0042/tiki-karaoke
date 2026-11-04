@@ -708,6 +708,24 @@ def update_track_metadata(track_id: int, genre: str = "", release_year: int = 0)
         """, (genre, genre, release_year, release_year, track_id))
     conn.close()
 
+def update_track_lufs(track_id: int, normalized_lufs: float):
+    conn = get_db()
+    with conn:
+        conn.execute("UPDATE tracks SET normalized_lufs = ? WHERE id = ?", (normalized_lufs, track_id))
+    conn.close()
+
+def get_tracks_needing_renormalization(target_lufs: float = -16.0, tolerance: float = 0.5) -> List[Dict[str, Any]]:
+    conn = get_db()
+    cursor = conn.execute("""
+        SELECT id, video_id, title, artist, local_path, normalized_lufs
+        FROM tracks
+        WHERE is_downloaded = 1 AND local_path != '' AND (abs(coalesce(normalized_lufs, 0) - ?) > ?)
+        ORDER BY artist ASC, title ASC
+    """, (target_lufs, tolerance))
+    rows = [dict(r) for r in cursor.fetchall()]
+    conn.close()
+    return rows
+
 def import_local_track(
     file_path: str,
     title: str,
@@ -984,6 +1002,7 @@ def get_queue() -> List[Dict[str, Any]]:
             t.is_downloaded,
             t.local_path,
             t.download_status,
+            coalesce(t.normalized_lufs, -16.0) as normalized_lufs,
             coalesce(t.is_sing_along, 0) as is_sing_along,
             coalesce(t.media_type, 'video') as media_type,
             coalesce(t.cdg_path, '') as cdg_path,
@@ -1364,6 +1383,7 @@ def get_current_playing() -> Optional[Dict[str, Any]]:
             t.duration,
             t.is_downloaded,
             t.local_path,
+            coalesce(t.normalized_lufs, -16.0) as normalized_lufs,
             coalesce(t.is_sing_along, 0) as is_sing_along,
             coalesce(t.media_type, 'video') as media_type,
             coalesce(t.cdg_path, '') as cdg_path,
