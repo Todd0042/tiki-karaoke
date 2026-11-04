@@ -47,7 +47,8 @@ from config import (
 )
 from app import (
     LOCAL_IP, PUBLIC_IP, get_base_url, get_public_host,
-    register_shutdown_trigger, register_focus_hub_trigger, register_tunnel_reload_trigger
+    register_shutdown_trigger, register_focus_hub_trigger, register_tunnel_reload_trigger,
+    register_launch_importer_trigger, register_launch_cdg_ripper_trigger
 )
 from tray import start_tray, stop_tray
 
@@ -1340,7 +1341,17 @@ def main():
         if active_hub:
             active_hub.show_window()
 
+    def launch_in_app_importer():
+        if active_hub and active_hub.root:
+            active_hub.root.after_idle(active_hub._launch_importer)
+
+    def launch_in_app_cdg_ripper():
+        if active_hub and active_hub.root:
+            active_hub.root.after_idle(active_hub._launch_cdg_ripper)
+
     register_focus_hub_trigger(show_active_hub)
+    register_launch_importer_trigger(launch_in_app_importer)
+    register_launch_cdg_ripper_trigger(launch_in_app_cdg_ripper)
 
     if not args.no_tray:
         tray_urls = {

@@ -407,102 +407,57 @@ class TikiControlHub:
         threading.Thread(target=_call, daemon=True).start()
 
     def _launch_importer(self):
-        def _call():
-            # 1. Try launching in-process directly (fastest, guaranteed inside standalone AppImage / EXE)
-            try:
-                from importer.ui.app_window import TikiImporterApp
-                from app import get_db_path, get_tracks_dir
-                self.root.after(0, lambda: TikiImporterApp(initial_folder=str(get_tracks_dir()), initial_db=str(get_db_path())))
-                self._flash_toast("🚀 Smart Media Importer launched!")
-                return
-            except Exception as direct_err:
-                pass
+        try:
+            if hasattr(self, "_importer_app") and self._importer_app:
+                win = getattr(self._importer_app, "root", None)
+                if win and win.winfo_exists():
+                    win.deiconify()
+                    win.lift()
+                    win.focus_force()
+                    self._flash_toast("📂 Smart Media Importer focused!")
+                    return
 
-            # 2. Fallback to API route
-            try:
-                import urllib.request
-                import json
-                port = self.urls.get("port", "8000")
-                url = f"http://127.0.0.1:{port}/api/host/launch-importer"
-                req = urllib.request.Request(
-                    url,
-                    data=b"{}",
-                    headers={"Content-Type": "application/json", "User-Agent": "TikiHub/1.0"},
-                    method="POST"
-                )
-                with urllib.request.urlopen(req, timeout=5) as resp:
-                    if resp.status == 200:
-                        self._flash_toast("🚀 Smart Media Importer launched!")
-                        return
-            except Exception as e:
-                try:
-                    from app import find_importer_executable, get_db_path, get_tracks_dir
-                    found = find_importer_executable()
-                    if found:
-                        cmd_base, work_dir = found
-                        cmd = list(cmd_base) + ["--db", str(get_db_path()), "--folder", str(get_tracks_dir())]
-                        if sys.platform == "win32":
-                            flags = 0x00000008 | subprocess.CREATE_NEW_PROCESS_GROUP
-                            subprocess.Popen(cmd, cwd=str(work_dir) if work_dir else None, creationflags=flags)
-                        else:
-                            subprocess.Popen(cmd, cwd=str(work_dir) if work_dir else None, start_new_session=True)
-                        self._flash_toast("🚀 Smart Media Importer launched!")
-                        return
-                except Exception:
-                    pass
-                if HAS_GUI:
-                    self.root.after(0, lambda: messagebox.showerror("Smart Importer", f"Could not launch Smart Importer:\n{e}"))
+            from importer.ui.app_window import TikiImporterApp
+            from app import get_db_path, get_tracks_dir
 
-        threading.Thread(target=_call, daemon=True).start()
+            db_p = str(get_db_path())
+            tracks_p = str(get_tracks_dir())
+            self._importer_app = TikiImporterApp(initial_folder=tracks_p, initial_db=db_p, parent=self.root)
+            self._importer_app.run()
+            self._flash_toast("🚀 Smart Media Importer opened!")
+        except Exception as e:
+            print(f"[Control Hub] Failed to open Smart Importer: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
+            if HAS_GUI and self.root:
+                messagebox.showerror("Smart Importer", f"Could not open Smart Media Importer:\n{e}")
 
     def _launch_cdg_ripper(self):
-        def _call():
-            # 1. Try launching in-process directly (fastest, guaranteed inside standalone AppImage / EXE)
-            try:
-                from importer.ui.cdg_ripper_window import CdgRipperWindow
-                from app import get_tracks_dir
-                self.root.after(0, lambda: CdgRipperWindow(target_tracks_dir=str(get_tracks_dir())))
-                self._flash_toast("📀 CD+G Disc Ripper launched!")
-                return
-            except Exception as direct_err:
-                pass
+        try:
+            if hasattr(self, "_ripper_app") and self._ripper_app:
+                win = getattr(self._ripper_app, "win", None)
+                if win and win.winfo_exists():
+                    win.deiconify()
+                    win.lift()
+                    win.focus_force()
+                    self._flash_toast("📀 CD+G Disc Ripper focused!")
+                    return
 
-            # 2. Fallback to API route
-            try:
-                import urllib.request
-                import json
-                port = self.urls.get("port", "8000")
-                url = f"http://127.0.0.1:{port}/api/host/launch-cdg-ripper"
-                req = urllib.request.Request(
-                    url,
-                    data=b"{}",
-                    headers={"Content-Type": "application/json", "User-Agent": "TikiHub/1.0"},
-                    method="POST"
-                )
-                with urllib.request.urlopen(req, timeout=5) as resp:
-                    if resp.status == 200:
-                        self._flash_toast("📀 CD+G Disc Ripper launched!")
-                        return
-            except Exception as e:
-                try:
-                    from app import find_importer_executable, get_tracks_dir
-                    found = find_importer_executable()
-                    if found:
-                        cmd_base, work_dir = found
-                        cmd = list(cmd_base) + ["--cdg-ripper", "--folder", str(get_tracks_dir())]
-                        if sys.platform == "win32":
-                            flags = 0x00000008 | subprocess.CREATE_NEW_PROCESS_GROUP
-                            subprocess.Popen(cmd, cwd=str(work_dir) if work_dir else None, creationflags=flags)
-                        else:
-                            subprocess.Popen(cmd, cwd=str(work_dir) if work_dir else None, start_new_session=True)
-                        self._flash_toast("📀 CD+G Disc Ripper launched!")
-                        return
-                except Exception:
-                    pass
-                if HAS_GUI:
-                    self.root.after(0, lambda: messagebox.showerror("CD+G Ripper", f"Could not launch CD+G Ripper:\n{e}"))
+            from importer.ui.cdg_ripper_window import CdgRipperWindow
+            from app import get_tracks_dir
 
-        threading.Thread(target=_call, daemon=True).start()
+            tracks_p = str(get_tracks_dir())
+            self._ripper_app = CdgRipperWindow(parent=self.root, target_tracks_dir=tracks_p)
+            self._ripper_app.win.deiconify()
+            self._ripper_app.win.lift()
+            self._ripper_app.win.focus_force()
+            self._flash_toast("📀 CD+G Disc Ripper opened!")
+        except Exception as e:
+            print(f"[Control Hub] Failed to open CD+G Ripper: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
+            if HAS_GUI and self.root:
+                messagebox.showerror("CD+G Ripper", f"Could not open CD+G Ripper:\n{e}")
 
     def _launch_rehearsal_lounge(self):
         def _call():

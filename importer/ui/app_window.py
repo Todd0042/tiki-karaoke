@@ -26,11 +26,17 @@ if HAS_GUI:
 
 
 class TikiImporterApp:
-    def __init__(self, initial_folder: Optional[str] = None, initial_db: Optional[str] = None):
+    def __init__(self, initial_folder: Optional[str] = None, initial_db: Optional[str] = None, parent: Optional[Any] = None):
         if not HAS_GUI:
             raise RuntimeError(f"Tkinter GUI is unavailable: {_gui_import_error}")
 
-        self.root = tk.Tk()
+        self.parent = parent
+        if parent:
+            self.root = tk.Toplevel(parent)
+            self.root.transient(parent)
+        else:
+            self.root = tk.Tk()
+
         self.root.title("🌴 Tiki Karaoke — Smart Library Importer")
         self.root.geometry("1020x720")
         self.root.minsize(860, 580)
@@ -539,4 +545,11 @@ class TikiImporterApp:
 
     def run(self):
         """Starts the Tkinter UI event loop."""
-        self.root.mainloop()
+        try:
+            self.root.deiconify()
+            self.root.lift()
+            self.root.focus_force()
+        except Exception:
+            pass
+        if not isinstance(self.root, tk.Toplevel):
+            self.root.mainloop()

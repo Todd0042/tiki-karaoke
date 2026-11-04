@@ -11,7 +11,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILD_TMP="/tmp/tiki_build_$(date +%s)"
 OUT_DIR="${REPO_ROOT}/dist"
 APPDIR="/tmp/TikiKaraoke.AppDir"
-VERSION="${TIKI_VERSION:-1.0.9}"
+VERSION="${TIKI_VERSION:-1.1.1}"
 OUT_APPIMAGE="${OUT_DIR}/TikiKaraoke-Pro-v${VERSION}-x86_64.AppImage"
 
 echo "=== [1/5] Setting up build directories ==="
@@ -123,15 +123,26 @@ if [ -d "${REPO_ROOT}/bin" ]; then
     fi
 fi
 
-# Bundle Tiki Karaoke Smart Importer if built in sibling repo
-IMPORTER_DIR="$(dirname "${REPO_ROOT}")/tiki-karaoke-importer"
-if [ -d "${IMPORTER_DIR}" ]; then
-    IMPORTER_APPIMAGE=$(ls -t "${IMPORTER_DIR}/dist"/TikiKaraokeImporter*.AppImage 2>/dev/null | head -n 1)
-    if [ -n "$IMPORTER_APPIMAGE" ] && [ -f "$IMPORTER_APPIMAGE" ]; then
-        echo "Bundling TikiKaraokeImporter standalone binary: $IMPORTER_APPIMAGE"
-        cp "$IMPORTER_APPIMAGE" "$APPDIR/usr/bin/TikiKaraokeImporter"
-        chmod +x "$APPDIR/usr/bin/TikiKaraokeImporter"
-    fi
+# Standalone entry points inside AppImage
+cat << 'EOF' > "$APPDIR/usr/bin/TikiKaraokeImporter"
+#!/bin/bash
+SELF=$(readlink -f "$0")
+HERE=${SELF%/*}
+exec "${HERE}/TikiKaraoke" --importer "$@"
+EOF
+chmod +x "$APPDIR/usr/bin/TikiKaraokeImporter"
+
+cat << 'EOF' > "$APPDIR/usr/bin/TikiKaraokeRipper"
+#!/bin/bash
+SELF=$(readlink -f "$0")
+HERE=${SELF%/*}
+exec "${HERE}/TikiKaraoke" --cdg-ripper "$@"
+EOF
+chmod +x "$APPDIR/usr/bin/TikiKaraokeRipper"
+
+if [ -d "$APPDIR/usr/bin/_internal" ]; then
+    cp "$APPDIR/usr/bin/TikiKaraokeImporter" "$APPDIR/usr/bin/_internal/TikiKaraokeImporter"
+    cp "$APPDIR/usr/bin/TikiKaraokeRipper" "$APPDIR/usr/bin/_internal/TikiKaraokeRipper"
 fi
 
 cp "${REPO_ROOT}/tray.py" "$APPDIR/usr/bin/tray.py"
@@ -171,12 +182,20 @@ unset LD_LIBRARY_PATH
 export PATH="\${HERE}/usr/bin:\${HERE}/usr/bin/bin:\${HERE}/usr/bin/_internal/bin:\${PATH}"
 
 cd "\${HERE}/usr/bin"
+ARG0=\$(basename "\$0")
+if [[ "\$ARG0" == *"Importer"* || "\$ARG0" == *"importer"* ]]; then
+    exec "\${HERE}/usr/bin/TikiKaraoke" --importer "\$@"
+elif [[ "\$ARG0" == *"Ripper"* || "\$ARG0" == *"ripper"* ]]; then
+    exec "\${HERE}/usr/bin/TikiKaraoke" --cdg-ripper "\$@"
+fi
 exec "\${HERE}/usr/bin/TikiKaraoke" "\$@"
 EOF
 
 chmod +x "$APPDIR/AppRun"
 chmod +x "$APPDIR/usr/bin/TikiKaraoke"
 ln -sf AppRun "$APPDIR/TikiKaraoke"
+ln -sf AppRun "$APPDIR/TikiKaraokeImporter"
+ln -sf AppRun "$APPDIR/TikiKaraokeRipper"
 
 echo "=== [4/5] Packaging AppImage ==="
 if [ ! -f "/tmp/appimagetool" ]; then

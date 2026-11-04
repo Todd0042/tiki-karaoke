@@ -52,7 +52,7 @@ class CdgRipperWindow:
         self.win.configure(bg="#0d0814")
 
         # Destination folder
-        default_out = target_tracks_dir or str(get_default_library_path() / "tracks")
+        default_out = target_tracks_dir or str(Path(get_default_library_path()) / "tracks")
         self.var_out_dir = tk.StringVar(value=default_out)
         self.var_bitrate = tk.StringVar(value="192")
 

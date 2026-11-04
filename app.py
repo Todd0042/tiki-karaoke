@@ -2806,7 +2806,9 @@ def find_importer_executable() -> Optional[Tuple[List[str], Optional[Path]]]:
     else:
         candidates = [
             current_dir / "TikiKaraokeImporter",
+            current_dir.parent / "TikiKaraokeImporter",
             current_dir / "bin" / "TikiKaraokeImporter",
+            current_dir.parent / "bin" / "TikiKaraokeImporter",
             Path("/usr/bin/TikiKaraokeImporter"),
         ]
         for c in candidates:
@@ -2826,6 +2828,8 @@ def find_importer_executable() -> Optional[Tuple[List[str], Optional[Path]]]:
     internal_importer = current_dir / "importer"
     if (internal_importer / "main.py").is_file():
         return ([sys.executable, str(internal_importer / "main.py")], internal_importer)
+    if (current_dir.parent / "importer" / "main.py").is_file():
+        return ([sys.executable, str(current_dir.parent / "importer" / "main.py")], current_dir.parent / "importer")
 
     # 4. Check sibling repository: ../tiki-karaoke-importer
     importer_repo = current_dir.parent / "tiki-karaoke-importer"
@@ -2927,6 +2931,16 @@ async def api_launch_importer(request: Request):
     if not (is_host_request(request) or is_local_request(request)):
         raise HTTPException(status_code=403, detail="Host DJ authorization required")
 
+    if launch_importer_trigger_callback:
+        try:
+            launch_importer_trigger_callback()
+            return {
+                "status": "ok",
+                "message": "Tiki Karaoke Smart Importer opened successfully on desktop"
+            }
+        except Exception as e:
+            print(f"[API] Error invoking importer desktop trigger: {e}")
+
     found = find_importer_executable()
     if not found:
         raise HTTPException(
@@ -2938,7 +2952,10 @@ async def api_launch_importer(request: Request):
     db_path = str(get_db_path().resolve()) if hasattr(get_db_path(), "resolve") else str(get_db_path())
     tracks_dir = str(get_tracks_dir().resolve()) if hasattr(get_tracks_dir(), "resolve") else str(get_tracks_dir())
 
-    cmd = list(cmd_base) + ["--db", db_path, "--folder", tracks_dir]
+    cmd = list(cmd_base)
+    if "--importer" not in cmd and not any("importer" in str(x).lower() for x in cmd):
+        cmd.append("--importer")
+    cmd.extend(["--db", db_path, "--folder", tracks_dir])
 
     try:
         if sys.platform == "win32":
@@ -2960,6 +2977,16 @@ async def api_launch_cdg_ripper(request: Request):
     if not (is_host_request(request) or is_local_request(request)):
         raise HTTPException(status_code=403, detail="Host DJ authorization required")
 
+    if launch_cdg_ripper_trigger_callback:
+        try:
+            launch_cdg_ripper_trigger_callback()
+            return {
+                "status": "ok",
+                "message": "CD+G Disc Ripper opened successfully on desktop"
+            }
+        except Exception as e:
+            print(f"[API] Error invoking cdg ripper desktop trigger: {e}")
+
     found = find_importer_executable()
     if not found:
         raise HTTPException(
@@ -2970,7 +2997,8 @@ async def api_launch_cdg_ripper(request: Request):
     cmd_base, work_dir = found
     tracks_dir = str(get_tracks_dir().resolve()) if hasattr(get_tracks_dir(), "resolve") else str(get_tracks_dir())
 
-    cmd = list(cmd_base) + ["--cdg-ripper", "--folder", tracks_dir]
+    clean_base = [a for a in cmd_base if a != "--importer"]
+    cmd = clean_base + ["--cdg-ripper", "--folder", tracks_dir]
 
     try:
         if sys.platform == "win32":
@@ -3810,6 +3838,17 @@ def register_shutdown_trigger(cb: Callable):
 def register_focus_hub_trigger(cb: Callable):
     global focus_hub_trigger_callback
     focus_hub_trigger_callback = cb
+
+launch_importer_trigger_callback: Optional[Callable] = None
+launch_cdg_ripper_trigger_callback: Optional[Callable] = None
+
+def register_launch_importer_trigger(cb: Callable):
+    global launch_importer_trigger_callback
+    launch_importer_trigger_callback = cb
+
+def register_launch_cdg_ripper_trigger(cb: Callable):
+    global launch_cdg_ripper_trigger_callback
+    launch_cdg_ripper_trigger_callback = cb
 
 def register_tunnel_reload_trigger(cb: Callable):
     global tunnel_reload_trigger_callback
