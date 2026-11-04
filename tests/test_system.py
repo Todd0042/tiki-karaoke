@@ -204,6 +204,57 @@ class TestTikiKaraoke(unittest.TestCase):
         self.assertEqual(q[3]["queue_id"], q_s2)
         self.assertEqual(q[3]["singer_name"], "Samuel_Test")
 
+    def test_05c_multi_singer_interleaved_queue_simulation(self):
+        # Todd queues 4, Frank queues 2, Alice queues 3, Frank queues 3, Alice queues 1
+        s_t = get_or_create_singer("s_sim_todd", "Todd_Sim", "🎤")
+        s_f = get_or_create_singer("s_sim_frank", "Frank_Sim", "🎸")
+        s_a = get_or_create_singer("s_sim_alice", "Alice_Sim", "🌺")
+
+        tid = 100
+        def q_song(singer, title):
+            nonlocal tid
+            t = save_track(f"vid_sim_{tid}", title, "Artist", f"Artist - {title}")
+            tid += 1
+            return enqueue_song(t, singer["id"])
+
+        # 1. Todd queues 4
+        for i in range(1, 5):
+            q_song(s_t, f"Todd {i}")
+        # 2. Frank queues 2
+        for i in range(1, 3):
+            q_song(s_f, f"Frank {i}")
+        # 3. Alice queues 3
+        for i in range(1, 4):
+            q_song(s_a, f"Alice {i}")
+        # 4. Frank queues 3 more
+        for i in range(3, 6):
+            q_song(s_f, f"Frank {i}")
+        # 5. Alice queues 1 more
+        q_song(s_a, "Alice 4")
+
+        # Verify strict round-robin order across all 13 items
+        expected_sequence = [
+            ("Todd_Sim", "Todd 1"),
+            ("Frank_Sim", "Frank 1"),
+            ("Alice_Sim", "Alice 1"),
+            ("Todd_Sim", "Todd 2"),
+            ("Frank_Sim", "Frank 2"),
+            ("Alice_Sim", "Alice 2"),
+            ("Todd_Sim", "Todd 3"),
+            ("Frank_Sim", "Frank 3"),
+            ("Alice_Sim", "Alice 3"),
+            ("Todd_Sim", "Todd 4"),
+            ("Frank_Sim", "Frank 4"),
+            ("Alice_Sim", "Alice 4"),
+            ("Frank_Sim", "Frank 5"),
+        ]
+
+        q = get_queue()
+        self.assertEqual(len(q), len(expected_sequence))
+        for idx, (exp_singer, exp_title) in enumerate(expected_sequence):
+            self.assertEqual(q[idx]["singer_name"], exp_singer, f"Mismatch at pos {idx+1}: expected {exp_singer}, got {q[idx]['singer_name']}")
+            self.assertEqual(q[idx]["title"], exp_title, f"Mismatch at pos {idx+1}: expected {exp_title}, got {q[idx]['title']}")
+
     def test_06_loudnorm_ffmpeg_helper(self):
         # Create a tiny test audio file and test normalization filter
         test_in = TRACKS_DIR / "test_in.mp4"
