@@ -174,8 +174,18 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Tiki Karaoke", lifespan=lifespan)
 
 @app.middleware("http")
-async def add_no_cache_headers(request: Request, call_next):
+async def add_security_and_cache_headers(request: Request, call_next):
     response = await call_next(request)
+    # Security headers
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "SAMEORIGIN"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+
+    # Enforce HSTS if HTTPS is enabled
+    if request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https" or os.getenv("TIKI_USE_HTTPS") == "1":
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+
+    # Dynamic and static asset cache controls
     if request.url.path.startswith("/static/") or request.url.path in ("/join", "/stage", "/host", "/"):
         response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
         response.headers["Pragma"] = "no-cache"
