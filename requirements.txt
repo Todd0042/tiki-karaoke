@@ -40,7 +40,7 @@ RapidFuzz==3.14.6
 requests==2.34.2
 requests-oauthlib==2.0.0
 starlette==1.10.0
-typing-inspection==0.4.4
+typing-inspection==0.4.5
 typing_extensions==4.16.0
 uritemplate==4.2.0
 urllib3==2.8.0
