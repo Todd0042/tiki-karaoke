@@ -33,17 +33,17 @@
   * [✨ Party Highlights at a Glance](#-party-highlights-at-a-glance)
   * [🚀 Quick Download & Installation (Linux & Windows)](#-quick-download--installation)
 * **Part 2 — Consolidated Technical Documentation & Architecture Reference**
-  * [1. System Architecture & Real-Time WebSocket Engine](#1-system-architecture--real-time-websocket-engine)
-  * [2. Audio Routing & 3-Mode Microphone Monitoring](#2-audio-routing--3-mode-microphone-monitoring)
-  * [3. Real-Time Track Audio DSP, EBU R128 Normalization & Venue A/V Sync](#3-real-time-track-audio-dsp-ebu-r128-normalization--venue-av-sync)
-  * [4. Native CD+G Subcode Graphics Engine & Optical Disc Ripper](#4-native-cdg-subcode-graphics-engine--optical-disc-ripper)
-  * [5. Fair Round-Robin Queue & Singer Experience Mechanics](#5-fair-round-robin-queue--singer-experience-mechanics)
-  * [6. 4-Stage Intermission Vibe Engine & Audio-Reactive Stage Visuals](#6-4-stage-intermission-vibe-engine--audio-reactive-stage-visuals)
-  * [7. Storage Footprint Profiles, Smart Media Importer & CompuHost Migration](#7-storage-footprint-profiles-smart-media-importer--compuhost-migration)
-  * [8. Connectivity Modes, SSL Tunnels & Offline Hotspot QR](#8-connectivity-modes-ssl-tunnels--offline-hotspot-qr)
-  * [9. CLI Arguments, Configuration Schema (`config.json`) & Environment Variables](#9-cli-arguments-configuration-schema-configjson--environment-variables)
-  * [10. Repository Structure & Automated Verification Suite](#10-repository-structure--automated-verification-suite)
-  * [11. Ethics, Clean-Room Audio Provenance & Licensing](#11-ethics-clean-room-audio-provenance--licensing)
+  * [1. System Architecture & Real-Time WebSocket Engine ([app.py](app.py), [main.py](main.py))](#1-system-architecture--real-time-websocket-engine)
+  * [2. Audio Routing & 3-Mode Microphone Monitoring ([audio_router.py](audio_router.py))](#2-audio-routing--3-mode-microphone-monitoring)
+  * [3. Real-Time Track Audio DSP, EBU R128 Normalization & Venue A/V Sync ([services/lufs.py](services/lufs.py), [static/js/audio-dsp.js](static/js/audio-dsp.js))](#3-real-time-track-audio-dsp-ebu-r128-normalization--venue-av-sync)
+  * [4. Native CD+G Subcode Graphics Engine & Optical Disc Ripper ([importer/cdg_ripper.py](importer/cdg_ripper.py))](#4-native-cdg-subcode-graphics-engine--optical-disc-ripper)
+  * [5. Fair Round-Robin Queue & Singer Experience Mechanics ([database.py](database.py))](#5-fair-round-robin-queue--singer-experience-mechanics)
+  * [6. 4-Stage Intermission Vibe Engine & Audio-Reactive Stage Visuals ([database.py](database.py))](#6-4-stage-intermission-vibe-engine--audio-reactive-stage-visuals)
+  * [7. Storage Footprint Profiles, Smart Media Importer & CompuHost Migration ([importer/scanner.py](importer/scanner.py), [importer/tps_parser.py](importer/tps_parser.py))](#7-storage-footprint-profiles-smart-media-importer--compuhost-migration)
+  * [8. Connectivity Modes, SSL Tunnels & Offline Hotspot QR ([network_helper.py](network_helper.py))](#8-connectivity-modes-ssl-tunnels--offline-hotspot-qr)
+  * [9. CLI Arguments, Configuration Schema (`config.json`) & Environment Variables ([config.py](config.py))](#9-cli-arguments-configuration-schema-configjson--environment-variables)
+  * [10. Repository Structure & Automated Verification Suite ([tests/](tests/))](#10-repository-structure--automated-verification-suite)
+  * [11. Ethics, Clean-Room Audio Provenance & Licensing ([LICENSE](LICENSE))](#11-ethics-clean-room-audio-provenance--licensing)
 
 ---
 
