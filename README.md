@@ -68,7 +68,7 @@ Instead of passing around a keyboard or fighting with dated desktop interfaces, 
 
 ---
 
-## 🌺 Companion Studio: Tiki Rehearsal Lounge (v1.0.5)
+## 🌺 Companion Studio: Tiki Rehearsal Lounge (v1.0.8)
 
 Want to warm up your voice or dial in your optimal key before taking the stage?
 
@@ -77,8 +77,8 @@ Want to warm up your voice or dial in your optimal key before taking the stage?
 * **🎯 2-Step Vocal Calibration**: Measure your natural speaking anchor note and siren pitch sweep ($Ooo \rightarrow Aaa$) with high-resolution autocorrelation to detect your vocal category (Bass to Soprano) and comfort sweet spot.
 * **✨ Smart Key Recommendation**: Compares your vocal profile against any song in your library and suggests the optimal transposition between **-3 and +3 semitones** so you never strain on high notes.
 * **🎹 6-Voice Harmonic Tone Generator**: Zero-latency procedural reference tones (Grand Piano, Rhodes, Cello, Strings, Synth Flute, Brass) for warming up.
-* **📊 Post-Take Vocal Report Cards with Bleed Suppression**: Records your rehearsal take, suppresses ambient backing track speaker bleed to prevent false high scores on silence, and scores pitch, intonation, and rhythm pocket.
-* **🧠 100% Offline AI Vocal Coach & Progression Tracker**: Powered by a bundled standalone `llama.cpp` engine running local open-weights models (Qwen 2.5 1.5B or 3B) on CPU. Tracks take-over-take growth in an isolated rolling database (`rehearsal_history.db`) with zero telemetry or cloud dependencies.
+* **📊 Post-Take Vocal Report Cards & Real-to-Life Auditory Appeal**: Multi-core parallel DSP records your rehearsal take, suppresses ambient backing track speaker bleed, and evaluates relative scale degrees, melodic phrase contour ($\Delta f[n]$), and genre-aware consonance.
+* **🧠 Expandable Offline AI Studio & Progression Tracker**: Optional right-hand **Maestro Tiki AI Studio** side panel powered by a bundled standalone `llama.cpp` engine running local open-weights models on CPU/GPU, while keeping pure Python DSP 100% independent. Tracks take-over-take growth in an isolated rolling database (`rehearsal_history.db`) with zero telemetry or cloud dependencies.
 * **🔗 Get Rehearsal Lounge**: Available on [GitHub](https://github.com/Todd0042/tiki-rehearsal-lounge) and downloadable on [itch.io](https://todd0042.itch.io/tiki-karaoke-lounge) for **Windows** (`rehearsal-windows`, `rehearsal-windows-portable`) and **Linux** (`rehearsal-linux`)!
 
 ---
@@ -112,7 +112,8 @@ Full live transport, 3-mode microphone mixing with dual-singer VU meters, Venue 
 ## ✨ Party Highlights at a Glance
 
 * **⚖️ Fair Round-Robin Queue**: Automatically balances turns across all singers so newcomers never get buried behind someone who queued 10 songs in a row. Guests can also tap **"Pause My Turn (Step Away)"** while grabbing a drink without losing their spot.
-* **👥 Sing-Along Mode for Shy Singers**: A 1-tap toggle lets guests browse and request tracks *with* lead guide vocals included so the whole room can sing together.
+* **👥 Sing-Along Mode & "Spin the Tiki Wheel"**: A 1-tap toggle lets guests browse and request tracks *with* lead guide vocals included so the whole room can sing together—or tap **🎰 Spin the Tiki Wheel** to let the lounge pick a random crowd-pleaser from the local catalog.
+* **📺 Multi-Room Stage Displays & Thin-Client Remote Gigging**: Because the Stage view is powered by synchronized WebSockets and HTTP media streaming, you can open `/stage` across multiple TVs in different rooms simultaneously (selecting which screen acts as the Master audio output from the Host Desk), or keep your server PC at home and run an entire gig at a remote venue using only a laptop or smartphone with an HDMI adapter.
 * **🎵 Real-Time Key/Pitch Shifting & Vocal DSP**: Shift any song from `-3` to `+3` semitones in real time without changing tempo, plus optional warm vocal plate reverb, dual-singer VU meters, and automatic between-song BGM speech ducking.
 * **💿 Classic Karaoke CD (`CD+G`) & Modern Video Support**: Plays `.mp4`, `.mkv`, `.webm`, and classic `.mp3` + `.cdg` (or `.zip`) discs with 4 modernized neon color themes—plus a built-in optical CD+G disc ripper.
 * **🌴 Non-Stop Intermission Autopilot**: Never suffer awkward dead air between singers. Automatically plays crowd sing-alongs or music videos matched to the era and genre of tonight's singers, with a 90-minute cooldown so it never spoils a song someone just sang.
@@ -170,23 +171,25 @@ flowchart TB
         Main["main.py<br/>Process Supervisor & CLI"]
         Hub["control_hub.py<br/>Tkinter Desktop Control Hub"]
         Tray["tray.py<br/>PyQt6 SNI / pystray Daemon"]
+        Importer["importer/<br/>Smart Importer, CompuHost .tps & CD+G Ripper"]
         FastAPI["app.py<br/>FastAPI Coordinator & Lifespan Router"]
         Routes["routes/<br/>host_controls, queue, library, recordings, setup, launcher, stream, pages"]
-        Services["services/<br/>playback, library_cache, network, websocket_manager, lifecycle, temporary_cache, auth"]
+        Services["services/<br/>playback, library_cache, network, websocket_manager, lifecycle, temporary_cache, auth, templates"]
         DB[("database.py<br/>SQLite WAL (9 Tables)")]
         AudioRouter["audio_router.py<br/>pactl / WASAPI Mic Loopback"]
         Downloader["downloader.py & search.py<br/>yt-dlp + FFmpeg loudnorm (-16 LUFS)"]
-        Net["network_helper.py<br/>Cloudflare / Tailscale / Caddy / Bore"]
+        Net["network_helper.py & playlist_sync.py<br/>SSL Tunnels, Hotspot QR & YouTube History Sync"]
     end
 
     subgraph Clients["Synchronized Browser Views (WebSockets /ws)"]
-        Stage["/stage (host.html + host-player.js)<br/>Video/CD+G + Web Audio DSP + Particle Canvas"]
+        Stage["/stage (host.html + host-player.js)<br/>Multi-Zone Video/CD+G + Web Audio DSP + Particle Canvas"]
         Mobile["/ & /join (mobile.html + mobile-client.js)<br/>Guest Songbook, Fair Queue & Rehearsal"]
-        HostDesk["/host (mobile.html Host Mode)<br/>Master Transport, Mic Mixing, BGM Crate & Storage"]
+        HostDesk["/host (mobile.html Host Mode)<br/>Master Transport, Display Audio Routing, Mic Mixing & BGM Crate"]
     end
 
     Main --> Hub
     Main --> Tray
+    Main --> Importer
     Main --> FastAPI
     FastAPI --> Routes
     FastAPI --> Services
@@ -212,6 +215,12 @@ flowchart TB
   * Probes `http://127.0.0.1:8000/api/state` on startup; if an instance is already running, focuses or opens the requested view instead of spawning duplicate servers.
   * Detects physical monitor geometry via `xrandr`, GDK, `/sys/class/drm` (Linux), or `Win32 GetMonitorInfo` / PowerShell (Windows), and launches the Stage and optional Host Desk windows directly onto their assigned displays with zero-click autoplay enabled (`media.autoplay.default=0` in Firefox profile or `--autoplay-policy=no-user-gesture-required` in Chromium).
 
+### Multi-Zone Stage Display Topologies & Per-Screen Audio Routing
+Because `/stage` operates entirely over stateless HTTP byte-range streaming ([routes/stream.py](routes/stream.py)) and real-time WebSocket state envelopes ([services/websocket_manager.py](services/websocket_manager.py)), the display architecture naturally supports flexible multi-screen and remote-venue deployments without video splitters or long HDMI runs:
+* **Simultaneous Multi-Room Stage Displays (`register_stage_display`)**: Any number of TVs, projectors, patio monitors, or tablets can open `/stage` concurrently. Every connected display registers its unique `display_id`, device label, IP address, and audio mute state with [`ConnectionManager`](services/websocket_manager.py), staying locked to the exact same playhead, countdown timers, CD+G packet frames, and crowd reaction bursts.
+* **Remote Per-Display Audio & Master Screen Assignment (`GET /api/host/displays` & `POST /api/host/display/{display_id}/audio`)**: From the **Host DJ Desk**, the host can view all active stage displays in real time, remotely `mute` or `unmute` individual screens, or trigger `set_master` to designate a single screen as the **Master Audio Output** while automatically muting all secondary displays to prevent multi-room acoustic echo.
+* **Zero-Footprint Remote Venue Deployment (Home-Server to Thin-Client Gigging)**: When paired with an outbound SSL tunnel (`cloudflare_quick`, `cloudflare_named`, or `tailscale`), the host's primary PC and multi-terabyte karaoke library can remain stationary at home while an entire event is hosted at a remote venue using only a lightweight laptop or smartphone connected to the venue TV/PA via HDMI.
+
 ### Real-Time WebSocket Event Catalog (`/ws`)
 [`ConnectionManager`](services/websocket_manager.py) broadcasts JSON state envelopes to all connected Stage, Host, and Mobile clients:
 
@@ -221,6 +230,7 @@ flowchart TB
 | `queue_updated` | Server $\rightarrow$ All | Triggered whenever a song is queued, reordered, skipped, completed, or when a singer toggles `on_break` / checks out. |
 | `pending_downloads_updated` | Server $\rightarrow$ All | Live download percentage (`0–100%`), status (`downloading`, `normalizing`, `retrying`, `failed`), and error recovery metadata for staged tracks. |
 | `playhead_report` / `playhead_sync` | Stage $\rightarrow$ Server $\rightarrow$ All | Stage reports playhead every 2s; server relays to handheld `/stage?mute=1` lyric monitors to keep lyrics locked within `<150ms`. |
+| `register_display` / `displays_updated` / `set_display_audio` | Stage $\leftrightarrow$ Server $\leftrightarrow$ Host | Registers each connected `/stage` screen (`display_id`, `name`, `is_muted`, `ip`) and allows the Host Desk to remotely mute/unmute screens or switch the active Master Audio display. |
 | `reaction` | Mobile $\rightarrow$ Server $\rightarrow$ Stage | Real-time crowd emoji (`🔥`, `🍹`, `🌴`, `👏`, `🌺`, `🍻`) rate-limited to 5/sec per socket; triggers floating animations, particle bursts, and the `x4+` Crowd Hype Combo Multiplier on stage. |
 | `singer_joined` | Server $\rightarrow$ Stage | Displays a floating neon welcome pill on the TV stage when a new guest registers. |
 | `singer_on_deck` | Server $\rightarrow$ Mobile | Fired when `duration - playhead <= 30s` on the current song; vibrates the next singer's phone (`navigator.vibrate`) and slides down the *"YOU'RE UP IN ~30 SECONDS!"* banner. |
@@ -235,15 +245,15 @@ flowchart TB
 
 ## 2. Audio Routing & 3-Mode Microphone Monitoring
 
-Live vocal monitoring is the hardest problem in PC-based karaoke because browser audio buffers and HDMI/Bluetooth outputs introduce noticeable echo. Tiki Karaoke solves this with a selectable **3-Mode Microphone Architecture** ([audio_router.py](audio_router.py), [packaging/windows/tiki_mic_router.c](packaging/windows/tiki_mic_router.c), and [static/js/audio-dsp.js](static/js/audio-dsp.js)):
+Live vocal monitoring is the hardest problem in PC-based karaoke because browser audio buffers and HDMI/Bluetooth outputs introduce noticeable echo. Tiki Karaoke solves this with a selectable **3-Mode Microphone Architecture** ([audio_router.py](audio_router.py), [packaging/windows/tiki_karaoke.spec](packaging/windows/tiki_karaoke.spec), and [static/js/audio-dsp.js](static/js/audio-dsp.js)):
 
 | Mode | Latency | Architecture & Best Use Case |
 | :--- | :---: | :--- |
 | **1. Hardware Direct** (`hardware_direct`) | **~0 ms** | **External Mixer / Audio Interface Bypass**: Software mic routing is completely disabled so your physical PA mixer or USB audio interface's hardware *Direct Monitor* knob handles vocals with zero digital delay. |
-| **2. Native OS Loopback** (`native` — *Default*) | **~1–15 ms** | **Kernel / Audio-Server Direct Routing**: Routes the selected microphone directly to the stage speaker sink at the OS level, bypassing browser audio buffers entirely.<br/>• **Linux**: Manages PipeWire/PulseAudio `module-loopback` (`latency_msec=1`) and source/sink volume via `pactl`.<br/>• **Windows**: Spawns [`tiki-mic-router.exe`](packaging/windows/tiki_mic_router.c), a custom C/Win32 **WASAPI shared-mode event-driven** audio router (`AUDCLNT_STREAMFLAGS_EVENTCALLBACK` + `AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM`) with lock-free ring buffering, Q16.16 linear resampler, automatic mono-to-stereo duplication, live stdin volume/mute control, and a background watchdog thread that auto-restarts if a USB mic is unplugged/replugged. |
+| **2. Native OS Loopback** (`native` — *Default*) | **~1–15 ms** | **Kernel / Audio-Server Direct Routing**: Routes the selected microphone directly to the stage speaker sink at the OS level, bypassing browser audio buffers entirely.<br/>• **Linux**: [`NativeAudioRouter`](audio_router.py) manages PipeWire/PulseAudio `module-loopback` (`latency_msec=1`) and source/sink volume via `pactl`.<br/>• **Windows**: [`WasapiAudioRouter`](audio_router.py) spawns the bundled `tiki-mic-router.exe` helper, a custom **WASAPI shared-mode event-driven** audio router (`AUDCLNT_STREAMFLAGS_EVENTCALLBACK` + `AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM`) with lock-free ring buffering, Q16.16 linear resampler, automatic mono-to-stereo duplication, live JSON-lines stdin volume/mute control, and a background watchdog thread that auto-restarts if a USB mic is unplugged/replugged. |
 | **3. Browser WebRTC Vocal Bus** (`browser`) | **80–300 ms** | **Full Web Audio Vocal DSP & Bluetooth/HDMI-TV Fallback**: Captures the microphone with raw studio constraints (`echoCancellation: false`, `noiseSuppression: false`, `autoGainControl: false`, `latency: 0`) and routes it through a dual-channel Web Audio vocal processor. Automatically recommended by the Setup Wizard if Bluetooth or HDMI-TV output latency is detected so vocals and backing music share the exact same output delay. |
 
-### Browser Vocal DSP Signal Chain ([`TikiAudioDSP`](static/js/audio-dsp.js))
+### Browser Vocal DSP Signal Chain ([`AudioDSPPipeline`](static/js/audio-dsp.js))
 When operating in `browser` mode (or for live VU metering and speech ducking):
 1. **Dual-Singer Stereo Channel Splitter**: Splits 2-channel audio interfaces or dual wireless mic receivers into independent **Left (Singer 1)** and **Right (Singer 2)** vocal paths, then center-sums both channels across all venue speakers so Singer 1 and Singer 2 aren't hard-panned to opposite sides of the room.
 2. **90Hz High-Pass Rumble Filter**: 12dB/octave `BiquadFilterNode` removes stage footstep thumps and mic handling noise.
@@ -289,7 +299,7 @@ MediaElementAudioSourceNode
 
 ## 4. Native CD+G Subcode Graphics Engine & Optical Disc Ripper
 
-Tiki Karaoke includes a complete, clean-room JavaScript **CD+G (Compact Disc + Graphics)** subcode parser and renderer ([static/js/cdg-renderer.js](static/js/cdg-renderer.js)) alongside a hardware optical disc ripper ([main.py](main.py)).
+Tiki Karaoke includes a complete, clean-room JavaScript **CD+G (Compact Disc + Graphics)** subcode parser and renderer ([static/js/cdg-renderer.js](static/js/cdg-renderer.js)) alongside a hardware optical disc ripper ([importer/ui/cdg_ripper_window.py](importer/ui/cdg_ripper_window.py)).
 
 * **Subcode Packet Engine (`300 packets/sec`)**:
   * Parses 24-byte raw subchannel packets (`command & 0x3F === 0x09`) synchronized directly to the `<audio>` element's `currentTime` (`Math.floor(audioElement.currentTime * 300)`).
@@ -303,10 +313,10 @@ Tiki Karaoke includes a complete, clean-room JavaScript **CD+G (Compact Disc + G
   * **🌅 Tropical Sunset (`sunset`)**: Warm amber gold base text with coral/magenta active lyric wipe.
   * **⚡ Cyberpunk (`cyberpunk`)**: Electric cyan base text with laser-yellow active lyric wipe.
   * **📻 Authentic 90s CD+G (`classic`)**: Preserves the original 12-bit RGB (`4-bit per channel`) palette encoded on the disc.
-* **ZIP Archive & Paired File Handling ([app.py](app.py))**:
-  * Directly streams `.mp3` + `.cdg` pairs or extracts `.zip` archives on the fly into `cdg_cache/` with path-traversal sanitization.
+* **ZIP Archive & Paired File Handling ([services/playback.py](services/playback.py))**:
+  * Directly streams `.mp3` + `.cdg` pairs or extracts `.zip` archives on the fly via [`extract_cdg_zip()`](services/playback.py) into `cdg_cache/` with path-traversal sanitization.
 * **Hardware Optical CD+G Disc Ripper (`--cdg-ripper`)**:
-  * Launches a dedicated desktop utility ([`run_cdg_ripper_gui`](main.py)) that uses `cdrdao read-cd --read-subchan rw_raw` and `ffmpeg` to rip physical CD+G karaoke discs from `/dev/sr0`, de-interleave the 96-byte raw subchannel sectors into `.cdg` files, encode `192kbps` MP3 audio, and register every track in the database.
+  * Launches a dedicated desktop utility ([`CdgRipperWindow`](importer/ui/cdg_ripper_window.py) & [importer/tiki_importer/cdg_ripper.py](importer/tiki_importer/cdg_ripper.py)) that uses `cdrdao read-cd --read-subchan rw_raw` and `ffmpeg` to rip physical CD+G karaoke discs from `/dev/sr0`, de-interleave the 96-byte raw subchannel sectors into `.cdg` files, encode `192kbps` MP3 audio, and register every track in the database.
 
 ---
 
@@ -325,17 +335,20 @@ Unlike simple FIFO queues where one guest can queue 8 songs and monopolize the s
 4. **Host Pin & Pause-Show Retention (`sort_order = 0` / negative)**: Pinned tracks or songs paused via **"Pause Show"** receive `sort_order = 0`, keeping them permanently locked at the front of the line (#1) when playback resumes.
 
 ### Singer Experience Features ([static/js/mobile-client.js](static/js/mobile-client.js))
-* **Pause Show BGM Failover (`POST /api/host/pause`)**: When the host pauses the show, the current live song is returned to `pending` with `sort_order = 0` (guaranteeing front-of-line retention at #1) while the stage instantly cross-fades into ambient BGM lounge filler. When the host unpauses or advances, the singer resumes without having to re-queue.
-* **Pause My Turn ("Step Away / On Break")**: Guests can toggle their status between `active` and `on_break` (`POST /api/singers/self-status`). While `on_break`, the stage engine skips over their queued songs without deleting them; when they tap **"I'm Back!"**, they resume at the front of the current round.
-* **Duplicate Song Advisory & 1-Tap Duet Joining**: When a guest selects a song (`GET /api/songs/check-duplicate`), the app checks if the track is:
+* **Pause Show BGM Failover (`POST /api/host/toggle-pause`)**: When the host pauses the show, the current live song is returned to `pending` with `sort_order = 0` (guaranteeing front-of-line retention at #1) while the stage instantly cross-fades into ambient BGM lounge filler. When the host unpauses or advances, the singer resumes without having to re-queue.
+* **Pause My Turn ("Step Away / On Break")**: Guests can toggle their status between `active` and `on_break` (`POST /api/singer/{token}/status`). While `on_break`, the stage engine skips over their queued songs without deleting them; when they tap **"I'm Back!"**, they resume at the front of the current round.
+* **"Spin the Tiki Wheel" Surprise Picker & Tiki Persona Generator**:
+  * Guests unsure what to sing can tap **🎰 Spin the Tiki Wheel** (`spinTikiWheel()` $\rightarrow$ `GET /api/surprise`), which selects a random ready track from the local catalog and opens the key/pitch queue modal in 1 tap.
+  * During guest registration, tapping **🎲 Roll Tiki Persona** (`rollTikiPersona()`) generates a playful tropical stage name while `GET /api/singer/available-avatars` ensures active singers in the room each get a distinct avatar.
+* **Duplicate Song Advisory & 1-Tap Duet Joining**: When a guest selects a song (`GET /api/queue/check-duplicate`), the app checks if the track is:
   1. Currently playing on stage
   2. Already in the singer's own queue
   3. Already sung earlier tonight (offering **"Queue Encore Anyway"**)
-  4. Currently queued by another guest (displaying that singer's avatar/position and a 1-tap **"👯 Add Me as Duet Partner"** button via `POST /api/queue/{id}/join-duet`).
-* **Song Dedications & Stage Marquee**: Guests can attach a 60-character dedication (`💌 DEDICATED TO: ...`) that scrolls across the TV stage ticker during their performance.
+  4. Currently queued by another guest (displaying that singer's avatar/position and a 1-tap **"👯 Add Me as Duet Partner"** button via `POST /api/queue/{queue_id}/join-duet`).
+* **Song Dedications & Stage Marquee**: Guests can attach a 60-character dedication (`💌 DEDICATED TO: ...`) that scrolls across the TV stage ticker during their performance, while the host can broadcast custom timed announcements (`POST /api/host/marquee`) with adjustable scroll speed (`30–300 px/s`).
 * **"You're Up in ~30 Seconds!" Haptic & Push Alert**: When 30 seconds remain on the preceding track, the server sends a targeted `singer_on_deck` event to the next singer's phone, triggering `navigator.vibrate([250, 120, 250, 120, 400])`, a Web Notification, and a top slide-down alert banner.
 * **Private Singer Rehearsal Modal**: Guests can tap **👁️ Rehearse** on any of their queued songs to privately preview the video and lyrics on their phone (`muted` by default with an unmute toggle) without affecting the main stage.
-* **Handheld Muted Lyrics Confidence Monitor**: Tapping **📺 Stage TV** on mobile opens `/stage?mute=1`, which mutes all mobile audio, hides stage control buttons, and locks video/CD+G lyric timing to the main TV stage's WebSocket `playhead_sync` pulses.
+* **Handheld Muted Lyrics Confidence Monitor**: Tapping **📺 Stage TV** on mobile opens `/stage?mute=1` (also accessible via `?muted`, `?view_only`, or `?handheld`), which suppresses audio output, displays a `"🔇 Handheld Lyrics (Muted)"` badge, hides host controls, and locks video/CD+G lyric timing to the main TV stage's WebSocket `playhead_sync` pulses—allowing any tablet or phone on a mic stand to act as a dedicated stage teleprompter.
 * **Live Souvenir MP3 Recording & Retro 45 RPM Vinyl Album Jacket Generator**:
   * During live performances, the stage mixes the backing track and live microphones into a `MediaRecorder` stream (`audio/webm;codecs=opus`), uploads it to `POST /api/recordings/upload`, and converts it via FFmpeg to a `192kbps` MP3 with ID3 metadata (`title`, `artist`, `album` = Lounge Name) stored under `performance_recordings/{singer_token}/`.
   * Singers can play or download their MP3s in the **My Songs** tab and tap **🎨 Vinyl Art** to generate a custom **1080×1080 Retro 45 RPM Vinyl Record Jacket** PNG (rendered client-side on an HTML5 `<canvas>` with tropical sunset gradients, vinyl grooves, and their performance date).
@@ -354,7 +367,7 @@ The Host DJ can switch between three autonomous intermission modes on the fly:
 * **Guaranteed Intermission Countdown Pacing**: When the host skips or when a live song finishes, the stage engine enforces the full configured countdown duration (`intermission_seconds`, default 15s) with ambient BGM whenever pending queued songs exist, giving the next singer ample time to walk up to the microphone. When the queue is empty and the stage is in ambient BGM filler mode, skipping advances directly into the next BGM track without triggering an unnecessary countdown.
 * **"Stop Stage" Party Wrapped Showcase (`show_wrapped`)**: Clicking **"Stop Stage"** (`POST /api/host/stop`) broadcasts session recap metrics (`get_party_wrapped_stats()`) and displays an animated retro synthwave podium overlay on the TV Stage with procedural 80s BGM, celebrating total songs sung, top rockstars of the night, and crowd-favorite tracks.
 
-### 4-Stage Smart Track Selection Algorithm ([`get_next_smart_filler_track`](database.py))
+### 4-Stage Smart Track Selection Algorithm ([`get_next_vibe_filler_track`](database.py))
 When selecting the next intermission track, Tiki Karaoke evaluates every ready candidate in the crate using a 4-stage scoring pipeline:
 1. **90-Minute Sung-Song Cooldown**: Queries `history` for all songs performed live in the last 90 minutes (`5400s`) and excludes any filler track matching the same `video_id` or normalized `(artist, title)` so intermission music never steals or repeats a song a guest just sang.
 2. **Adaptive FIFO Blacklist Ring Buffer**: Excludes the last $N = \min(6, \max(1, \text{total\_ready} - 1))$ played filler tracks recorded in `filler_play_history`.
@@ -379,18 +392,19 @@ Configurable in the Setup Wizard or Host Desk:
 * **`compact_480p` (Compact Space Saver — 480p)**: Caps video height at `480p` (~75% smaller files) for mini-PCs, slower Wi-Fi, or smaller SSDs.
 * **`stream_only` (Temporary Cache Mode)**: Temporarily buffers requested YouTube songs at `480p` (skipping the 2nd FFmpeg normalization pass for speed) so pitch shifting and embed-restricted tracks work reliably, then **automatically deletes the video file from disk as soon as the song finishes playing** (unless the host taps **⬇️ Keep Forever**). Imported local files and CD+G tracks are never auto-deleted.
 
-### Smart Media Importer & CompuHost `.tps` Migration ([main.py](main.py))
+### Smart Media Importer, CompuHost `.tps` Migration & YouTube History Sync ([importer/](importer/), [playlist_sync.py](playlist_sync.py))
 Launch via the Desktop Control Hub (**📂 Import Media**), Setup Wizard, Host Desk, or CLI (`python main.py --import-gui` / `--import-dir PATH`):
-* **Recursive Multi-Format Scanner**: Imports `.mp4`, `.mkv`, `.webm`, paired `.mp3` + `.cdg`, and `.zip` (`MP3+CDG`) archives.
-* **Intelligent Filename Sanitizer ([`parse_karaoke_filename`](main.py))**: Strips YouTube/vendor noise (`[Karaoke Version]`, `(Official Instrumental)`, `[HD 1080p]`, catalog codes like `SC8812-04`, and trailing YouTube 11-char IDs) and splits `Artist - Title (Year)`.
-* **CompuHost `SongList.tps` Binary Parser ([`parse_compuhost_tps`](main.py))**: Auto-detects CompuHost V3/V4/V5 TopSpeed `.tps` database files in the import folder and extracts verified Artist, Title, Disc/Catalog ID, and filenames with 1 click.
-* **Curated Local Library Mode (`strict_byom_only`)**: A Host Desk toggle (`POST /api/host/settings/byom-lock`) that disables all online YouTube search and downloading, locking the server strictly to your local imported media library.
+* **Recursive Multi-Format Scanner ([importer/tiki_importer/engine.py](importer/tiki_importer/engine.py))**: Imports `.mp4`, `.mkv`, `.webm`, paired `.mp3` + `.cdg`, and `.zip` (`MP3+CDG`) archives.
+* **Intelligent Filename Sanitizer ([importer/tiki_importer/cleaner.py](importer/tiki_importer/cleaner.py))**: Strips YouTube/vendor noise (`[Karaoke Version]`, `(Official Instrumental)`, `[HD 1080p]`, catalog codes like `SC8812-04`, and trailing YouTube 11-char IDs) and splits `Artist - Title (Year)`.
+* **CompuHost `SongList.tps` Binary Parser ([importer/tiki_importer/tps_reader.py](importer/tiki_importer/tps_reader.py) & [importer/tiki_importer/compuhost.py](importer/tiki_importer/compuhost.py))**: Auto-detects CompuHost V3/V4/V5 TopSpeed `.tps` database files in the import folder and extracts verified Artist, Title, Disc/Catalog ID, and filenames with 1 click.
+* **Curated Local Library Mode (`strict_byom_only`)**: A Host Desk toggle (`POST /api/host/strict-mode`) that disables all online YouTube search and downloading, locking the server strictly to your local imported media library.
+* **Automatic YouTube Party History Playlist Sync ([playlist_sync.py](playlist_sync.py))**: When authenticated via Google OAuth 2.0 (`/auth/login`, `/auth/callback`), [`sync_played_song_to_youtube()`](playlist_sync.py) automatically archives every completed performance (`video_id`) to a private or unlisted YouTube playlist for the party while generating local M3U playlists by era and genre.
 
 ---
 
 ## 8. Connectivity Modes, SSL Tunnels & Offline Hotspot QR
 
-Configured via [network_helper.py](network_helper.py) and `/setup`:
+Configured via [network_helper.py](network_helper.py), [services/network.py](services/network.py), and `/setup`:
 
 | `remote_mode` | Encryption | Requirements & Behavior |
 | :--- | :---: | :--- |
@@ -400,6 +414,10 @@ Configured via [network_helper.py](network_helper.py) and `/setup`:
 | **`duckdns`** | 🔒 Trusted HTTPS | Free `*.duckdns.org` subdomain with automatic Let's Encrypt TLS via local Caddy reverse proxy (requires router ports `80`/`443`). |
 | **`local`** | LAN HTTP | 100% offline local Wi-Fi (`http://<lan-ip>:8000`). Includes optional **Local Wi-Fi Hotspot Mode** (`hotspot_enabled`), which displays a 2-step QR card on the TV Stage (**Step 1: Scan to Join Wi-Fi** $\rightarrow$ **Step 2: Scan to Open Songbook**). |
 | **`bore`** | HTTP | Legacy fixed-port TCP tunnel on `bore.pub`. |
+
+### Intelligent IPv4 Prioritization & Hotspot Subnet Auto-Detection ([network_helper.py](network_helper.py))
+* **Dual-Stack IPv4 Prioritization ([`prioritize_ipv4()`](network_helper.py))**: Automatically orders `AF_INET` (IPv4) ahead of `AF_INET6` in `socket.getaddrinfo` on startup, preventing 15–30 second socket timeouts on residential or venue networks where ISP IPv6 routing is misconfigured.
+* **Smart Hotspot & Adapter Selection ([`get_best_local_ip()`](network_helper.py))**: When generating stage QR codes in `local` mode, automatically prioritizes active OS/mobile hotspot subnets (`10.42.0.x` Linux NetworkManager, `192.168.137.x` Windows Mobile Hotspot, `192.168.43.x` Android tethering) ahead of standard LAN adapters while filtering out virtual Docker, VM, and VPN bridge interfaces.
 
 ---
 
@@ -488,36 +506,42 @@ Any key can be overridden via environment variables: `TIKI_PORT`, `TIKI_HOST_PIN
 
 ```text
 tiki-karaoke/
-├── main.py                      # Application entry point, CLI tools, Smart Importer & CD+G Ripper GUIs
+├── main.py                      # Application entry point, process supervisor & CLI dispatcher
 ├── app.py                       # FastAPI application coordinator & lifespan router
 ├── routes/                      # Modular FastAPI endpoint routers
-│   ├── host_controls.py         # Host desk controls, loudness calibration & transport
+│   ├── host_controls.py         # Host desk controls, multi-display audio routing, loudness calibration & transport
 │   ├── queue.py                 # Song request submission, duet pairing & fair queue
-│   ├── library.py               # Local & online song search, cached search & song info
+│   ├── library.py               # Local & online song search, cached search & storage cleanup
 │   ├── recordings.py            # Souvenir audio upload, FFmpeg MP3 encoding & ID3 tagging
 │   ├── setup.py                 # Setup wizard, hardware probing & tunnel configuration
 │   ├── launcher.py              # Desktop companion launchers (Rehearsal, Importer, Ripper)
 │   ├── stream.py                # HTTP range-request media streamer for video & CD+G
-│   └── pages.py                 # HTML template endpoints (/stage, /host, /join, /setup)
+│   └── pages.py                 # HTML template endpoints (/stage, /host, /join, /setup, /qr/*)
 ├── services/                    # Autonomous background services & subsystems
-│   ├── playback.py              # Playback state machine, drift sync & countdown manager
+│   ├── playback.py              # Playback state machine, CD+G zip extractor, drift sync & countdown manager
 │   ├── library_cache.py         # In-memory fast search cache with TTL & thread-safe invalidation
-│   ├── network.py               # Robust IPv4 prioritization & dual-stack socket binding
-│   ├── websocket_manager.py     # ConnectionManager client registry & JSON envelope broadcaster
+│   ├── network.py               # Base URL resolution, public host headers & LAN IP helpers
+│   ├── websocket_manager.py     # ConnectionManager client/display registry & JSON envelope broadcaster
 │   ├── temporary_cache.py       # Temporary Cache Mode auto-cleanup of downloaded videos
-│   ├── lifecycle.py             # Startup checks & graceful shutdown handlers
+│   ├── templates.py             # Shared Jinja2 template loader instance
+│   ├── lifecycle.py             # Startup checks & graceful shutdown triggers
 │   └── auth.py                  # Host PIN validation, session cookies & host tokens
+├── importer/                    # Smart Media Importer, CompuHost .tps Migrator & CD+G Ripper package
+│   ├── main.py                  # Importer CLI & GUI entry point
+│   ├── tiki_importer/           # Core engine (engine.py, cleaner.py, tps_reader.py, compuhost.py, cdg_ripper.py, enricher.py)
+│   └── ui/                      # Tkinter windows (app_window.py, compuhost_window.py, cdg_ripper_window.py)
 ├── database.py                  # Async SQLite WAL engine, Fair Round-Robin queue & 4-stage Vibe Engine
 ├── config.py                    # Multi-monitor geometry, audio device probing & configuration manager
-├── audio_router.py              # Native OS mic loopback manager (Linux pactl / Windows WASAPI helper)
+├── audio_router.py              # Native OS mic loopback manager (Linux pactl / Windows WasapiAudioRouter)
 ├── control_hub.py               # Native Tkinter Desktop Control Hub & QR dashboard
 ├── tray.py                      # Cross-platform System Tray daemon (PyQt6 SNI subprocess + pystray)
 ├── downloader.py                # yt-dlp download worker, 2-pass FFmpeg loudnorm (-16 LUFS) & storage profiles
 ├── search.py                    # Hybrid instant-local + concurrent YouTube search & karaoke heuristics
 ├── metadata.py                  # iTunes Search API & Wikipedia release-year/genre enrichment
-├── network_helper.py            # Cloudflare Quick/Named, Tailscale Funnel, DuckDNS+Caddy & Bore tunnels
-├── playlist_sync.py             # Automatic M3U playlist generator by era/genre
+├── network_helper.py            # Cloudflare Quick/Named, Tailscale Funnel, DuckDNS+Caddy, IPv4 & Hotspot QR
+├── playlist_sync.py             # Google OAuth YouTube party history archiver & M3U playlist generator
 ├── setup.py                     # Interactive CLI setup wizard
+├── build_appimage.sh            # Linux x86_64 AppImage builder script
 ├── scripts/
 │   ├── generate_bgm.py          # Clean-room mathematical synthesizer for all 10 BGM MP3 tracks
 │   └── generate_soundboard_audio.py # Clean-room physical-modeling synthesizer for DJ soundboard FX
@@ -538,8 +562,8 @@ tiki-karaoke/
 │   └── legal.html               # About, Bring-Your-Own-Media Guide & Legal Disclaimers (/legal)
 ├── packaging/
 │   ├── aur/                     # Arch User Repository (PKGBUILD, .SRCINFO, tiki-karaoke.desktop)
-│   └── windows/                 # Windows WASAPI C router (tiki_mic_router.c), PyInstaller spec & Inno Setup
-└── tests/                       # 64 automated unit, API, CD+G, and system integration tests
+│   └── windows/                 # Windows build scripts (build_windows.ps1, tiki_karaoke.spec, installer.iss, THIRD_PARTY_LICENSES.txt)
+└── tests/                       # Automated unit, API, CD+G, and system integration tests
 ```
 
 ### Running the Automated Test Suite
