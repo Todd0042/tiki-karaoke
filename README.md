@@ -569,8 +569,11 @@ tiki-karaoke/
 ### Running the Automated Test Suite
 Tiki Karaoke includes an isolated test suite (`tests/`) that runs against temporary SQLite databases (`TIKI_TESTING=1`) without touching your personal library or configuration:
 ```bash
-# Run all 64 unit, API, CD+G, and system integration tests:
+# Run all unit, API, CD+G, and system integration tests:
 ./venv/bin/python -m unittest discover tests -v
+
+# Run targeted fast hermetic CI unit tests (Windows compatibility, CD+G subcode, Vibe Engine):
+./venv/bin/python -m unittest tests.test_windows_compatibility tests.test_cdg tests.test_vibe_engine -v
 
 # Run the deep end-to-end subsystem verification script:
 ./venv/bin/python tests/verify_deep_system.py
