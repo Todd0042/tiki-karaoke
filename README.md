@@ -13,7 +13,6 @@
 [![Platform: Linux & Windows](https://img.shields.io/badge/Platform-Linux%20(AppImage)%20%7C%20Windows-orange.svg)](https://github.com/Todd0042/tiki-karaoke/releases)
 [![Python: 3.10+](https://img.shields.io/badge/Python-3.10%2B-39ff14.svg)]()
 [![FastAPI + WebSockets](https://img.shields.io/badge/Backend-FastAPI%20%2B%20WebSockets-teal.svg)]()
-[![Docker](https://img.shields.io/badge/Container-Docker%20Compose-2496ED?logo=docker&logoColor=white)]()
 [![Support on Ko-fi](https://img.shields.io/badge/Ko--fi-Support%20Creator-F16061?style=flat&logo=ko-fi&logoColor=white)](https://ko-fi.com/todd0042)
 
 > **Turn any TV, computer, and your guests' smartphones into a neon tropical karaoke lounge in 60 seconds — with zero apps for guests to install, fair round-robin queueing, real-time vocal & track DSP, and 100% local data ownership.**
@@ -152,16 +151,6 @@ cd tiki-karaoke
 pip install -r requirements.txt
 start.bat
 ```
-
-### 🐳 Docker & Docker Compose (Self-Hosted / Home Server)
-Run Tiki Karaoke seamlessly in a container on any Docker-capable system:
-```bash
-# Clone and spin up with Docker Compose
-git clone https://github.com/Todd0042/tiki-karaoke.git
-cd tiki-karaoke
-docker compose up -d
-```
-Access the stage at `http://localhost:8000/stage` and the host console at `http://localhost:8000/host`. Database state and media libraries persist in `./data` and `./karaoke_library`.
 
 ---
 ---
