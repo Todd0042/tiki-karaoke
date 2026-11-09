@@ -507,3 +507,14 @@ if sys.platform == "win32":
     audio_router = WasapiAudioRouter()
 else:
     audio_router = NativeAudioRouter()
+
+
+def set_monitoring_mode(mode: str):
+    """Module-level forwarder for audio_router.set_monitoring_mode."""
+    return audio_router.set_monitoring_mode(mode)
+
+
+def get_state() -> dict:
+    """Module-level forwarder for audio_router.get_state."""
+    return audio_router.get_state()
+

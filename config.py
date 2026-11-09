@@ -586,6 +586,7 @@ def _windows_mic_router_devices() -> Optional[Dict[str, Any]]:
         res = subprocess.run(
             [str(helper), "--list-json"],
             capture_output=True, text=True, timeout=5,
+            encoding="utf-8", errors="replace",
             creationflags=creationflags
         )
         if res.returncode == 0 and res.stdout.strip():

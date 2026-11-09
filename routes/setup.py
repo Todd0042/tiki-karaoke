@@ -28,7 +28,7 @@ from config import (
     get_system_drives
 )
 from database import init_db, migrate_storage_paths, get_setting, set_setting
-import audio_router
+from audio_router import audio_router, MONITORING_MODES
 from services.websocket_manager import manager
 from services.auth import is_host_request, is_local_request
 from services.templates import templates
@@ -600,7 +600,6 @@ async def api_save_setup(payload: Dict[str, Any], request: Request, response: Re
         if "video_quality_profile" in payload:
             set_setting("video_quality_profile", str(payload["video_quality_profile"]))
         if "mic_monitoring_mode" in payload:
-            from audio_router import MONITORING_MODES
             mode = str(payload["mic_monitoring_mode"]).strip()
             if mode in MONITORING_MODES:
                 set_setting("mic_monitoring_mode", mode)

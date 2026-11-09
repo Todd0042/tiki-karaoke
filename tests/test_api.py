@@ -1114,12 +1114,15 @@ class TestAPIEndpoints(unittest.TestCase):
         res = self.client.post("/api/setup", json={
             "bar_name": "Test Lounge",
             "host_pin": "1234",
-            "kiosk_mode": False
+            "kiosk_mode": False,
+            "mic_monitoring_mode": "hardware_direct"
         }, headers={"X-Host-Token": HOST_TOKEN})
         self.assertEqual(res.status_code, 200)
         data = res.json()
         self.assertEqual(data["status"], "ok")
         self.assertIn("/host", data["redirect"])
+        from database import get_setting
+        self.assertEqual(get_setting("mic_monitoring_mode"), "hardware_direct")
 
     def test_control_hub_module_and_safe_logger(self):
         """Verifies control_hub class structure and main SafeLogger."""
