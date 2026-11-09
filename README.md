@@ -8,7 +8,7 @@
 
 # 🌴 Tiki Karaoke Lounge & Neon Bar
 
-[![Version](https://img.shields.io/badge/Version-1.1.3-ff2a85.svg)](https://github.com/Todd0042/tiki-karaoke/releases)
+[![Version](https://img.shields.io/badge/Version-1.1.4-ff2a85.svg)](https://github.com/Todd0042/tiki-karaoke/releases)
 [![License: PolyForm Noncommercial](https://img.shields.io/badge/License-PolyForm%20Noncommercial%201.0.0-00f0ff.svg)](LICENSE)
 [![Platform: Linux & Windows](https://img.shields.io/badge/Platform-Linux%20(AppImage)%20%7C%20Windows-orange.svg)](https://github.com/Todd0042/tiki-karaoke/releases)
 [![Python: 3.10+](https://img.shields.io/badge/Python-3.10%2B-39ff14.svg)]()
@@ -126,16 +126,16 @@ Full live transport, 3-mode microphone mixing with dual-singer VU meters, Venue 
 ## 🚀 Quick Download & Installation
 
 ### 🐧 Universal Linux AppImage (Ubuntu, Debian, Fedora, Mint, Arch, SteamOS)
-Download `TikiKaraoke-Pro-v1.1.3-x86_64.AppImage` directly from [GitHub Releases](https://github.com/Todd0042/tiki-karaoke/releases):
+Download `TikiKaraoke-Pro-v1.1.4-x86_64.AppImage` directly from [GitHub Releases](https://github.com/Todd0042/tiki-karaoke/releases):
 ```bash
-chmod +x TikiKaraoke-Pro-v1.1.3-x86_64.AppImage
-./TikiKaraoke-Pro-v1.1.3-x86_64.AppImage
+chmod +x TikiKaraoke-Pro-v1.1.4-x86_64.AppImage
+./TikiKaraoke-Pro-v1.1.4-x86_64.AppImage
 ```
 
 ### 🪟 Windows 10 & 11 (64-Bit)
 Download the standalone Windows release on **[itch.io (Tiki Karaoke Lounge)](https://todd0042.itch.io/tiki-karaoke-lounge)**:
-* **Standalone Installer**: Run `TikiKaraokeSetup-Pro-1.1.3.exe` to install to your Desktop and Start Menu.
-* **Portable ZIP**: Extract `TikiKaraoke-Pro-Windows-v1.1.3-Portable.zip` anywhere and launch `TikiKaraoke.exe` (no administrative privileges required; FFmpeg and WASAPI mic router come pre-bundled).
+* **Standalone Installer**: Run `TikiKaraokeSetup-Pro-1.1.4.exe` to install to your Desktop and Start Menu.
+* **Portable ZIP**: Extract `TikiKaraoke-Pro-Windows-v1.1.4-Portable.zip` anywhere and launch `TikiKaraoke.exe` (no administrative privileges required; FFmpeg and WASAPI mic router come pre-bundled).
 
 ### 🛠️ Run from Source (Cross-Platform)
 Tiki Karaoke is fully open-source and can be run directly from source on any operating system:
@@ -157,7 +157,7 @@ start.bat
 
 # Part 2 — Consolidated Technical Documentation & Architecture Reference
 
-> *The sections below provide an exhaustive, code-verified engineering reference of every module, DSP pipeline, database algorithm, API/WebSocket contract, and configuration parameter in Tiki Karaoke Lounge `v1.1.3`.*
+> *The sections below provide an exhaustive, code-verified engineering reference of every module, DSP pipeline, database algorithm, API/WebSocket contract, and configuration parameter in Tiki Karaoke Lounge `v1.1.4`.*
 
 ---
 
