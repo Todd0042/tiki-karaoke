@@ -180,6 +180,7 @@ function checkRole() {
         })
         .catch(err => {
             console.error("[Auth] Role check failed:", err);
+            showToast("⚠️ Could not reach karaoke server to verify session.", true);
             return false;
         });
 }
@@ -391,6 +392,10 @@ function checkAvailableAvatarsForName(name) {
         })
         .catch(err => {
             console.error("[AvatarCheck] Error checking avatars:", err);
+            if (errEl) {
+                errEl.innerText = "⚠️ Could not check nickname availability. Check connection.";
+                errEl.style.display = "block";
+            }
         });
 }
 
@@ -932,7 +937,10 @@ function performSearch(query, forceOnline = false, page = 1) {
                 return;
             }
             if (page === 1) {
-                resultsContainer.innerHTML = `<div style="text-align: center; color: #ffb703; padding: 20px;">⏳ ${err.message || "Search error. Check connection."}</div>`;
+                resultsContainer.innerHTML = `<div style="text-align: center; color: #ffb703; padding: 20px;">
+                    <div style="margin-bottom: 10px;">⏳ ${err.message || "Search error. Check connection."}</div>
+                    <button type="button" onclick="performSearch(currentSearchQuery, currentSearchForceOnline, 1)" class="btn-ghost" style="padding: 6px 14px; font-size: 0.85rem;">↻ Retry Search</button>
+                </div>`;
             } else {
                 showToast("⚠️ " + (err.message || "Could not load more songs"));
                 const findMoreBtn = document.getElementById("findMoreBtn");
@@ -2610,23 +2618,23 @@ function nudgeVenueAvSync(deltaMs) {
 }
 
 // Helpers
-function showToast(msg) {
+function showToast(msg, isError = false) {
     const toast = document.createElement("div");
     toast.style.position = "fixed";
     toast.style.bottom = "80px";
     toast.style.left = "50%";
     toast.style.transform = "translateX(-50%)";
-    toast.style.background = "rgba(16, 28, 45, 0.95)";
-    toast.style.border = "1px solid var(--neon-cyan)";
+    toast.style.background = isError ? "rgba(48, 12, 22, 0.96)" : "rgba(16, 28, 45, 0.95)";
+    toast.style.border = isError ? "1px solid #ff5555" : "1px solid var(--neon-cyan)";
     toast.style.color = "#fff";
     toast.style.padding = "10px 18px";
     toast.style.borderRadius = "20px";
     toast.style.fontSize = "0.9rem";
     toast.style.zIndex = "1000";
-    toast.style.boxShadow = "0 0 15px rgba(0, 240, 255, 0.5)";
+    toast.style.boxShadow = isError ? "0 0 18px rgba(255, 85, 85, 0.55)" : "0 0 15px rgba(0, 240, 255, 0.5)";
     toast.innerText = msg;
     document.body.appendChild(toast);
-    setTimeout(() => toast.remove(), 2500);
+    setTimeout(() => toast.remove(), isError ? 3500 : 2500);
 }
 
 function formatDuration(sec) {

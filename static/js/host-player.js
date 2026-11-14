@@ -143,6 +143,18 @@ function resumeStagePlayback() {
 
 let wsPingInterval = null;
 
+function setStageConnectionBanner(connected) {
+    let banner = document.getElementById("stageWsBanner");
+    if (!banner) {
+        banner = document.createElement("div");
+        banner.id = "stageWsBanner";
+        banner.style.cssText = "position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:9999;padding:8px 18px;border-radius:999px;background:rgba(48,12,22,0.94);border:1px solid #ff5555;color:#fff;font-size:0.88rem;font-weight:700;display:none;box-shadow:0 0 18px rgba(255,85,85,0.45);";
+        banner.innerText = "🔄 Reconnecting to Tiki Server...";
+        document.body.appendChild(banner);
+    }
+    banner.style.display = connected ? "none" : "block";
+}
+
 function initWebSocket() {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const wsUrl = `${protocol}//${window.location.host}/ws`;
@@ -163,6 +175,7 @@ function initWebSocket() {
     ws = new WebSocket(wsUrl);
 
     ws.onopen = () => {
+        setStageConnectionBanner(true);
         console.log("[Host WS] Connected as display:", myDisplayId, myDisplayName);
         ws.send(JSON.stringify({
             type: "stage_register",
@@ -197,6 +210,7 @@ function initWebSocket() {
     };
 
     ws.onclose = () => {
+        setStageConnectionBanner(false);
         console.log("[Host WS] Disconnected, retrying in 2s...");
         if (wsPingInterval) {
             clearInterval(wsPingInterval);
