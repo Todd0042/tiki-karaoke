@@ -582,11 +582,6 @@ class CdgRipperWindow:
                 self._open_output_folder()
 
 
-def open_cdg_ripper_window(parent: Optional["tk.Tk"] = None, target_tracks_dir: Optional[str] = None) -> CdgRipperWindow:
-    """Convenience launcher for the CD+G Ripper Window."""
-    return CdgRipperWindow(parent=parent, target_tracks_dir=target_tracks_dir)
-
-
 if __name__ == "__main__":
     if not HAS_GUI:
         print("Error: Tkinter GUI not available.")

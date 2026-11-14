@@ -146,6 +146,55 @@
             border: none;
             margin-top: 10px;
         }
+
+        .setup-mode-bar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 12px;
+            background: rgba(8, 14, 24, 0.72);
+            border: 1px solid rgba(0, 240, 255, 0.25);
+            border-radius: 14px;
+            padding: 12px 16px;
+            margin-bottom: 20px;
+        }
+        .setup-mode-toggle {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            cursor: pointer;
+            font-weight: 700;
+            color: var(--neon-cyan);
+            user-select: none;
+        }
+        .setup-mode-toggle input {
+            width: 18px;
+            height: 18px;
+            accent-color: var(--neon-cyan);
+            cursor: pointer;
+        }
+        .setup-adv-cat-wrap {
+            display: none;
+            align-items: center;
+            gap: 10px;
+            flex: 1;
+            min-width: 240px;
+            justify-content: flex-end;
+        }
+        .setup-adv-cat-wrap select {
+            background: rgba(15, 25, 40, 0.9);
+            border: 1px solid rgba(0, 240, 255, 0.35);
+            color: #fff;
+            border-radius: 10px;
+            padding: 8px 12px;
+            font-size: 0.92rem;
+            font-weight: 600;
+            max-width: 100%;
+        }
+        body:not(.adv-mode) .adv-only {
+            display: none !important;
+        }
     </style>
 </head>
 <body>
@@ -157,9 +206,27 @@
             </p>
         </div>
 
+        <div class="setup-mode-bar">
+            <label class="setup-mode-toggle" for="advancedSetupToggle">
+                <input type="checkbox" id="advancedSetupToggle" onchange="onSetupModeChange()">
+                <span>⚙️ Advanced Options</span>
+            </label>
+            <div id="advancedCategoryWrap" class="setup-adv-cat-wrap">
+                <label for="advancedCategorySelect" style="font-size: 0.85rem; color: var(--text-muted); white-space: nowrap;">Category:</label>
+                <select id="advancedCategorySelect" onchange="onAdvancedCategoryChange()">
+                    <option value="identity">👑 1. Lounge Identity &amp; Security</option>
+                    <option value="remote">🌐 2. Remote Access &amp; Hotspot</option>
+                    <option value="storage">💾 3. Storage &amp; Video Quality</option>
+                    <option value="display">🖥️ 4. Stage Display Chooser</option>
+                    <option value="audio">🔊 5. Audio, Mic &amp; Monitoring</option>
+                    <option value="experience">🌴 6. Stage Experience &amp; DJ</option>
+                </select>
+            </div>
+        </div>
+
         <form id="setupForm" onsubmit="handleSetupSubmit(event)">
             <!-- Section 1: Identity & Host Security -->
-            <div class="form-section">
+            <div class="form-section" data-adv-cat="identity">
                 <div class="section-header">👑 1. Lounge Identity & Host Security</div>
                 <div class="field-group">
                     <label for="barName">Bar / Lounge Name</label>
@@ -173,7 +240,7 @@
                         <input type="text" id="hostPin" name="host_pin" maxlength="8" value="{{ config.host_pin or '1234' }}" required>
                         <div class="field-desc">Used to pair phone with Host DJ Master Remote.</div>
                     </div>
-                    <div class="field-group">
+                    <div class="field-group adv-only">
                         <label for="port">Local Port</label>
                         <input type="number" id="port" name="port" value="{{ config.port or 8000 }}" required>
                         <div class="field-desc">Standard port to run on (default: 8000).</div>
@@ -182,20 +249,28 @@
             </div>
 
             <!-- Section 2: Remote Connectivity -->
-            <div class="form-section">
-                <div class="section-header">🌐 2. Remote Access & SSL / HTTPS</div>
-                <div class="field-desc" style="margin-bottom: 12px;">Choose how singers and the stage connect across devices or over the internet:</div>
+            <div class="form-section" data-adv-cat="remote">
+                <div class="section-header">🌐 2. Privacy &amp; Remote Access</div>
+                <div class="field-desc" style="margin-bottom: 12px;">Default is private Local Wi-Fi Only. Enable an instant link or switch to Advanced Options for custom domains:</div>
 
                 <div class="radio-card-grid">
-                    <label class="radio-card active" id="cardCloudflareQuick" onclick="selectRemoteMode('cloudflare_quick')">
-                        <input type="radio" name="remote_mode" value="cloudflare_quick" checked style="margin-top: 4px;">
+                    <label class="radio-card active" id="cardLocal" onclick="selectRemoteMode('local')">
+                        <input type="radio" name="remote_mode" value="local" checked style="margin-top: 4px;">
                         <div>
-                            <div style="font-weight: 700; color: var(--neon-gold);">🔒 Cloudflare Quick Tunnel (Recommended)</div>
-                            <div class="field-desc">Instant trusted HTTPS on *.trycloudflare.com. Zero setup, no account needed, green padlock for all guests.</div>
+                            <div style="font-weight: 700; color: #aaffaa;">🛡️ Local Wi-Fi Only (Private Default)</div>
+                            <div class="field-desc">Stays on your home/venue Wi-Fi only (http://192.168.x.x:8000). No external tunnel.</div>
                         </div>
                     </label>
 
-                    <label class="radio-card" id="cardCloudflareNamed" onclick="selectRemoteMode('cloudflare_named')">
+                    <label class="radio-card" id="cardCloudflareQuick" onclick="selectRemoteMode('cloudflare_quick')">
+                        <input type="radio" name="remote_mode" value="cloudflare_quick" style="margin-top: 4px;">
+                        <div>
+                            <div style="font-weight: 700; color: var(--neon-gold);">🔒 Cloudflare Quick Tunnel</div>
+                            <div class="field-desc">Instant public HTTPS link on *.trycloudflare.com. Zero account setup.</div>
+                        </div>
+                    </label>
+
+                    <label class="radio-card adv-only" id="cardCloudflareNamed" onclick="selectRemoteMode('cloudflare_named')">
                         <input type="radio" name="remote_mode" value="cloudflare_named" style="margin-top: 4px;">
                         <div>
                             <div style="font-weight: 700; color: var(--neon-cyan);">👑 Cloudflare Named Tunnel (Custom Domain)</div>
@@ -203,7 +278,7 @@
                         </div>
                     </label>
 
-                    <label class="radio-card" id="cardTailscale" onclick="selectRemoteMode('tailscale')">
+                    <label class="radio-card adv-only" id="cardTailscale" onclick="selectRemoteMode('tailscale')">
                         <input type="radio" name="remote_mode" value="tailscale" style="margin-top: 4px;">
                         <div>
                             <div style="font-weight: 700; color: #aaffaa;">🔒 Tailscale Funnel</div>
@@ -211,7 +286,7 @@
                         </div>
                     </label>
 
-                    <label class="radio-card" id="cardDuckdns" onclick="selectRemoteMode('duckdns')">
+                    <label class="radio-card adv-only" id="cardDuckdns" onclick="selectRemoteMode('duckdns')">
                         <input type="radio" name="remote_mode" value="duckdns" style="margin-top: 4px;">
                         <div>
                             <div style="font-weight: 700; color: #ffaa55;">🔒 DuckDNS + Caddy</div>
@@ -219,15 +294,7 @@
                         </div>
                     </label>
 
-                    <label class="radio-card" id="cardLocal" onclick="selectRemoteMode('local')">
-                        <input type="radio" name="remote_mode" value="local" style="margin-top: 4px;">
-                        <div>
-                            <div style="font-weight: 700; color: #fff;">Local Wi-Fi Only</div>
-                            <div class="field-desc">Offline internal LAN only (http://192.168.x.x:8000). Zero internet required.</div>
-                        </div>
-                    </label>
-
-                    <label class="radio-card" id="cardBore" onclick="selectRemoteMode('bore')">
+                    <label class="radio-card adv-only" id="cardBore" onclick="selectRemoteMode('bore')">
                         <input type="radio" name="remote_mode" value="bore" style="margin-top: 4px;">
                         <div>
                             <div style="font-weight: 700; color: var(--text-muted);">Bore Static Port (Legacy)</div>
@@ -291,7 +358,7 @@
                 </div>
 
                 <!-- Sub-panel: Local Wi-Fi & Hotspot Configuration -->
-                <div id="localWifiFields" class="tiki-card" style="display: none; margin-top: 14px; padding: 16px; border-left: 3px solid var(--neon-cyan); background: rgba(16, 28, 45, 0.95);">
+                <div id="localWifiFields" class="tiki-card adv-only" style="display: none; margin-top: 14px; padding: 16px; border-left: 3px solid var(--neon-cyan); background: rgba(16, 28, 45, 0.95);">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
                         <div style="font-weight: 700; color: var(--neon-cyan); font-size: 1rem;">📶 Local Access Point / Hotspot Credentials</div>
                         <span style="font-size: 0.75rem; color: var(--neon-gold); font-weight: 600;">Optional</span>
@@ -321,7 +388,7 @@
             </div>
 
             <!-- Section 3: Storage & Media Library -->
-            <div class="form-section">
+            <div class="form-section adv-only" data-adv-cat="storage">
                 <div class="section-header">💾 3. Storage & Media Library</div>
                 <div class="field-desc" style="margin-bottom: 14px;">
                     Choose where downloaded video files, playlists, and database are saved. Perfect for using a dedicated secondary NVMe SSD or storage drive (e.g. <code style="color: var(--neon-gold);">C:\Karaoke</code>, <code style="color: var(--neon-gold);">D:\Karaoke</code>, or <code style="color: var(--neon-gold);">~/karaoke</code>).
@@ -422,7 +489,7 @@
             </div>
 
             <!-- Section 4: Main Stage Display Chooser -->
-            <div class="form-section">
+            <div class="form-section" data-adv-cat="display">
                 <div class="section-header">🖥️ 4. Main Stage Display Chooser</div>
                 <div class="field-desc" style="margin-bottom: 14px;">
                     Choose which monitor or TV window will host the Main Stage karaoke display when the computer starts up or when opened from the Control Hub.
@@ -503,9 +570,9 @@
                     </div>
                 </div>
 
-                <hr style="border: 0; border-top: 1px solid rgba(255, 255, 255, 0.1); margin: 20px 0;">
+                <hr class="adv-only" style="border: 0; border-top: 1px solid rgba(255, 255, 255, 0.1); margin: 20px 0;">
 
-                <div class="field-group">
+                <div class="field-group adv-only">
                     <label for="preferredBrowserSelect">🌐 Preferred Web Browser</label>
                     <div class="field-desc" style="margin-bottom: 8px;">
                         Choose which browser to use when launching Tiki Karaoke windows (Stage screen, Host desk, Setup).
@@ -518,7 +585,7 @@
             </div>
 
             <!-- Section 5: Audio Output Device Selection -->
-            <div class="form-section">
+            <div class="form-section" data-adv-cat="audio">
                 <div class="section-header">🔊 5. Audio Output Device Selection</div>
                 <div class="field-desc" style="margin-bottom: 14px;">
                     Select where stage audio and music will play (e.g. HDMI out to your TV / AV receiver, PA mixer, or external speakers).
@@ -536,7 +603,7 @@
                     <div id="audioDeviceInfo" class="field-desc" style="margin-top: 6px; color: var(--neon-gold);"></div>
                 </div>
 
-                <div class="field-group" style="margin-top: 18px; padding-top: 14px; border-top: 1px solid rgba(255,255,255,0.08);">
+                <div class="field-group adv-only" style="margin-top: 18px; padding-top: 14px; border-top: 1px solid rgba(255,255,255,0.08);">
                     <label for="audioInputSelect">🎤 Stage Microphone & Audio Input Device (Line-In / Mic / Receiver)</label>
                     <div style="display: flex; gap: 8px;">
                         <select id="audioInputSelect" name="audio_input_device" onchange="onAudioInputSelected()" style="flex: 1;">
@@ -557,7 +624,7 @@
                 </div>
 
                 <!-- Monitoring Mode Selector -->
-                <div class="field-group" style="margin-top: 18px; padding-top: 14px; border-top: 1px solid rgba(255,255,255,0.08);">
+                <div class="field-group adv-only" style="margin-top: 18px; padding-top: 14px; border-top: 1px solid rgba(255,255,255,0.08);">
                     <label for="micMonitoringModeSelect">🎧 Mic Monitoring Mode</label>
                     <select id="micMonitoringModeSelect" name="mic_monitoring_mode" onchange="onMonitoringModeChanged(this.value)" style="width: 100%;">
                         <option value="hardware_direct">Hardware Mixer / Direct Interface — Zero-latency hardware monitoring (Clean bypass, Pro Recommended)</option>
@@ -575,9 +642,9 @@
             </div>
 
             <!-- Section 6: Stage Experience & DJ Settings -->
-            <div class="form-section">
+            <div class="form-section" data-adv-cat="experience">
                 <div class="section-header">🌴 6. Stage Experience & DJ Settings</div>
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px;">
+                <div class="adv-only" style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px;">
                     <div class="field-group">
                         <label for="targetLufs">Loudness Target (EBU R128)</label>
                         <select id="targetLufs" name="target_lufs">
@@ -624,6 +691,29 @@
     </div>
 
     <script>
+        function onSetupModeChange() {
+            const toggle = document.getElementById('advancedSetupToggle');
+            const isAdv = Boolean(toggle && toggle.checked);
+            document.body.classList.toggle('adv-mode', isAdv);
+            const catWrap = document.getElementById('advancedCategoryWrap');
+            if (catWrap) catWrap.style.display = isAdv ? 'flex' : 'none';
+            onAdvancedCategoryChange();
+        }
+
+        function onAdvancedCategoryChange() {
+            const toggle = document.getElementById('advancedSetupToggle');
+            const isAdv = Boolean(toggle && toggle.checked);
+            const sel = document.getElementById('advancedCategorySelect');
+            const activeCat = sel ? sel.value : 'identity';
+            document.querySelectorAll('#setupForm .form-section[data-adv-cat]').forEach(sec => {
+                if (!isAdv) {
+                    sec.style.display = '';
+                } else {
+                    sec.style.display = (sec.getAttribute('data-adv-cat') === activeCat) ? '' : 'none';
+                }
+            });
+        }
+
         function selectRemoteMode(mode) {
             document.querySelectorAll('#cardCloudflareQuick, #cardCloudflareNamed, #cardTailscale, #cardDuckdns, #cardLocal, #cardBore').forEach(c => c.classList.remove('active'));
             const radio = document.querySelector(`input[name="remote_mode"][value="${mode}"]`);
@@ -1219,8 +1309,9 @@
                 }
                 onMonitoringModeChanged(modeSel.value);
             }
-            const savedRemoteMode = '{{ config.remote_mode or "cloudflare_quick" }}';
+            const savedRemoteMode = '{{ config.remote_mode or "local" }}';
             selectRemoteMode(savedRemoteMode);
+            onSetupModeChange();
         });
 
         async function handleSetupSubmit(e) {

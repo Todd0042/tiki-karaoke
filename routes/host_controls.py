@@ -348,33 +348,6 @@ async def api_get_host_mic_state():
     return JSONResponse(st)
 
 
-@router.post("/api/host/mic-monitoring-mode")
-async def api_set_mic_monitoring_mode(request: Request):
-    if not is_host_request(request):
-        raise HTTPException(status_code=403, detail="Host DJ authorization required")
-    data = await request.json()
-    mode = str(data.get("mode", "native")).strip()
-    from audio_router import MONITORING_MODES
-    if mode not in MONITORING_MODES:
-        raise HTTPException(status_code=400, detail=f"Invalid mode '{mode}'. Valid: {MONITORING_MODES}")
-    audio_router.set_monitoring_mode(mode)
-    set_setting("mic_monitoring_mode", mode)
-    if mode == "native" and not audio_router.is_muted:
-        audio_router.start_loopback()
-    st = audio_router.get_state()
-    msg = {
-        "type": "host_mic_settings",
-        "monitoring_mode": mode,
-        "available": st.get("available", False),
-        "muted": st.get("muted", True),
-        "volume": st.get("volume", 80),
-        "device": st.get("device", "default"),
-        "latency_ms": st.get("latency_ms_est"),
-    }
-    await manager.broadcast(msg)
-    return {"status": "ok", "monitoring_mode": mode}
-
-
 @router.get("/api/bgm-tracks")
 async def api_get_bgm_tracks():
     bgm_dir = STATIC_DIR / "bgm"
@@ -893,14 +866,6 @@ async def api_set_host_strict_mode(request: Request):
         "strict_byom_only": enabled
     })
     return {"status": "ok", "strict_byom_only": enabled}
-
-
-@router.post("/api/host/metadata/refresh")
-async def api_refresh_metadata(request: Request):
-    if not is_host_request(request):
-        raise HTTPException(status_code=403, detail="Host DJ authorization required")
-    asyncio.create_task(playback.background_metadata_enricher())
-    return {"status": "ok", "message": "Metadata enrichment background task started"}
 
 
 @router.post("/api/host/toggle-pause")
@@ -1494,8 +1459,3 @@ async def api_surprise():
         return None
     import random
     return random.choice(tracks)
-
-
-@router.get("/api/wrapped")
-async def api_wrapped():
-    return get_party_wrapped_stats()

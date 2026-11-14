@@ -189,28 +189,6 @@ async def api_get_singer_recordings(token: str):
     return get_recordings_for_singer(singer["id"])
 
 
-@router.get("/api/host/recordings")
-async def api_get_host_recordings(request: Request):
-    if not (is_host_request(request) or is_local_request(request)):
-        raise HTTPException(status_code=403, detail="Host DJ authorization required")
-    return get_all_recordings()
-
-
-@router.delete("/api/host/recordings/{recording_id}")
-async def api_delete_recording(recording_id: int, request: Request):
-    if not (is_host_request(request) or is_local_request(request)):
-        raise HTTPException(status_code=403, detail="Host DJ authorization required")
-    file_path = delete_recording(recording_id)
-    if file_path:
-        p = Path(file_path)
-        if p.exists():
-            try:
-                p.unlink()
-            except Exception:
-                pass
-    return {"status": "ok", "deleted": recording_id}
-
-
 @router.get("/api/host/storage/recordings")
 async def api_get_host_recordings_storage(request: Request):
     if not (is_host_request(request) or is_local_request(request)):

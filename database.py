@@ -367,16 +367,6 @@ def get_taken_avatars_for_name(
         taken.append(av)
     return taken
 
-def check_singer_avatar_available(
-    name: str, 
-    avatar: str, 
-    exclude_token: str = "", 
-    client_ip: str = "", 
-    is_host: bool = False
-) -> bool:
-    taken = get_taken_avatars_for_name(name, exclude_token=exclude_token, client_ip=client_ip, is_host=is_host)
-    return avatar not in taken
-
 def get_or_create_singer(
     token: str, 
     name: str = "", 
@@ -1473,13 +1463,6 @@ def remove_from_queue(queue_id: int, singer_id: Optional[int] = None) -> bool:
             rebalance_queue_round_robin(conn)
     conn.close()
     return deleted
-
-def reorder_queue(ordered_queue_ids: List[int]):
-    conn = get_db()
-    with conn:
-        for idx, q_id in enumerate(ordered_queue_ids):
-            conn.execute("UPDATE queue SET sort_order = ? WHERE id = ?", (float(idx + 1), q_id))
-    conn.close()
 
 def normalize_song_string(s: str) -> str:
     if not s:
