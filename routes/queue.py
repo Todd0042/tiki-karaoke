@@ -27,7 +27,7 @@ from database import (
     get_setting
 )
 from downloader import enqueue_download
-from services.auth import is_host_request, is_local_request
+from services.auth import get_client_ip, is_host_request, is_local_request, require_room_access
 from services.websocket_manager import manager
 from services.temporary_cache import maybe_cleanup_temporary_track
 
@@ -71,7 +71,8 @@ last_queue_time_by_ip: Dict[str, float] = {}
 # Singer Endpoints
 @router.post("/api/singer/register")
 async def api_register_singer(req: SingerRegisterRequest, request: Request):
-    client_ip = request.client.host if request.client else ""
+    require_room_access(request)
+    client_ip = get_client_ip(request)
     is_host = is_host_request(request) or is_local_request(request)
     try:
         singer = get_or_create_singer(
@@ -88,7 +89,7 @@ async def api_register_singer(req: SingerRegisterRequest, request: Request):
 
 @router.get("/api/singer/available-avatars")
 async def api_available_avatars(request: Request, name: str = "", token: str = ""):
-    client_ip = request.client.host if request.client else ""
+    client_ip = get_client_ip(request)
     is_host = is_host_request(request) or is_local_request(request)
     taken = get_taken_avatars_for_name(name, exclude_token=token, client_ip=client_ip, is_host=is_host)
     return {
@@ -207,7 +208,8 @@ async def api_check_duplicate(
 
 
 @router.post("/api/queue/{queue_id}/join-duet")
-async def api_join_duet(queue_id: int, req: JoinDuetRequest):
+async def api_join_duet(queue_id: int, req: JoinDuetRequest, request: Request):
+    require_room_access(request)
     singer = get_singer_by_token(req.singer_token)
     name = req.partner_name or (singer["name"] if singer else "Friend")
     res = add_duet_partner(queue_id, name)
@@ -240,7 +242,8 @@ async def api_leave_duet(queue_id: int, req: LeaveDuetRequest):
 
 @router.post("/api/queue")
 async def api_enqueue_song(req: QueueSongRequest, request: Request):
-    client_ip = request.client.host if request.client else ""
+    require_room_access(request)
+    client_ip = get_client_ip(request)
     is_host = is_host_request(request)
 
     singer = get_singer_by_token(req.singer_token)

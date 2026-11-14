@@ -46,8 +46,17 @@ def get_base_url() -> str:
     host = get_public_host()
     if mode != "local" and host:
         if host.startswith("http://") or host.startswith("https://"):
-            return host
+            return host.rstrip("/")
         if os.getenv("TIKI_USE_HTTPS") == "1" or "trycloudflare.com" in host or ".ts.net" in host:
             return f"https://{host}"
         return f"http://{host}"
     return f"http://{get_local_ip()}:{PORT}"
+
+
+def get_join_url() -> str:
+    """Return the guest join URL, appending ?room=XXXX when Room Code gating is active."""
+    from services.auth import get_active_room_code, is_room_code_required
+    base = f"{get_base_url()}/join"
+    if is_room_code_required():
+        return f"{base}?room={get_active_room_code()}"
+    return base

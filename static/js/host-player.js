@@ -2978,6 +2978,25 @@ function updateStageNetworkUI(data) {
     if (joinDisplayIp && data.join_url) {
         joinDisplayIp.innerText = data.join_url;
     }
+
+    fetch("/api/stage/room-info")
+        .then(r => r.ok ? r.json() : null)
+        .then(info => {
+            if (!info) return;
+            const showRoom = Boolean(info.require_room_code && info.room_code);
+            const badges = [
+                ["stageIdleRoomCodeBadge", "stageIdleRoomCodeVal"],
+                ["stageFillerRoomCodeBadge", "stageFillerRoomCodeVal"],
+                ["stageJoinRoomCodeBadge", "stageJoinRoomCodeVal"],
+            ];
+            badges.forEach(([badgeId, valId]) => {
+                const badge = document.getElementById(badgeId);
+                const val = document.getElementById(valId);
+                if (badge) badge.style.display = showRoom ? (badgeId === "stageJoinRoomCodeBadge" ? "block" : "inline-block") : "none";
+                if (val && info.room_code) val.innerText = info.room_code;
+            });
+        })
+        .catch(() => {});
 }
 
 

@@ -1221,6 +1221,28 @@
         </div>
     </div>
 
+    <!-- Room Code Gate Modal (when public Room Code is required) -->
+    <div id="roomCodeModal" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.92); backdrop-filter: blur(12px); display: none; align-items: center; justify-content: center; z-index: 250; padding: 20px;">
+        <div class="tiki-card" style="max-width: 360px; width: 100%; padding: 26px; text-align: center; border: 1px solid rgba(0, 240, 255, 0.4);">
+            <div style="font-size: 2.5rem; margin-bottom: 8px;">🔐🎤</div>
+            <h2 class="font-tiki neon-cyan" style="font-size: 1.5rem; margin-bottom: 6px;">Enter Party Room Code</h2>
+            <p style="color: var(--text-muted); font-size: 0.88rem; margin-bottom: 16px;">
+                Enter the 4-character Room Code shown next to the QR code on the TV screen:
+            </p>
+            <input type="text" id="roomCodeInput" maxlength="8" placeholder="XXXX"
+                   oninput="this.value = this.value.toUpperCase()"
+                   onkeydown="if(event.key==='Enter') submitRoomCodeVerify()"
+                   style="text-align: center; font-size: 1.6rem; font-weight: 800; letter-spacing: 6px; font-family: monospace; margin-bottom: 12px;">
+            <div id="roomCodeErrorMsg" style="display: none; color: #ff5555; background: rgba(255,85,85,0.15); border: 1px solid rgba(255,85,85,0.4); padding: 8px 12px; border-radius: 8px; font-size: 0.84rem; margin-bottom: 12px;"></div>
+            <button type="button" id="roomCodeSubmitBtn" onclick="submitRoomCodeVerify()" class="btn-neon-cyan" style="width: 100%; padding: 12px; font-size: 1rem; margin-bottom: 10px;">
+                Join Party 🌴
+            </button>
+            <button type="button" onclick="openHostLoginModal()" class="btn-ghost" style="width: 100%; font-size: 0.8rem; color: var(--text-muted);">
+                👑 Host DJ Login
+            </button>
+        </div>
+    </div>
+
     <!-- Onboarding Modal -->
     <div id="onboardingModal" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); backdrop-filter: blur(12px); display: none; align-items: center; justify-content: center; z-index: 200; padding: 20px;">
         <div class="tiki-card" style="max-width: 380px; width: 100%; padding: 26px; text-align: center;">
@@ -1476,6 +1498,14 @@
                 <div style="font-size: 0.72rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 2px;">Manual Host PIN</div>
                 <div id="hostPairingPinText" style="font-size: 1.4rem; font-weight: 800; color: var(--neon-gold); letter-spacing: 3px;">----</div>
             </div>
+            {% if require_room_code %}
+            <div style="margin-bottom: 16px; padding: 10px; border-radius: 10px; background: rgba(0, 240, 255, 0.1); border: 1px solid rgba(0, 240, 255, 0.35);">
+                <div style="font-size: 0.72rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px;">Guest Room Code</div>
+                <button type="button" onclick="rotateHostRoomCode()" class="btn-ghost" style="padding: 6px 14px; font-size: 0.8rem; border-color: rgba(0,240,255,0.45); color: var(--neon-cyan);">
+                    🔄 Rotate Room Code on TV
+                </button>
+            </div>
+            {% endif %}
             <button type="button" onclick="closeHostPairingQrModal()" class="btn-ghost" style="padding: 6px 20px; font-size: 0.82rem; border-color: rgba(255,255,255,0.3); color: #fff;">Close</button>
         </div>
     </div>
@@ -1514,6 +1544,10 @@
             }
         }
     </script>
-    <script src="/static/js/mobile-client.js?v=20261020_byom_paths"></script>
+    <script>
+        window.TIKI_REQUIRE_ROOM_CODE = {{ 'true' if require_room_code else 'false' }};
+        window.TIKI_ROOM_VERIFIED = {{ 'true' if room_verified else 'false' }};
+    </script>
+    <script src="/static/js/mobile-client.js?v=20261114_room_code"></script>
 </body>
 </html>

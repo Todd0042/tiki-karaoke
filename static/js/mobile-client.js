@@ -81,7 +81,14 @@ function checkIdentity() {
     }
 
     const urlP = new URLSearchParams(window.location.search);
-    const isHostParam = urlP.get("tab") === "host" || urlP.get("tab") === "hostTab" || Boolean(getCookie("tiki_host"));
+    const isHostParam = urlP.get("tab") === "host" || urlP.get("tab") === "hostTab";
+
+    if (window.TIKI_REQUIRE_ROOM_CODE && !window.TIKI_ROOM_VERIFIED && !isHostParam) {
+        const roomModal = document.getElementById("roomCodeModal");
+        if (roomModal) roomModal.style.display = "flex";
+        checkRole();
+        return;
+    }
 
     if (isCheckedOut && !isHostParam) {
         currentSinger = null;
@@ -148,6 +155,8 @@ function checkRole() {
             }
             document.body.classList.toggle("host-mode-active", isHost);
             if (isHost) {
+                const roomModal = document.getElementById("roomCodeModal");
+                if (roomModal) roomModal.style.display = "none";
                 const onboarding = document.getElementById("onboardingModal");
                 if (onboarding) onboarding.style.display = "none";
                 const leftModal = document.getElementById("leftPartyModal");
@@ -5207,6 +5216,62 @@ function closeHostPairingQrModal() {
     const modal = document.getElementById("hostPairingQrModal");
     if (modal) {
         modal.style.display = "none";
+    }
+}
+
+async function submitRoomCodeVerify() {
+    const input = document.getElementById("roomCodeInput");
+    const errEl = document.getElementById("roomCodeErrorMsg");
+    const btn = document.getElementById("roomCodeSubmitBtn");
+    const code = (input ? input.value : "").trim().toUpperCase();
+    if (!code) {
+        if (errEl) {
+            errEl.innerText = "Please enter the Room Code shown on the TV screen.";
+            errEl.style.display = "block";
+        }
+        return;
+    }
+    if (btn) btn.disabled = true;
+    try {
+        const res = await fetch("/api/room/verify", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ code })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok && data.verified) {
+            window.TIKI_ROOM_VERIFIED = true;
+            const modal = document.getElementById("roomCodeModal");
+            if (modal) modal.style.display = "none";
+            if (errEl) errEl.style.display = "none";
+            window.location.reload();
+        } else {
+            if (errEl) {
+                errEl.innerText = data.detail || "Invalid Room Code. Please check the TV screen.";
+                errEl.style.display = "block";
+            }
+        }
+    } catch (e) {
+        if (errEl) {
+            errEl.innerText = "Network error verifying Room Code.";
+            errEl.style.display = "block";
+        }
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
+async function rotateHostRoomCode() {
+    try {
+        const res = await fetch("/api/host/room-code/rotate", { method: "POST" });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok && data.room_code) {
+            showToast(`🔄 New Room Code active on TV: ${data.room_code}`);
+        } else {
+            showToast(data.detail || "Failed to rotate Room Code", true);
+        }
+    } catch (e) {
+        showToast("Network error rotating Room Code", true);
     }
 }
 

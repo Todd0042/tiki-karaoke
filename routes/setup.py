@@ -30,7 +30,7 @@ from config import (
 from database import init_db, migrate_storage_paths, get_setting, set_setting
 from audio_router import audio_router, MONITORING_MODES
 from services.websocket_manager import manager
-from services.auth import is_host_request, is_local_request
+from services.auth import get_active_room_code, is_host_request, is_local_request, is_room_code_required, set_host_cookie
 from services.templates import templates
 from services.lifecycle import get_tunnel_reload_trigger
 
@@ -547,6 +547,11 @@ async def api_save_setup(payload: Dict[str, Any], request: Request, response: Re
 
         if "remote_mode" in payload:
             set_setting("remote_mode", str(payload["remote_mode"]))
+        if "require_room_code" in payload:
+            req_room = bool(payload["require_room_code"])
+            set_setting("require_room_code", "true" if req_room else "false")
+            if req_room:
+                get_active_room_code()
         if "hotspot_enabled" in payload:
             set_setting("hotspot_enabled", "true" if payload["hotspot_enabled"] else "false")
         if "hotspot_ssid" in payload:
@@ -606,13 +611,7 @@ async def api_save_setup(payload: Dict[str, Any], request: Request, response: Re
                 audio_router.set_monitoring_mode(mode)
 
         # Automatically log host in with cookie
-        response.set_cookie(
-            "tiki_host",
-            HOST_TOKEN,
-            max_age=86400 * 30,
-            httponly=False,
-            samesite="lax"
-        )
+        set_host_cookie(response, max_age=86400 * 30, request=request)
 
         tunnel_reload_cb = get_tunnel_reload_trigger()
         if tunnel_reload_cb:
@@ -640,6 +639,7 @@ async def api_save_setup(payload: Dict[str, Any], request: Request, response: Re
                 "port": effective_port,
                 "base_url": base_url,
                 "join_url": f"{base_url}/join",
+                "require_room_code": is_room_code_required(),
                 "is_internet_connected": is_net,
                 "is_hotspot": is_hotspot,
                 "hotspot_enabled": get_setting("hotspot_enabled", "false") == "true",

@@ -20,7 +20,7 @@ from database import (
 )
 from search import tiered_search
 from downloader import enqueue_download
-from services.auth import is_host_request, is_local_request
+from services.auth import get_client_ip, is_host_request, is_local_request, require_room_access
 from services.websocket_manager import manager
 from services.library_cache import get_cached_unique_artists, invalidate_library_cache
 
@@ -47,8 +47,9 @@ search_requests_by_ip: Dict[str, List[float]] = {}
 
 @router.get("/api/search")
 async def api_search(request: Request, q: str = "", force_online: bool = False, sing_along: bool = False, page: int = 1):
+    require_room_access(request)
     if not is_host_request(request):
-        client_ip = request.client.host if request.client else "unknown"
+        client_ip = get_client_ip(request)
         now = time.time()
         attempts = [t for t in search_requests_by_ip.get(client_ip, []) if now - t < 60.0]
         if len(attempts) >= 20:
@@ -66,6 +67,7 @@ async def api_search(request: Request, q: str = "", force_online: bool = False, 
 
 @router.get("/api/library")
 async def api_get_library(
+    request: Request,
     page: int = 1,
     limit: int = 25,
     sort: str = "popularity",
@@ -73,6 +75,7 @@ async def api_get_library(
     q: str = "",
     sing_along: bool = False
 ):
+    require_room_access(request)
     data = get_browsable_tracks(page=page, limit=limit, sort=sort, artist=artist, search=q, sing_along=sing_along)
     data["artists"] = get_cached_unique_artists(sing_along=sing_along)
     return data

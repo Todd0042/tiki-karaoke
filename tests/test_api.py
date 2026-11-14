@@ -26,6 +26,7 @@ class TestAPIEndpoints(unittest.TestCase):
         from database import get_setting, set_setting
         cls.default_strict_mode = get_setting("strict_byom_only")
         set_setting("strict_byom_only", "false")
+        set_setting("require_room_code", "false")
         from config import save_config
         save_config({"configured": True})
         cls.client = TestClient(app)

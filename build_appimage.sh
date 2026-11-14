@@ -1,5 +1,31 @@
 #!/bin/bash
-set -e
+set -eo pipefail
+
+download_elf_binary() {
+    local url="$1"
+    local dest="$2"
+    local tmp="${dest}.tmp.$$"
+    rm -f "$tmp"
+    if ! curl -fsSL --retry 3 --retry-delay 2 "$url" -o "$tmp"; then
+        rm -f "$tmp"
+        echo "❌ Failed to download: $url" >&2
+        return 1
+    fi
+    if [ ! -s "$tmp" ]; then
+        rm -f "$tmp"
+        echo "❌ Downloaded file is empty: $url" >&2
+        return 1
+    fi
+    local magic
+    magic="$(head -c 4 "$tmp" | od -An -tx1 | tr -d ' \n')"
+    if [ "$magic" != "7f454c46" ]; then
+        rm -f "$tmp"
+        echo "❌ Downloaded file is not a valid Linux ELF binary (got magic '$magic'): $url" >&2
+        return 1
+    fi
+    chmod +x "$tmp"
+    mv "$tmp" "$dest"
+}
 
 # ==============================================================================
 # Tiki Karaoke Lounge - Automated Linux AppImage Builder
@@ -81,7 +107,7 @@ if [ "$USE_DOCKER" = "1" ]; then
     echo "=== [2/5] Compiling standalone binary inside Debian container ==="
     cat << 'EOF' > "${BUILD_TMP}/docker_build.sh"
 #!/bin/bash
-set -e
+set -eo pipefail
 apt-get update
 apt-get install -y --no-install-recommends \
     python3 python3-pip python3-venv python3-dev python3-tk tk-dev libpython3.11 binutils curl file ca-certificates gcc libc6-dev
@@ -171,13 +197,16 @@ cp -r "${BUILD_TMP}/TikiKaraoke"/* "$APPDIR/usr/bin/"
 mkdir -p "${REPO_ROOT}/bin"
 if [ ! -f "${REPO_ROOT}/bin/cloudflared" ]; then
     echo "Downloading cloudflared (linux-amd64)..."
-    curl -sL "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64" -o "${REPO_ROOT}/bin/cloudflared"
-    chmod +x "${REPO_ROOT}/bin/cloudflared"
+    download_elf_binary "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64" "${REPO_ROOT}/bin/cloudflared"
 fi
 if [ ! -f "${REPO_ROOT}/bin/bore" ]; then
     echo "Downloading bore (v0.5.2 x86_64-unknown-linux-musl)..."
-    curl -sL "https://github.com/ekzhang/bore/releases/download/v0.5.2/bore-v0.5.2-x86_64-unknown-linux-musl.tar.gz" | tar -xz -C "${REPO_ROOT}/bin" bore
-    chmod +x "${REPO_ROOT}/bin/bore"
+    BORE_TAR="${BUILD_TMP}/bore.tar.gz"
+    curl -fsSL --retry 3 --retry-delay 2 "https://github.com/ekzhang/bore/releases/download/v0.5.2/bore-v0.5.2-x86_64-unknown-linux-musl.tar.gz" -o "$BORE_TAR"
+    tar -xz -C "${BUILD_TMP}" -f "$BORE_TAR" bore
+    chmod +x "${BUILD_TMP}/bore"
+    mv "${BUILD_TMP}/bore" "${REPO_ROOT}/bin/bore"
+    rm -f "$BORE_TAR"
 fi
 
 if [ -d "${REPO_ROOT}/bin" ]; then
@@ -268,8 +297,7 @@ ln -sf AppRun "$APPDIR/TikiKaraokeRipper"
 
 echo "=== [4/5] Packaging AppImage ==="
 if [ ! -f "/tmp/appimagetool" ]; then
-    curl -sL https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage -o /tmp/appimagetool
-    chmod +x /tmp/appimagetool
+    download_elf_binary "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage" "/tmp/appimagetool"
 fi
 
 export ARCH=x86_64

@@ -36,10 +36,13 @@ from config import (
     is_configured,
     load_config,
 )
+import secrets
+
 from services.network import (
     LOCAL_IP,
     PUBLIC_IP,
     get_base_url,
+    get_join_url,
     get_public_host,
 )
 from database import get_setting
@@ -47,11 +50,23 @@ from services.auth import (
     HOST_TOKEN,
     STAGE_TOKEN,
     PinAuthRequest,
+    RoomVerifyRequest,
     failed_pin_attempts,
+    failed_room_attempts,
+    get_active_room_code,
+    get_client_ip,
     is_host_request,
+    is_https_request,
     is_local_request,
+    is_proxied_request,
+    is_room_authorized,
+    is_room_code_required,
     is_stage_request,
+    rotate_room_code,
+    set_host_cookie,
+    set_room_cookie,
 )
+from services.websocket_manager import manager
 from services.templates import templates
 from playlist_sync import exchange_code, get_auth_url
 
@@ -71,7 +86,7 @@ async def favicon():
 
 @router.post("/api/auth/pin")
 async def api_auth_pin(req: PinAuthRequest, request: Request):
-    client_ip = request.client.host if request.client else "unknown"
+    client_ip = get_client_ip(request)
     now = time.time()
     attempts = [t for t in failed_pin_attempts.get(client_ip, []) if now - t < 60.0]
     if len(attempts) >= 5:
@@ -85,10 +100,10 @@ async def api_auth_pin(req: PinAuthRequest, request: Request):
     expected_pin = str(cfg.get("host_pin", HOST_PIN)).strip()
     provided_pin = str(req.pin).strip()
 
-    if provided_pin == expected_pin:
+    if expected_pin and secrets.compare_digest(provided_pin, expected_pin):
         failed_pin_attempts.pop(client_ip, None)
         response = JSONResponse({"status": "ok", "is_host": True})
-        response.set_cookie("tiki_host", HOST_TOKEN, max_age=86400 * 30, httponly=False, samesite="lax")
+        set_host_cookie(response, max_age=86400 * 30, request=request)
         return response
     else:
         attempts.append(now)
@@ -96,43 +111,107 @@ async def api_auth_pin(req: PinAuthRequest, request: Request):
         raise HTTPException(status_code=401, detail="Invalid Host PIN. Please check the TV display.")
 
 
-@router.get("/", response_class=HTMLResponse)
-async def index_page(request: Request):
+@router.post("/api/room/verify")
+async def api_verify_room_code(req: RoomVerifyRequest, request: Request):
+    if not is_room_code_required():
+        return {"status": "ok", "verified": True}
+    client_ip = get_client_ip(request)
+    now = time.time()
+    attempts = [t for t in failed_room_attempts.get(client_ip, []) if now - t < 60.0]
+    if len(attempts) >= 8:
+        failed_room_attempts[client_ip] = attempts
+        raise HTTPException(
+            status_code=429,
+            detail="Too many room code attempts. Please wait 1 minute and check the TV screen."
+        )
+
+    expected = get_active_room_code()
+    candidate = str(req.code).strip().upper()
+    if len(candidate) == len(expected) and secrets.compare_digest(candidate, expected):
+        failed_room_attempts.pop(client_ip, None)
+        response = JSONResponse({"status": "ok", "verified": True})
+        set_room_cookie(response, candidate, request=request)
+        return response
+
+    attempts.append(now)
+    failed_room_attempts[client_ip] = attempts
+    raise HTTPException(status_code=401, detail="Invalid Room Code. Check the code next to the QR on the TV.")
+
+
+@router.get("/api/stage/room-info")
+async def api_stage_room_info(request: Request):
+    if not (is_host_request(request) or is_local_request(request) or is_stage_request(request)):
+        raise HTTPException(status_code=403, detail="Stage or Host authorization required")
+    req_room = is_room_code_required()
+    return {
+        "require_room_code": req_room,
+        "room_code": get_active_room_code() if req_room else "",
+        "join_url": get_join_url(),
+    }
+
+
+@router.post("/api/host/room-code/rotate")
+async def api_rotate_room_code(request: Request):
+    if not (is_host_request(request) or is_local_request(request)):
+        raise HTTPException(status_code=403, detail="Host DJ authorization required")
+    new_code = rotate_room_code()
+    await manager.broadcast({
+        "type": "network_updated",
+        "base_url": get_base_url(),
+        "join_url": f"{get_base_url()}/join",
+        "require_room_code": is_room_code_required(),
+    })
+    return {"status": "ok", "room_code": new_code}
+
+
+def _render_mobile_page(request: Request):
     if not is_configured():
         return RedirectResponse(url="/setup")
     pub_h = get_public_host()
-    return templates.TemplateResponse(request=request, name="mobile.html", context={
+    room_q = request.query_params.get("room", "").strip().upper()
+    req_room = is_room_code_required()
+    verified = is_room_authorized(request, explicit_code=room_q)
+    response = templates.TemplateResponse(request=request, name="mobile.html", context={
         "bar_name": get_setting("bar_name", "The Tiki Hut Karaoke Lounge"),
         "local_ip": LOCAL_IP,
         "public_ip": PUBLIC_IP,
         "base_url": get_base_url(),
         "display_ip": pub_h if pub_h else f"{PUBLIC_IP}:{PORT}",
-        "port": PORT
+        "port": PORT,
+        "require_room_code": req_room,
+        "room_verified": verified,
     })
+    if req_room and room_q and len(room_q) == len(get_active_room_code()) and secrets.compare_digest(room_q, get_active_room_code()):
+        set_room_cookie(response, room_q, request=request)
+    return response
+
+
+@router.get("/", response_class=HTMLResponse)
+async def index_page(request: Request):
+    return _render_mobile_page(request)
 
 
 @router.get("/join", response_class=HTMLResponse)
 async def join_page(request: Request):
-    if not is_configured():
-        return RedirectResponse(url="/setup")
-    pub_h = get_public_host()
-    return templates.TemplateResponse(request=request, name="mobile.html", context={
-        "bar_name": get_setting("bar_name", "The Tiki Hut Karaoke Lounge"),
-        "local_ip": LOCAL_IP,
-        "public_ip": PUBLIC_IP,
-        "base_url": get_base_url(),
-        "display_ip": pub_h if pub_h else f"{PUBLIC_IP}:{PORT}",
-        "port": PORT
-    })
+    return _render_mobile_page(request)
 
 
 @router.get("/stage", response_class=HTMLResponse)
 async def stage_page(request: Request, token: str = ""):
     if not is_configured():
         return RedirectResponse(url="/setup")
+    token_valid = bool(token and HOST_TOKEN and secrets.compare_digest(token, HOST_TOKEN))
+    if is_proxied_request(request) and not (token_valid or is_host_request(request) or is_stage_request(request)):
+        return HTMLResponse(
+            "<h3>Stage Display Restricted</h3><p>The TV Stage view is restricted to the venue host display. Visit <a href='/join'>/join</a> to request songs.</p>",
+            status_code=403,
+        )
     pub_h = get_public_host()
     cfg = load_config()
-    pin = str(cfg.get("host_pin", HOST_PIN))
+    can_see_pin = token_valid or is_host_request(request) or is_local_request(request)
+    pin = str(cfg.get("host_pin", HOST_PIN)) if can_see_pin else "••••"
+    req_room = is_room_code_required()
+    room_code = get_active_room_code() if req_room else ""
     show_wifi_card = network_helper.is_hotspot_enabled()
     hotspot_ssid = network_helper.get_hotspot_ssid()
     hotspot_password = network_helper.get_hotspot_password()
@@ -144,24 +223,34 @@ async def stage_page(request: Request, token: str = ""):
         "display_ip": pub_h if pub_h else f"{PUBLIC_IP}:{PORT}",
         "port": PORT,
         "host_pin": pin,
+        "require_room_code": req_room,
+        "room_code": room_code,
         "show_wifi_card": show_wifi_card,
         "hotspot_ssid": hotspot_ssid,
         "hotspot_password": hotspot_password
     })
-    response.set_cookie("tiki_stage", STAGE_TOKEN, max_age=86400 * 30, httponly=False)
-    if (token and token == HOST_TOKEN) or is_host_request(request) or is_local_request(request):
-        response.set_cookie("tiki_host", HOST_TOKEN, max_age=86400 * 30, httponly=False, samesite="lax")
+    response.set_cookie(
+        "tiki_stage",
+        STAGE_TOKEN,
+        max_age=86400 * 30,
+        httponly=True,
+        samesite="lax",
+        secure=is_https_request(request),
+    )
+    if can_see_pin:
+        set_host_cookie(response, max_age=86400 * 30, request=request)
     return response
 
 
 @router.get("/host")
 async def host_pair_route(request: Request, token: str = ""):
-    if (token and token == HOST_TOKEN) or is_host_request(request) or is_local_request(request):
+    token_valid = bool(token and HOST_TOKEN and secrets.compare_digest(token, HOST_TOKEN))
+    if token_valid or is_host_request(request) or is_local_request(request):
         q_params = dict(request.query_params)
         q_params["tab"] = "host"
         redirect_url = f"/?{urlencode(q_params)}"
         response = RedirectResponse(url=redirect_url)
-        response.set_cookie("tiki_host", HOST_TOKEN, max_age=86400 * 7, httponly=False, samesite="lax")
+        set_host_cookie(response, max_age=86400 * 7, request=request)
         return response
     return HTMLResponse("<h3>Invalid Host Token!</h3><p>Scan the Host QR code from the main TV screen or enter the Host PIN on the singer screen.</p>", status_code=403)
 
@@ -200,8 +289,10 @@ async def legal_guide_page(request: Request):
 
 
 @router.get("/qr/public")
-async def public_qr():
-    url = f"{get_base_url()}/join"
+async def public_qr(request: Request):
+    if is_room_code_required() and not (is_host_request(request) or is_local_request(request) or is_stage_request(request)):
+        raise HTTPException(status_code=403, detail="Stage QR code is only available on the venue TV display.")
+    url = get_join_url()
     img = qrcode.make(url)
     buf = io.BytesIO()
     img.save(buf, format="PNG")

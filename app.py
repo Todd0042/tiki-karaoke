@@ -42,10 +42,12 @@ from services.network import (
     LOCAL_IP,
     PUBLIC_IP,
     get_base_url,
+    get_join_url,
     get_local_ip,
     get_public_host,
     get_public_ip,
 )
+from services.auth import get_active_room_code, is_room_code_required
 from services.websocket_manager import ConnectionManager, manager
 from services.library_cache import warm_library_cache
 
@@ -62,13 +64,15 @@ def broadcast_network_update_sync():
     is_net = network_helper.is_internet_available()
     show_wifi_card = network_helper.is_hotspot_enabled()
     base_url = get_base_url()
-    join_url = f"{base_url}/join"
+    req_room = is_room_code_required()
+    join_url = get_join_url() if not req_room else f"{base_url}/join"
     payload = {
         "type": "network_updated",
         "local_ip": ip,
         "port": effective_port,
         "base_url": base_url,
         "join_url": join_url,
+        "require_room_code": req_room,
         "is_internet_connected": is_net,
         "is_hotspot": is_hotspot,
         "hotspot_enabled": show_wifi_card,

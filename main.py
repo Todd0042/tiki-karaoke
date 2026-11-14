@@ -413,7 +413,8 @@ def cleanup_all_services():
             pass
     else:
         try:
-            subprocess.run(["pkill", "-9", "-f", "cloudflared tunnel"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2.0, check=False)
+            subprocess.run(["pkill", "-9", "-f", "cloudflared tunnel --no-autoupdate --url"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2.0, check=False)
+            subprocess.run(["pkill", "-9", "-f", "cloudflared tunnel run --token"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2.0, check=False)
             subprocess.run(["pkill", "-9", "-f", "bore local"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2.0, check=False)
         except Exception:
             pass
@@ -769,7 +770,7 @@ def start_cloudflare_quick_tunnel(port: int):
         if sys.platform == "win32":
             subprocess.run(["taskkill", "/F", "/IM", "cloudflared.exe", "/T"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2.0, check=False, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         else:
-            subprocess.run(["pkill", "-9", "-f", "cloudflared tunnel"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2.0, check=False)
+            subprocess.run(["pkill", "-9", "-f", "cloudflared tunnel --no-autoupdate --url"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2.0, check=False)
     except Exception:
         pass
 
@@ -822,7 +823,7 @@ def start_cloudflare_named_tunnel(token: str, custom_domain: str):
         if sys.platform == "win32":
             subprocess.run(["taskkill", "/F", "/IM", "cloudflared.exe", "/T"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2.0, check=False, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         else:
-            subprocess.run(["pkill", "-9", "-f", "cloudflared tunnel"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2.0, check=False)
+            subprocess.run(["pkill", "-9", "-f", "cloudflared tunnel run --token"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2.0, check=False)
     except Exception:
         pass
 

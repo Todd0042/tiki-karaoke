@@ -20,9 +20,10 @@ stop_services() {
         rm -f "$PID_FILE"
     fi
 
-    # Terminate any leftover bore or uvicorn processes from this directory
+    # Terminate any leftover bore or tiki-managed cloudflared processes (leave external tunnels untouched)
     pkill -f "bin/bore local" 2>/dev/null || true
-    pkill -f "cloudflared tunnel" 2>/dev/null || true
+    pkill -f "cloudflared tunnel --no-autoupdate --url" 2>/dev/null || true
+    pkill -f "cloudflared tunnel run --token" 2>/dev/null || true
     echo "✅ All services stopped cleanly."
 }
 

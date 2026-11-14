@@ -370,6 +370,7 @@ DEFAULT_CONFIG = {
     "configured": False,
     "bar_name": "The Tiki Hut Karaoke Lounge",
     "host_pin": "1234",
+    "require_room_code": False,
     "port": 8000,
     "remote_mode": "cloudflare_quick",
     "hotspot_enabled": False,

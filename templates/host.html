@@ -296,6 +296,9 @@
                         <div id="stageJoinUrlText" style="font-size: 0.78rem; color: var(--neon-gold); margin-top: 2px; font-family: monospace; font-weight: 700;">
                             {{ display_ip }}
                         </div>
+                        <div id="stageIdleRoomCodeBadge" style="display: {% if require_room_code and room_code %}inline-block{% else %}none{% endif %}; margin-top: 8px; padding: 4px 12px; border-radius: 999px; background: rgba(0, 240, 255, 0.14); border: 1px solid var(--neon-cyan); color: #fff; font-size: 0.85rem; letter-spacing: 1px;">
+                            ROOM: <strong id="stageIdleRoomCodeVal" style="color: var(--neon-cyan); font-family: monospace;">{{ room_code }}</strong>
+                        </div>
                     </div>
                 </div>
 
@@ -374,6 +377,9 @@
                 <div style="font-size: 0.78rem; color: var(--neon-pink); font-weight: 700; letter-spacing: 0.5px;">🌴 OPEN MIC KARAOKE</div>
                 <div style="font-size: 1.1rem; font-weight: 700; color: #fff;">Scan to Sing Next!</div>
                 <div id="stageFillerDisplayIp" style="font-size: 0.75rem; color: var(--neon-gold); margin-top: 2px;">{{ display_ip }}</div>
+                <div id="stageFillerRoomCodeBadge" style="display: {% if require_room_code and room_code %}inline-block{% else %}none{% endif %}; margin-top: 4px; font-size: 0.78rem; color: var(--neon-cyan); font-weight: 700;">
+                    Room: <strong id="stageFillerRoomCodeVal" style="font-family: monospace; color: #fff;">{{ room_code }}</strong>
+                </div>
             </div>
         </div>
 
@@ -416,6 +422,9 @@
                 <div style="font-size: 0.75rem; color: var(--neon-cyan); font-weight: 700;">JOIN THE PARTY</div>
                 <div style="font-size: 0.85rem; font-weight: 600;">Scan to Sing</div>
                 <div id="stageJoinDisplayIp" style="font-size: 0.65rem; color: var(--text-muted);">{{ display_ip }}</div>
+                <div id="stageJoinRoomCodeBadge" style="display: {% if require_room_code and room_code %}block{% else %}none{% endif %}; font-size: 0.72rem; color: var(--neon-cyan); font-weight: 700; margin-top: 2px;">
+                    Room: <strong id="stageJoinRoomCodeVal" style="font-family: monospace; color: #fff;">{{ room_code }}</strong>
+                </div>
             </div>
         </div>
     </div>

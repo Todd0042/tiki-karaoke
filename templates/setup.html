@@ -278,6 +278,14 @@
                         </div>
                     </label>
 
+                    <label class="radio-card adv-only" id="cardCustom" onclick="selectRemoteMode('custom')">
+                        <input type="radio" name="remote_mode" value="custom" style="margin-top: 4px;">
+                        <div>
+                            <div style="font-weight: 700; color: #c084fc;">🧩 Existing Tunnel / Reverse Proxy</div>
+                            <div class="field-desc">Use your own already-running cloudflared, nginx, or Caddy URL (e.g. https://tiki.todd0042.dev).</div>
+                        </div>
+                    </label>
+
                     <label class="radio-card adv-only" id="cardTailscale" onclick="selectRemoteMode('tailscale')">
                         <input type="radio" name="remote_mode" value="tailscale" style="margin-top: 4px;">
                         <div>
@@ -349,12 +357,34 @@
                     </div>
                 </div>
 
+                <!-- Sub-panel: Existing Tunnel / Reverse Proxy -->
+                <div id="customFields" class="tiki-card" style="display: none; margin-top: 14px; padding: 12px; border-left: 3px solid #c084fc;">
+                    <div style="font-weight: 700; color: #c084fc; margin-bottom: 6px;">External Reverse Proxy / Existing Tunnel:</div>
+                    <div class="field-desc" style="margin-bottom: 8px;">
+                        No extra tunnel process will be spawned. Point your existing <code>cloudflared</code> ingress or reverse proxy at <code>127.0.0.1:{{ config.port or 8000 }}</code>.
+                    </div>
+                    <div class="field-group" style="margin-bottom: 0;">
+                        <label for="publicHostInput">Public Base URL</label>
+                        <input type="text" id="publicHostInput" name="public_host" placeholder="https://tiki.todd0042.dev" value="{{ config.public_host or '' }}">
+                    </div>
+                </div>
+
                 <!-- Sub-panel: Bore Port -->
                 <div id="boreFields" class="tiki-card" style="display: none; margin-top: 14px; padding: 12px; border-left: 3px solid var(--text-muted);">
                     <div class="field-group">
                         <label for="borePort">Permanent Port on bore.pub</label>
                         <input type="number" id="borePort" name="remote_port" value="{{ config.remote_port or 38480 }}" placeholder="38480">
                     </div>
+                </div>
+
+                <div style="margin-top: 14px; padding: 12px 14px; border-radius: 12px; background: rgba(16, 28, 45, 0.75); border: 1px solid rgba(0, 240, 255, 0.25);">
+                    <label style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer; user-select: none;">
+                        <input type="checkbox" id="requireRoomCodeCheck" name="require_room_code" value="true" {% if config.require_room_code %}checked{% endif %} style="width: 18px; height: 18px; margin-top: 2px; accent-color: var(--neon-cyan); cursor: pointer;">
+                        <div>
+                            <div style="font-weight: 700; color: #fff; font-size: 0.92rem;">🔐 Require Room Code on Stage TV to Queue</div>
+                            <div class="field-desc" style="margin-top: 2px;">Recommended for public tunnels. Displays a 4-character Room Code next to the TV QR (and embeds it in the QR link) so only people in the room can queue songs.</div>
+                        </div>
+                    </label>
                 </div>
 
                 <!-- Sub-panel: Local Wi-Fi & Hotspot Configuration -->
@@ -715,13 +745,14 @@
         }
 
         function selectRemoteMode(mode) {
-            document.querySelectorAll('#cardCloudflareQuick, #cardCloudflareNamed, #cardTailscale, #cardDuckdns, #cardLocal, #cardBore').forEach(c => c.classList.remove('active'));
+            document.querySelectorAll('#cardCloudflareQuick, #cardCloudflareNamed, #cardCustom, #cardTailscale, #cardDuckdns, #cardLocal, #cardBore').forEach(c => c.classList.remove('active'));
             const radio = document.querySelector(`input[name="remote_mode"][value="${mode}"]`);
             if (radio) radio.checked = true;
             
             const cardMap = {
                 'cloudflare_quick': 'cardCloudflareQuick',
                 'cloudflare_named': 'cardCloudflareNamed',
+                'custom': 'cardCustom',
                 'tailscale': 'cardTailscale',
                 'duckdns': 'cardDuckdns',
                 'local': 'cardLocal',
@@ -731,12 +762,14 @@
             if (activeCard) activeCard.classList.add('active');
 
             const cfNamed = document.getElementById('cfNamedFields');
+            const customFields = document.getElementById('customFields');
             const tsFields = document.getElementById('tailscaleFields');
             const duckFields = document.getElementById('duckdnsFields');
             const boreFields = document.getElementById('boreFields');
             const localFields = document.getElementById('localWifiFields');
 
             if (cfNamed) cfNamed.style.display = (mode === 'cloudflare_named') ? 'block' : 'none';
+            if (customFields) customFields.style.display = (mode === 'custom') ? 'block' : 'none';
             if (tsFields) tsFields.style.display = (mode === 'tailscale') ? 'block' : 'none';
             if (duckFields) duckFields.style.display = (mode === 'duckdns') ? 'block' : 'none';
             if (boreFields) boreFields.style.display = (mode === 'bore') ? 'block' : 'none';
@@ -1327,6 +1360,7 @@
                 host_pin: formData.get('host_pin'),
                 port: parseInt(formData.get('port') || "8000"),
                 remote_mode: formData.get('remote_mode') || "cloudflare_quick",
+                require_room_code: document.getElementById('requireRoomCodeCheck')?.checked === true,
                 hotspot_enabled: formData.get('remote_mode') === 'local' && formData.get('hotspot_enabled') === 'true',
                 hotspot_ssid: (formData.get('hotspot_ssid') || "").trim(),
                 hotspot_password: (formData.get('hotspot_password') || "").trim(),
