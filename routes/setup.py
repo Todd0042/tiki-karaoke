@@ -37,12 +37,8 @@ from services.lifecycle import get_tunnel_reload_trigger
 router = APIRouter()
 
 
-@router.get("/setup", response_class=HTMLResponse)
-async def setup_page(request: Request):
-    if is_configured() and not (is_host_request(request) or is_local_request(request)):
-        return RedirectResponse(url="/", status_code=303)
-    cfg = load_config()
-    return templates.TemplateResponse(request=request, name="setup.html", context={
+def _setup_template_context(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    return {
         "config": cfg,
         "default_library_dir": str(get_library_dir()),
         "default_data_dir": str(get_data_dir()),
@@ -51,8 +47,22 @@ async def setup_page(request: Request):
         "displays": get_available_displays(),
         "audio_sinks": get_available_audio_sinks(),
         "audio_sources": get_available_audio_sources(),
-        "browsers": get_available_browsers()
-    })
+        "browsers": get_available_browsers(),
+    }
+
+
+@router.get("/setup", response_class=HTMLResponse)
+async def setup_page(request: Request):
+    if is_configured() and not (is_host_request(request) or is_local_request(request)):
+        return RedirectResponse(url="/", status_code=303)
+    return templates.TemplateResponse(request=request, name="setup.html", context=_setup_template_context(load_config()))
+
+
+@router.get("/setup/advanced", response_class=HTMLResponse)
+async def setup_advanced_page(request: Request):
+    if is_configured() and not (is_host_request(request) or is_local_request(request)):
+        return RedirectResponse(url="/", status_code=303)
+    return templates.TemplateResponse(request=request, name="setup_advanced.html", context=_setup_template_context(load_config()))
 
 
 @router.get("/api/setup/displays")

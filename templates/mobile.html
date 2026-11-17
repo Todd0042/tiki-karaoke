@@ -173,8 +173,13 @@
         <div>
             <h1 class="font-tiki neon-cyan" style="font-size: 1.3rem; margin: 0; cursor: pointer; user-select: none;" onclick="openHostLoginModal()" title="Host DJ Login">🌴 {{ bar_name }}<span class="host-mode-pill">👑 HOST DJ</span></h1>
         </div>
-        <div id="headerSingerBadge" class="badge-local" style="font-size: 0.9rem; cursor: pointer;" onclick="showOnboardingModal()">
-            🌺 Welcome
+        <div style="display: flex; align-items: center; gap: 8px;">
+            <button type="button" id="btnOpenHelpGuide" class="btn-ghost" onclick="openHelpGuideModal()" style="padding: 5px 10px; font-size: 0.78rem; border-radius: 999px;" title="Party &amp; Host Guide">
+                ❓ Help
+            </button>
+            <div id="headerSingerBadge" class="badge-local" style="font-size: 0.9rem; cursor: pointer;" onclick="showOnboardingModal()">
+                🌺 Welcome
+            </div>
         </div>
     </header>
 
@@ -354,7 +359,10 @@
             <div class="tiki-card-pink" style="padding: 16px; margin-bottom: 16px;">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
                     <h2 class="font-tiki neon-pink" style="font-size: 1.3rem; margin: 0;">👑 Master Host Desk</h2>
-                    <span class="badge-local" style="font-size: 0.75rem;">Host Desk</span>
+                    <div style="display: flex; align-items: center; gap: 6px;">
+                        <button type="button" onclick="showQuickstartCard()" class="btn-ghost" style="padding: 3px 9px; font-size: 0.72rem; border-color: rgba(255,183,3,0.45); color: var(--neon-gold);">? Guide</button>
+                        <span class="badge-local" style="font-size: 0.75rem;">Host Desk</span>
+                    </div>
                 </div>
 
                 <!-- First-Run Quickstart Guide Banner (Dismissible) -->
@@ -411,6 +419,9 @@
                         <button onclick="hostAdd15s()" class="btn-ghost" style="padding: 12px; font-weight: 700; font-size: 0.95rem;">+15s Timer</button>
                         <button onclick="hostStop()" class="btn-ghost" style="color: #ffaa00; border-color: rgba(255,170,0,0.4); padding: 10px;">🏆 Stop Stage (Wrapped)</button>
                         <button onclick="openRenormalizeWizardModal()" class="btn-ghost" style="color: var(--neon-cyan); border-color: rgba(0,240,255,0.4); padding: 10px;">🎚️ Calibrate Loudness</button>
+                    </div>
+                    <div style="font-size: 0.72rem; color: var(--text-muted); line-height: 1.4;">
+                        <strong>Start Stage Now</strong> skips the intermission countdown; <strong>Stop Stage</strong> ends the show with a Wrapped summary; <strong>Calibrate Loudness</strong> normalizes library tracks to your target LUFS.
                     </div>
                 </div>
 
@@ -529,6 +540,16 @@
                                 </label>
                             </div>
                         </div>
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.06);">
+                            <div>
+                                <div style="font-size: 0.82rem; font-weight: 700; color: #fff;">Speaker Echo Filter (AEC)</div>
+                                <div style="font-size: 0.7rem; color: var(--text-muted);">Subtracts app playback from mic in Browser WebRTC mode to cut room bleed</div>
+                            </div>
+                            <label class="switch-toggle">
+                                <input type="checkbox" id="mobileHostMicAecToggle" onchange="hostToggleMicAec(this.checked)">
+                                <span class="slider-round"></span>
+                            </label>
+                        </div>
                     </div>
 
                     <!-- Live DJ Soundboard -->
@@ -544,7 +565,10 @@
 
                     <!-- Virtual DJ TTS Toggle -->
                     <div style="margin-top: 12px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.08); display: flex; justify-content: space-between; align-items: center;">
-                        <span style="font-size: 0.85rem; font-weight: 600;">🎙️ TTS Virtual DJ Announcer:</span>
+                        <div>
+                            <div style="font-size: 0.85rem; font-weight: 600;">🎙️ TTS Virtual DJ Announcer</div>
+                            <div style="font-size: 0.7rem; color: var(--text-muted);">Announces the next singer and song facts between tracks</div>
+                        </div>
                         <input type="checkbox" id="ttsToggle" onchange="hostToggleTTS(this.checked)" style="transform: scale(1.3);">
                     </div>
                 </div>
@@ -1569,10 +1593,39 @@
             }
         }
     </script>
+    <!-- Modal: In-App Party & Host Quick Guide -->
+    <div id="helpGuideModal" onclick="if (event.target === this) closeHelpGuideModal();" style="display: none; position: fixed; inset: 0; z-index: 9999; background: rgba(5, 8, 15, 0.86); backdrop-filter: blur(8px); align-items: center; justify-content: center; padding: 16px;">
+        <div class="tiki-card" style="width: 100%; max-width: 480px; max-height: 86vh; overflow-y: auto; padding: 20px; border: 1px solid var(--border-neon);">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                <h2 class="font-tiki neon-cyan" style="font-size: 1.2rem; margin: 0;">❓ Tiki Karaoke Quick Guide</h2>
+                <button type="button" onclick="closeHelpGuideModal()" class="btn-ghost" style="padding: 4px 10px; font-size: 0.85rem;">✕</button>
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 12px; font-size: 0.84rem; color: #dbe4f0; line-height: 1.5;">
+                <div style="padding: 10px 12px; border-radius: 10px; background: rgba(0, 240, 255, 0.06); border: 1px solid rgba(0, 240, 255, 0.2);">
+                    <strong style="color: var(--neon-cyan);">🎤 For Guests</strong>
+                    <ol style="margin: 6px 0 0; padding-left: 18px;">
+                        <li>Tap your <strong>Welcome</strong> badge at the top to pick your nickname &amp; avatar.</li>
+                        <li>Use <strong>Search</strong> or <strong>Library</strong> to find a song, pick a key shift (-3 to +3), and queue it.</li>
+                        <li>Fair Round-Robin automatically rotates turns so everyone gets stage time.</li>
+                    </ol>
+                </div>
+                <div style="padding: 10px 12px; border-radius: 10px; background: rgba(255, 42, 133, 0.07); border: 1px solid rgba(255, 42, 133, 0.25);">
+                    <strong style="color: var(--neon-pink);">👑 For Host DJs</strong>
+                    <ul style="margin: 6px 0 0; padding-left: 18px;">
+                        <li>Tap the <strong>🌴 bar title</strong> in the top-left to unlock Host DJ mode with your PIN.</li>
+                        <li>Use <strong>Live Stage Transport</strong> to start, pause, skip, or calibrate track loudness (LUFS).</li>
+                        <li>Use <strong>Intermission Vibe</strong> and <strong>Mic Monitoring</strong> (Native / Hardware / WebRTC) to match your room audio setup.</li>
+                    </ul>
+                </div>
+            </div>
+            <button type="button" onclick="closeHelpGuideModal()" class="btn-neon-cyan" style="width: 100%; margin-top: 14px; padding: 10px; font-weight: 700;">Got It</button>
+        </div>
+    </div>
+
     <script>
         window.TIKI_REQUIRE_ROOM_CODE = {{ 'true' if require_room_code else 'false' }};
         window.TIKI_ROOM_VERIFIED = {{ 'true' if room_verified else 'false' }};
     </script>
-    <script src="/static/js/mobile-client.js?v=20261114_room_code"></script>
+    <script src="/static/js/mobile-client.js?v=20261117_aec_fix"></script>
 </body>
 </html>

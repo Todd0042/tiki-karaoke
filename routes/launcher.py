@@ -362,11 +362,8 @@ async def api_launch_importer(request: Request):
     cmd.extend(["--db", db_path, "--folder", tracks_dir])
 
     try:
-        if sys.platform == "win32":
-            flags = 0x00000008 | subprocess.CREATE_NEW_PROCESS_GROUP
-            subprocess.Popen(cmd, cwd=str(work_dir) if work_dir else None, creationflags=flags)
-        else:
-            subprocess.Popen(cmd, cwd=str(work_dir) if work_dir else None, start_new_session=True)
+        from services.process_utils import spawn_detached_process
+        spawn_detached_process(cmd, work_dir)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to launch Smart Importer: {e}")
 
@@ -407,11 +404,8 @@ async def api_launch_cdg_ripper(request: Request):
     cmd = clean_base + ["--cdg-ripper", "--folder", tracks_dir]
 
     try:
-        if sys.platform == "win32":
-            flags = 0x00000008 | subprocess.CREATE_NEW_PROCESS_GROUP
-            subprocess.Popen(cmd, cwd=str(work_dir) if work_dir else None, creationflags=flags)
-        else:
-            subprocess.Popen(cmd, cwd=str(work_dir) if work_dir else None, start_new_session=True)
+        from services.process_utils import spawn_detached_process
+        spawn_detached_process(cmd, work_dir)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to launch CD+G Ripper: {e}")
 
@@ -438,11 +432,8 @@ async def api_launch_rehearsal_lounge(request: Request):
     cmd = list(cmd_base)
 
     try:
-        if sys.platform == "win32":
-            flags = 0x00000008 | subprocess.CREATE_NEW_PROCESS_GROUP
-            subprocess.Popen(cmd, cwd=str(work_dir) if work_dir else None, creationflags=flags)
-        else:
-            subprocess.Popen(cmd, cwd=str(work_dir) if work_dir else None, start_new_session=True)
+        from services.process_utils import spawn_detached_process
+        spawn_detached_process(cmd, work_dir)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to launch Tiki Rehearsal Lounge: {e}")
 

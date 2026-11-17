@@ -195,10 +195,14 @@ class TestAPIEndpoints(unittest.TestCase):
         self.assertTrue(data.get("valid"))
         self.assertGreater(data.get("free_gb", 0), 0)
 
-        # 2. Setup page renders with host credentials
+        # 2. Setup page renders with host credentials and links to advanced options
         r = self.client.get("/setup", headers={"X-Host-Token": HOST_TOKEN})
         self.assertEqual(r.status_code, 200)
-        self.assertIn("Storage & Media Library", r.text)
+        self.assertIn("/setup/advanced", r.text)
+
+        r_adv = self.client.get("/setup/advanced", headers={"X-Host-Token": HOST_TOKEN})
+        self.assertEqual(r_adv.status_code, 200)
+        self.assertIn("Storage & Media Library", r_adv.text)
 
         # 3. Test Display Identification endpoints
         r = self.client.post("/api/setup/test-display", json={
@@ -623,6 +627,27 @@ class TestAPIEndpoints(unittest.TestCase):
             self.assertEqual(mic_msg.get("reverb"), True)
             self.assertEqual(mic_msg.get("ducking_enabled"), True)
             self.assertEqual(mic_msg.get("ducking_db"), -6)
+
+            # 3. Malformed JSON, non-object JSON, and invalid host_mic_settings return clean errors without dropping WS
+            ws_host.send_text("{bad-json")
+            err1 = ws_host.receive_json()
+            self.assertEqual(err1.get("type"), "ws_error")
+
+            ws_host.send_json(["not", "an", "object"])
+            err2 = ws_host.receive_json()
+            self.assertEqual(err2.get("type"), "ws_error")
+
+            ws_host.send_json({"type": "host_mic_settings", "ducking_db": "invalid", "monitoring_mode": "invalid_mode"})
+            alert1 = ws_host.receive_json()
+            self.assertEqual(alert1.get("type"), "host_alert")
+            alert2 = ws_host.receive_json()
+            self.assertEqual(alert2.get("type"), "host_alert")
+            mic_after = ws_host.receive_json()
+            self.assertEqual(mic_after.get("type"), "host_mic_settings")
+
+            ws_host.send_json({"type": "ping"})
+            pong = ws_host.receive_json()
+            self.assertEqual(pong.get("type"), "pong")
 
     def test_abuse_prevention_quotas_and_cooldown(self):
         from config import HOST_TOKEN

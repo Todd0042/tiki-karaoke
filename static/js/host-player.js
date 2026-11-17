@@ -2525,6 +2525,7 @@ async function populateHostMicDevices() {
 let hostMicMuted = true;
 let hostMicVolume = 80;
 let hostMicReverb = false;
+let hostEchoCancellation = false;
 let hostDuckingEnabled = true;
 let hostDuckingDb = -6;
 let hostMicAvailable = null;   // null = unknown yet; true/false from backend router
@@ -2551,6 +2552,10 @@ fetch("/api/host/mic-state")
                 const revToggle = document.getElementById("modalMicReverbToggle");
                 if (revToggle) revToggle.checked = hostMicReverb;
                 if (audioDSP) audioDSP.setMicReverb(hostMicReverb);
+            }
+            if (st.echo_cancellation !== undefined) {
+                hostEchoCancellation = Boolean(st.echo_cancellation);
+                if (audioDSP) audioDSP.setEchoCancellation(hostEchoCancellation);
             }
             if (st.ducking_enabled !== undefined) {
                 hostDuckingEnabled = Boolean(st.ducking_enabled);
@@ -2640,9 +2645,14 @@ async function syncBrowserWebRtcState() {
             window.audioDSP = audioDSP;
         }
         audioDSP.ensureContext();
+        audioDSP.echoCancellationEnabled = !!hostEchoCancellation;
         if (!audioDSP.micStream) {
             const devId = localStorage.getItem("tiki_mic_device") || "default";
             await audioDSP.connectMicrophone(devId);
+        }
+        if (hostMonitoringMode !== "browser") {
+            audioDSP.setMicMuted(true);
+            return;
         }
         audioDSP.setMicMuted(hostMicMuted);
         audioDSP.setMicVolume(hostMicVolume / 100.0);
@@ -2852,6 +2862,10 @@ function handleHostMicSettings(data) {
         const revToggle = document.getElementById("modalMicReverbToggle");
         if (revToggle) revToggle.checked = hostMicReverb;
         if (audioDSP) audioDSP.setMicReverb(hostMicReverb);
+    }
+    if (data.echo_cancellation !== undefined) {
+        hostEchoCancellation = Boolean(data.echo_cancellation);
+        if (audioDSP) audioDSP.setEchoCancellation(hostEchoCancellation);
     }
     if (data.ducking_enabled !== undefined) {
         hostDuckingEnabled = Boolean(data.ducking_enabled);

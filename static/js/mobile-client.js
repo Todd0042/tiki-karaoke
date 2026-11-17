@@ -638,6 +638,8 @@ function initWebSocket() {
                 if (isHost) {
                     showToast(`⚠️ ${data.message}`);
                 }
+            } else if (data.type === "ws_error") {
+                showToast(`⚠️ ${data.message || "Invalid request"}`);
             } else if (data.type === "singer_status_updated") {
                 if (currentSinger && (data.singer_id === currentSinger.id || data.token === currentSinger.token)) {
                     currentSinger.status = data.status;
@@ -1369,7 +1371,8 @@ function renderQueue(queue) {
     if (quickstart) {
         let isDismissed = false;
         try { isDismissed = !!localStorage.getItem("tiki_hide_quickstart"); } catch (e) {}
-        quickstart.style.display = (queue.length === 0 && !isDismissed && isHost) ? "block" : "none";
+        const shouldShow = isHost && (forceShowQuickstart || (queue.length === 0 && !isDismissed));
+        quickstart.style.display = shouldShow ? "block" : "none";
     }
 
     const container = document.getElementById("queueListContainer");
@@ -2183,6 +2186,7 @@ let hostMicState = {
     muted: true,
     volume: 80,
     reverb: true,
+    echo_cancellation: false,
     ducking_enabled: true,
     ducking_db: -6,
     cdg_theme: "neon",
@@ -2215,6 +2219,11 @@ async function loadHostMicDevices(showFeedback = false) {
                         hostMicState.reverb = Boolean(st.reverb);
                         const rev = document.getElementById("mobileMicReverbToggle");
                         if (rev) rev.checked = hostMicState.reverb;
+                    }
+                    if (st.echo_cancellation !== undefined) {
+                        hostMicState.echo_cancellation = Boolean(st.echo_cancellation);
+                        const aec = document.getElementById("mobileHostMicAecToggle");
+                        if (aec) aec.checked = hostMicState.echo_cancellation;
                     }
                     if (st.ducking_enabled !== undefined) {
                         hostMicState.ducking_enabled = Boolean(st.ducking_enabled);
@@ -2334,6 +2343,11 @@ function hostSetMicVolume(vol) {
 function hostToggleMicReverb(enabled) {
     hostMicState.reverb = !!enabled;
     sendHostMicSettings({ reverb: hostMicState.reverb });
+}
+
+function hostToggleMicAec(enabled) {
+    hostMicState.echo_cancellation = !!enabled;
+    sendHostMicSettings({ echo_cancellation: hostMicState.echo_cancellation });
 }
 
 function hostToggleDucking(enabled) {
@@ -2499,6 +2513,11 @@ function syncHostMicSettingsUI(data) {
         hostMicState.reverb = !!data.reverb;
         const rev = document.getElementById("mobileMicReverbToggle");
         if (rev) rev.checked = hostMicState.reverb;
+    }
+    if (data.echo_cancellation !== undefined) {
+        hostMicState.echo_cancellation = !!data.echo_cancellation;
+        const aec = document.getElementById("mobileHostMicAecToggle");
+        if (aec) aec.checked = hostMicState.echo_cancellation;
     }
     if (data.ducking_enabled !== undefined) {
         hostMicState.ducking_enabled = !!data.ducking_enabled;
@@ -3457,12 +3476,42 @@ function checkHostHealth() {
         });
 }
 
+let forceShowQuickstart = false;
+
 function dismissQuickstartCard() {
+    forceShowQuickstart = false;
     const card = document.getElementById("hostQuickstartCard");
     if (card) card.style.display = "none";
     try {
         localStorage.setItem("tiki_hide_quickstart", "true");
     } catch (e) {}
+}
+
+function showQuickstartCard() {
+    const card = document.getElementById("hostQuickstartCard");
+    if (!card) return;
+    const isHidden = window.getComputedStyle(card).display === "none";
+    if (isHidden) {
+        forceShowQuickstart = true;
+        card.style.display = "block";
+        card.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        try {
+            localStorage.removeItem("tiki_hide_quickstart");
+        } catch (e) {}
+    } else {
+        forceShowQuickstart = false;
+        card.style.display = "none";
+    }
+}
+
+function openHelpGuideModal() {
+    const m = document.getElementById("helpGuideModal");
+    if (m) m.style.display = "flex";
+}
+
+function closeHelpGuideModal() {
+    const m = document.getElementById("helpGuideModal");
+    if (m) m.style.display = "none";
 }
 
 async function updateYtdlpEngine() {

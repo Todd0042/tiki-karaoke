@@ -482,12 +482,8 @@ class TikiControlHub:
                     found = find_rehearsal_lounge_executable()
                     if found:
                         cmd_base, work_dir = found
-                        cmd = list(cmd_base)
-                        if sys.platform == "win32":
-                            flags = 0x00000008 | subprocess.CREATE_NEW_PROCESS_GROUP
-                            subprocess.Popen(cmd, cwd=str(work_dir) if work_dir else None, creationflags=flags)
-                        else:
-                            subprocess.Popen(cmd, cwd=str(work_dir) if work_dir else None, start_new_session=True)
+                        from services.process_utils import spawn_detached_process
+                        spawn_detached_process(list(cmd_base), work_dir)
                         self._flash_toast("🌺 Tiki Rehearsal Lounge launched!")
                         return
                 except Exception:

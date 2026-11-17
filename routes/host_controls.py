@@ -338,6 +338,7 @@ async def api_get_host_mic_state():
     st = audio_router.get_state()
     st["monitoring_mode"] = get_setting("mic_monitoring_mode", st.get("monitoring_mode", "native"))
     st["reverb"] = get_setting("mic_reverb", "true").lower() == "true"
+    st["echo_cancellation"] = get_setting("mic_echo_cancellation", "false").lower() == "true"
     st["ducking_enabled"] = get_setting("mic_ducking_enabled", "true").lower() == "true"
     try:
         st["ducking_db"] = int(float(get_setting("mic_ducking_db", "-6")))

@@ -1,4 +1,6 @@
 import asyncio
+import json
+import logging
 import os
 import signal
 import sys
@@ -10,6 +12,8 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
+
+logger = logging.getLogger("tiki.app")
 
 from audio_router import audio_router
 from config import (
@@ -276,8 +280,24 @@ async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket, is_host=is_host)
     try:
         while True:
-            data = await websocket.receive_json()
+            raw_text = await websocket.receive_text()
+            try:
+                data = json.loads(raw_text)
+            except (json.JSONDecodeError, ValueError) as e:
+                logger.warning(f"[WS] Malformed JSON payload from client: {e}")
+                await websocket.send_json({"type": "ws_error", "message": "Malformed JSON message"})
+                continue
+
+            if not isinstance(data, dict):
+                logger.warning(f"[WS] Expected JSON object, got {type(data).__name__}")
+                await websocket.send_json({"type": "ws_error", "message": "WebSocket payload must be a JSON object"})
+                continue
+
             msg_type = data.get("type")
+            if not isinstance(msg_type, str) or not msg_type.strip():
+                logger.warning("[WS] Missing or non-string message 'type'")
+                await websocket.send_json({"type": "ws_error", "message": "Missing message type"})
+                continue
             if msg_type == "ping":
                 await websocket.send_json({"type": "pong", "time": time.time()})
                 continue
@@ -361,7 +381,11 @@ async def websocket_endpoint(websocket: WebSocket):
                     if muted is not None:
                         audio_router.set_muted(bool(muted))
                     if volume is not None:
-                        audio_router.set_volume(int(volume))
+                        try:
+                            audio_router.set_volume(int(float(volume)))
+                        except (ValueError, TypeError) as e:
+                            logger.warning(f"[WS] Invalid mic volume '{volume}': {e}")
+                            await websocket.send_json({"type": "host_alert", "message": f"Invalid mic volume: {volume}"})
                     if device is not None and str(device).strip():
                         audio_router.set_device(str(device).strip())
                     if monitoring_mode is not None:
@@ -370,17 +394,34 @@ async def websocket_endpoint(websocket: WebSocket):
                             audio_router.set_monitoring_mode(monitoring_mode)
                             set_setting("mic_monitoring_mode", monitoring_mode)
                             if monitoring_mode == "native" and not audio_router.is_muted:
-                                audio_router.start_loopback()
+                                if not audio_router.start_loopback():
+                                    logger.warning("[WS] Native mic loopback failed to start")
+                                    await websocket.send_json({
+                                        "type": "host_alert",
+                                        "message": "Native mic loopback could not start. Check your audio device."
+                                    })
+                        else:
+                            logger.warning(f"[WS] Unknown monitoring_mode '{monitoring_mode}'")
+                            await websocket.send_json({
+                                "type": "host_alert",
+                                "message": f"Unsupported monitoring mode: {monitoring_mode}"
+                            })
 
                     if "reverb" in data and data["reverb"] is not None:
                         set_setting("mic_reverb", "true" if bool(data["reverb"]) else "false")
+                    if "echo_cancellation" in data and data["echo_cancellation"] is not None:
+                        set_setting("mic_echo_cancellation", "true" if bool(data["echo_cancellation"]) else "false")
                     if "ducking_enabled" in data and data["ducking_enabled"] is not None:
                         set_setting("mic_ducking_enabled", "true" if bool(data["ducking_enabled"]) else "false")
                     if "ducking_db" in data and data["ducking_db"] is not None:
                         try:
                             set_setting("mic_ducking_db", str(int(float(data["ducking_db"]))))
-                        except Exception:
-                            pass
+                        except (ValueError, TypeError) as e:
+                            logger.warning(f"[WS] Invalid ducking_db '{data['ducking_db']}': {e}")
+                            await websocket.send_json({
+                                "type": "host_alert",
+                                "message": f"Invalid ducking dB value: {data['ducking_db']}"
+                            })
                     if "cdg_theme" in data and data["cdg_theme"]:
                         set_setting("cdg_theme", str(data["cdg_theme"]).strip())
                     if "cdg_glow" in data and data["cdg_glow"] is not None:
@@ -389,7 +430,8 @@ async def websocket_endpoint(websocket: WebSocket):
                     st = audio_router.get_state()
                     try:
                         duck_db_val = int(float(get_setting("mic_ducking_db", "-6")))
-                    except Exception:
+                    except (ValueError, TypeError) as e:
+                        logger.warning(f"[WS] Corrupt stored mic_ducking_db setting, defaulting to -6: {e}")
                         duck_db_val = -6
                     msg = {
                         "type": "host_mic_settings",
@@ -400,6 +442,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         "latency_ms": st.get("latency_ms_est"),
                         "monitoring_mode": get_setting("mic_monitoring_mode", st.get("monitoring_mode", "native")),
                         "reverb": get_setting("mic_reverb", "true").lower() == "true",
+                        "echo_cancellation": get_setting("mic_echo_cancellation", "false").lower() == "true",
                         "ducking_enabled": get_setting("mic_ducking_enabled", "true").lower() == "true",
                         "ducking_db": duck_db_val,
                         "cdg_theme": get_setting("cdg_theme", "neon"),

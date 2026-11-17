@@ -3,6 +3,34 @@ import hashlib
 from pathlib import Path
 from typing import Dict, Any, Optional, Set, List
 
+try:
+    from db_schema import TRACKS_TABLE_SQL
+except ImportError:
+    TRACKS_TABLE_SQL = """
+        CREATE TABLE IF NOT EXISTS tracks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            video_id TEXT UNIQUE NOT NULL,
+            title TEXT NOT NULL,
+            artist TEXT NOT NULL,
+            original_title TEXT NOT NULL,
+            channel TEXT DEFAULT '',
+            duration INTEGER DEFAULT 0,
+            is_downloaded INTEGER DEFAULT 0,
+            local_path TEXT DEFAULT '',
+            normalized_lufs REAL DEFAULT -16.0,
+            download_status TEXT DEFAULT 'idle',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            play_count INTEGER DEFAULT 0,
+            last_played TIMESTAMP,
+            is_sing_along INTEGER DEFAULT 0,
+            genre TEXT DEFAULT '',
+            release_year INTEGER DEFAULT 0,
+            media_source TEXT DEFAULT 'youtube',
+            media_type TEXT DEFAULT 'video',
+            cdg_path TEXT DEFAULT ''
+        )
+    """
+
 
 class TikiDatabaseAdapter:
     """
@@ -19,30 +47,7 @@ class TikiDatabaseAdapter:
             p.parent.mkdir(parents=True, exist_ok=True)
         # Verify schema or create table if missing
         with sqlite3.connect(self.db_path) as conn:
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS tracks (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    video_id TEXT UNIQUE NOT NULL,
-                    title TEXT NOT NULL,
-                    artist TEXT NOT NULL,
-                    original_title TEXT NOT NULL,
-                    channel TEXT DEFAULT '',
-                    duration INTEGER DEFAULT 0,
-                    is_downloaded INTEGER DEFAULT 0,
-                    local_path TEXT DEFAULT '',
-                    normalized_lufs REAL DEFAULT -16.0,
-                    download_status TEXT DEFAULT 'idle',
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    play_count INTEGER DEFAULT 0,
-                    last_played TIMESTAMP,
-                    is_sing_along INTEGER DEFAULT 0,
-                    genre TEXT DEFAULT '',
-                    release_year INTEGER DEFAULT 0,
-                    media_source TEXT DEFAULT 'youtube',
-                    media_type TEXT DEFAULT 'video',
-                    cdg_path TEXT DEFAULT ''
-                )
-            """)
+            conn.execute(TRACKS_TABLE_SQL)
 
     def get_existing_paths(self) -> Set[str]:
         """Returns a set of all normalized local_paths already in the database."""

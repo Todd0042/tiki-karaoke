@@ -42,6 +42,8 @@ class AudioDSPPipeline {
         this.micMuted = true; // Default OFF as requested
         this.micVolume = 0.8;
         this.micReverbEnabled = true;
+        this.echoCancellationEnabled = false;
+        this.lastMicDeviceId = null;
 
         // Between-Song Music Ducking
         this.isBetweenSongs = true;
@@ -162,6 +164,7 @@ class AudioDSPPipeline {
     async initMicrophone(deviceId = null) {
         this.ensureContext();
         this.resume();
+        this.lastMicDeviceId = deviceId;
 
         // Release existing mic stream if open
         if (this.micStream) {
@@ -172,9 +175,10 @@ class AudioDSPPipeline {
         }
 
         try {
+            const aec = !!this.echoCancellationEnabled;
             const constraints = {
                 audio: {
-                    echoCancellation: false,
+                    echoCancellation: aec,
                     noiseSuppression: false,
                     autoGainControl: false,
                     latency: 0
@@ -194,7 +198,7 @@ class AudioDSPPipeline {
                     console.warn("[AudioDSP] Failed with exact deviceId, retrying with default audio:", err);
                     stream = await navigator.mediaDevices.getUserMedia({
                         audio: {
-                            echoCancellation: false,
+                            echoCancellation: aec,
                             noiseSuppression: false,
                             autoGainControl: false,
                             latency: 0
@@ -206,8 +210,11 @@ class AudioDSPPipeline {
             }
 
             this.micStream = stream;
+            this.micStream.getAudioTracks().forEach(t => {
+                t.enabled = !this.micMuted;
+            });
             this.setupMicGraph(stream);
-            console.log("[AudioDSP] Microphone stream connected successfully:", deviceId || "Default");
+            console.log("[AudioDSP] Microphone stream connected successfully:", deviceId || "Default", `(AEC=${aec})`);
             return true;
         } catch (e) {
             console.warn("[AudioDSP] Microphone access error:", e);
@@ -422,8 +429,28 @@ class AudioDSPPipeline {
 
     setMicMuted(muted) {
         this.micMuted = !!muted;
+        if (this.micStream) {
+            this.micStream.getAudioTracks().forEach(t => {
+                t.enabled = !this.micMuted;
+            });
+        }
         if (this.micMuteGain && this.ctx) {
-            this.micMuteGain.gain.setTargetAtTime(this.micMuted ? 0.0 : 1.0, this.ctx.currentTime, 0.015);
+            const now = this.ctx.currentTime;
+            this.micMuteGain.gain.cancelScheduledValues(now);
+            if (this.micMuted) {
+                this.micMuteGain.gain.setValueAtTime(0.0, now);
+            } else {
+                this.micMuteGain.gain.setTargetAtTime(1.0, now, 0.015);
+            }
+        }
+    }
+
+    async setEchoCancellation(enabled) {
+        const next = !!enabled;
+        if (this.echoCancellationEnabled === next) return;
+        this.echoCancellationEnabled = next;
+        if (this.micStream) {
+            await this.initMicrophone(this.lastMicDeviceId);
         }
     }
 
