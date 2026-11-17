@@ -3,28 +3,21 @@ import shutil
 import subprocess
 from typing import Optional
 
+from audio_base import BaseAudioRouter, DEFAULT_MONITORING_MODE, MONITORING_MODES
 from config import load_config
 
 logger = logging.getLogger("tiki.audio_router")
 
-MONITORING_MODES = ("native", "hardware_direct", "browser")
-DEFAULT_MONITORING_MODE = "native"
 
-
-class NativeAudioRouter:
+class NativeAudioRouter(BaseAudioRouter):
     """
     Manages low-latency native hardware microphone loopback via PipeWire / PulseAudio.
     Achieves sub-2ms vocal round-trip latency by bypassing user-space browser WebRTC audio.
     """
 
     def __init__(self):
+        super().__init__()
         self.module_id: Optional[str] = None
-        self.current_source: str = "default"
-        self.current_sink: str = "default"
-        self.is_muted: bool = True
-        self.volume_pct: int = 80
-        self.is_active: bool = False
-        self.monitoring_mode: str = DEFAULT_MONITORING_MODE
 
     def is_available(self) -> bool:
         return bool(shutil.which("pactl"))
@@ -52,6 +45,7 @@ class NativeAudioRouter:
 
     def start_loopback(self, source: Optional[str] = None, sink: Optional[str] = None) -> bool:
         if not self.is_available():
+            self.last_error = "pactl not available on system"
             logger.info("[AudioRouter] pactl not available, native loopback skipped")
             return False
 
@@ -84,13 +78,17 @@ class NativeAudioRouter:
             if res.returncode == 0 and res.stdout.strip().isdigit():
                 self.module_id = res.stdout.strip()
                 self.is_active = True
+                self.last_error = None
                 logger.info(f"[AudioRouter] ✅ Loaded low-latency PipeWire loopback (Module #{self.module_id})")
                 self.apply_state()
                 return True
             else:
-                logger.warning(f"[AudioRouter] Failed to load module-loopback: {res.stderr.strip()}")
+                err_msg = res.stderr.strip() or "pactl load-module failed"
+                self.last_error = err_msg
+                logger.warning(f"[AudioRouter] Failed to load module-loopback: {err_msg}")
                 return False
         except Exception as e:
+            self.last_error = str(e)
             logger.error(f"[AudioRouter] Error loading module-loopback: {e}")
             return False
 
@@ -162,27 +160,3 @@ class NativeAudioRouter:
         if sink_in:
             subprocess.run(["pactl", "set-sink-input-mute", sink_in, "1" if self.is_muted else "0"], capture_output=True, timeout=1.0)
             subprocess.run(["pactl", "set-sink-input-volume", sink_in, f"{self.volume_pct}%"], capture_output=True, timeout=1.0)
-
-    def get_state(self) -> dict:
-        return {
-            "available": self.is_available(),
-            "active": self.is_active,
-            "muted": self.is_muted,
-            "volume": self.volume_pct,
-            "device": self.current_source,
-            "monitoring_mode": self.monitoring_mode,
-        }
-
-    def set_monitoring_mode(self, mode: str):
-        """Switch monitoring mode. Stops native loopback when switching away from 'native'."""
-        if mode not in MONITORING_MODES:
-            logger.warning(f"[AudioRouter] Unknown monitoring mode '{mode}', ignoring")
-            return
-        if mode == self.monitoring_mode:
-            return
-        self.monitoring_mode = mode
-        if mode != "native":
-            # Native loopback not needed in hardware_direct or browser modes
-            self.stop_loopback()
-        # In 'native' mode the caller is responsible for starting the loopback
-        logger.info(f"[AudioRouter] Monitoring mode → {mode}")

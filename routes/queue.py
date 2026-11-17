@@ -163,8 +163,9 @@ async def api_singer_leave(request: Request):
     try:
         body = await request.json()
         token = body.get("token", token)
-    except Exception:
-        pass
+    except Exception as e:
+        import logging
+        logging.getLogger("tiki.routes.queue").debug(f"[Queue] Optional checkout JSON body skipped: {e}")
     singer = get_singer_by_token(token)
     if not singer:
         return {"status": "ok", "message": "Singer not found"}
@@ -387,8 +388,9 @@ async def api_enqueue_song(req: QueueSongRequest, request: Request):
     try:
         from app import trigger_intermission_if_idle
         await trigger_intermission_if_idle()
-    except Exception:
-        pass
+    except Exception as e:
+        import logging
+        logging.getLogger("tiki.routes.queue").warning(f"[Queue] Intermission trigger check failed: {e}")
 
     return {"status": "ok", "queue_id": queue_id}
 

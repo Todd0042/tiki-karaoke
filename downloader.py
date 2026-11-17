@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger('tiki.downloader')
 import os
 import sys
 import re
@@ -101,8 +103,8 @@ def renormalize_local_track(track_id: int, target_lufs: float = TARGET_LUFS) -> 
             try:
                 from services.library_cache import invalidate_library_cache
                 invalidate_library_cache()
-            except Exception:
-                pass
+            except Exception as _exc:
+                logger.debug(f'[tiki.downloader] Suppressed Exception: {_exc}')
             return True
         else:
             if temp_path.exists():
@@ -224,8 +226,8 @@ def download_and_normalize_track(
         try:
             from services.library_cache import invalidate_library_cache
             invalidate_library_cache()
-        except Exception:
-            pass
+        except Exception as _exc:
+            logger.debug(f'[tiki.downloader] Suppressed Exception: {_exc}')
         if progress_hook:
             progress_hook(track_id, pending_id, 100.0, "ready")
         return local_file
@@ -238,8 +240,8 @@ def download_and_normalize_track(
         if temp_path.exists():
             try:
                 temp_path.unlink()
-            except Exception:
-                pass
+            except Exception as _exc:
+                logger.debug(f'[tiki.downloader] Suppressed Exception: {_exc}')
         return None
 
 def update_singer_m3u_playlist(singer_name: str, local_path: str, title: str, artist: str):
@@ -269,8 +271,8 @@ async def downloader_worker():
             if pid:
                 try:
                     update_pending_download_progress(pid, pct, status)
-                except Exception:
-                    pass
+                except Exception as _exc:
+                    logger.debug(f'[tiki.downloader] Suppressed Exception: {_exc}')
             for cb in download_progress_callbacks:
                 try:
                     res = cb(tid, pid, pct, status)
@@ -298,8 +300,8 @@ async def downloader_worker():
                 if pending_id:
                     try:
                         update_pending_download_progress(pending_id, 0.0, "failed", "Download timed out")
-                    except Exception:
-                        pass
+                    except Exception as _exc:
+                        logger.debug(f'[tiki.downloader] Suppressed Exception: {_exc}')
                 local_path = None
 
             active_profile = get_setting("video_quality_profile", "") or load_config().get("video_quality_profile", "pro")
@@ -438,8 +440,8 @@ def download_and_normalize_filler_track(filler_id: int) -> Optional[str]:
         if temp_path.exists():
             try:
                 temp_path.unlink()
-            except Exception:
-                pass
+            except Exception as _exc:
+                logger.debug(f'[tiki.downloader] Suppressed Exception: {_exc}')
         return None
 
 def enqueue_filler_download(filler_id: int, pending_id: Optional[int] = None):
@@ -456,9 +458,8 @@ async def filler_downloader_worker():
         if pending_id:
             try:
                 update_pending_download_progress(pending_id, 15.0, "downloading")
-            except Exception:
-                pass
-
+            except Exception as _exc:
+                logger.debug(f'[tiki.downloader] Suppressed Exception: {_exc}')
         try:
             loop = asyncio.get_event_loop()
             try:
@@ -472,8 +473,8 @@ async def filler_downloader_worker():
                 if pending_id:
                     try:
                         update_pending_download_progress(pending_id, 0.0, "failed", "Download timed out")
-                    except Exception:
-                        pass
+                    except Exception as _exc:
+                        logger.debug(f'[tiki.downloader] Suppressed Exception: {_exc}')
                 local_path = None
 
             for cb in filler_callbacks:

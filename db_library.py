@@ -881,6 +881,178 @@ def record_filler_play(filler_id: int, is_sing_along: bool = False):
         """, (filler_id, 1 if is_sing_along else 0))
     conn.close()
 
+def _prefer_existing_files(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    existing = [t for t in rows if t.get("local_path") and Path(t["local_path"]).exists()]
+    return existing if existing else rows
+
+
+def _load_vibe_candidate_pool(
+    conn,
+    mode: Optional[str],
+    is_paused: bool,
+    exclude_track_id: Optional[int],
+) -> List[Dict[str, Any]]:
+    strict_byom = get_setting("strict_byom_only", "false") == "true"
+    strict_filter = " AND (media_source = 'imported' OR video_id LIKE 'local_%')" if strict_byom else ""
+
+    filler_rows = [dict(r) for r in conn.execute(f"""
+        SELECT id, video_id, title, artist, original_title, genre, release_year,
+               duration, is_downloaded, local_path, download_status, play_count, last_played,
+               0 as is_sing_along, 'filler' as track_type, coalesce(media_source, 'youtube') as media_source
+        FROM filler_tracks
+        WHERE (download_status = 'ready' OR is_downloaded = 1){strict_filter}
+        ORDER BY play_count ASC, coalesce(last_played, '1970-01-01') ASC, id ASC
+    """).fetchall()]
+
+    sing_along_rows = [dict(r) for r in conn.execute(f"""
+        SELECT id, video_id, title, artist, original_title, coalesce(genre, '') as genre, coalesce(release_year, 0) as release_year,
+               duration, is_downloaded, local_path, download_status, play_count, last_played,
+               1 as is_sing_along, 'sing_along' as track_type, coalesce(media_source, 'youtube') as media_source
+        FROM tracks
+        WHERE is_sing_along = 1 AND (download_status = 'ready' OR is_downloaded = 1){strict_filter}
+        ORDER BY play_count ASC, coalesce(last_played, '1970-01-01') ASC, id ASC
+    """).fetchall()]
+
+    filler_tracks = _prefer_existing_files(filler_rows)
+    sing_along_tracks = _prefer_existing_files(sing_along_rows)
+
+    clean_mode = (mode or get_setting("intermission_vibe_mode", "sing_along") or "sing_along").strip().lower()
+    if clean_mode == "pure_filler" or (clean_mode not in ("sing_along",) and is_paused):
+        candidate_pool = filler_tracks or sing_along_tracks
+    else:
+        candidate_pool = sing_along_tracks or filler_tracks
+
+    if exclude_track_id is not None and len(candidate_pool) > 1:
+        filtered = [t for t in candidate_pool if t.get("id") != exclude_track_id]
+        if filtered:
+            candidate_pool = filtered
+    return candidate_pool
+
+
+def _load_vibe_history_context(conn, last_track_artist: str, last_track_genre: str, last_track_year: int) -> Dict[str, Any]:
+    try:
+        recent_filler_keys = [
+            (r["filler_id"], r["is_sing_along"])
+            for r in conn.execute("SELECT filler_id, is_sing_along FROM filler_play_history ORDER BY id DESC LIMIT 7").fetchall()
+        ]
+    except Exception as e:
+        print(f"[Database] Error checking filler_play_history: {e}")
+        recent_filler_keys = []
+
+    try:
+        recent_sung = conn.execute("""
+            SELECT LOWER(t.title) as title, LOWER(t.artist) as artist
+            FROM history h JOIN tracks t ON h.track_id = t.id
+            WHERE h.played_at >= datetime('now', '-90 minutes')
+        """).fetchall()
+        recent_sung_pairs = {(r["artist"].strip(), r["title"].strip()) for r in recent_sung}
+    except Exception as e:
+        print(f"[Database] Error checking recent sung history: {e}")
+        recent_sung_pairs = set()
+
+    try:
+        recent_history_rows = [dict(r) for r in conn.execute("""
+            SELECT t.id, t.title, t.artist, coalesce(t.genre, '') as genre, coalesce(t.release_year, 0) as release_year
+            FROM history h JOIN tracks t ON h.track_id = t.id
+            ORDER BY h.id DESC LIMIT 3
+        """).fetchall()]
+    except Exception as e:
+        print(f"[Database] Error checking recent performance history: {e}")
+        recent_history_rows = []
+
+    history_window: List[Dict[str, Any]] = []
+    if last_track_artist or last_track_genre or last_track_year:
+        history_window.append({
+            "artist": last_track_artist or "",
+            "genre": last_track_genre or "",
+            "release_year": int(last_track_year or 0),
+        })
+    for r in recent_history_rows:
+        if len(history_window) >= 3:
+            break
+        if history_window and history_window[0].get("artist", "").lower() == r.get("artist", "").lower() and history_window[0].get("release_year") == r.get("release_year"):
+            continue
+        history_window.append(r)
+
+    weights = [0.5, 0.3, 0.2]
+    years_with_weights = [
+        (weights[idx] if idx < len(weights) else 0.2, s.get("release_year") or 0)
+        for idx, s in enumerate(history_window)
+        if (s.get("release_year") or 0) > 0
+    ]
+    if years_with_weights:
+        target_era_year = sum(w * y for w, y in years_with_weights) / sum(w for w, _ in years_with_weights)
+    else:
+        target_era_year = float(last_track_year) if last_track_year > 0 else 0.0
+
+    recent_genres = [s["genre"].strip().lower() for s in history_window if s.get("genre")]
+    return {
+        "recent_filler_keys": recent_filler_keys,
+        "recent_sung_pairs": recent_sung_pairs,
+        "recent_artists": {s["artist"].strip().lower() for s in history_window if s.get("artist")},
+        "recent_genres": recent_genres,
+        "latest_genre": recent_genres[0] if recent_genres else "",
+        "target_era_year": target_era_year,
+    }
+
+
+def _apply_vibe_cooldowns(
+    candidate_pool: List[Dict[str, Any]],
+    recent_filler_keys: List[Any],
+    recent_sung_pairs: set,
+) -> List[Dict[str, Any]]:
+    max_blacklist = min(6, max(0, len(candidate_pool) - 2))
+    if max_blacklist > 0 and recent_filler_keys:
+        active_blacklist = set(recent_filler_keys[:max_blacklist])
+        unblacklisted = [t for t in candidate_pool if (t["id"], 1 if t.get("is_sing_along") else 0) not in active_blacklist]
+        if unblacklisted:
+            candidate_pool = unblacklisted
+
+    cooled_pool = [
+        t for t in candidate_pool
+        if (t["artist"].strip().lower(), t["title"].strip().lower()) not in recent_sung_pairs
+        and (t["title"].strip().lower(), t["artist"].strip().lower()) not in recent_sung_pairs
+    ]
+    return cooled_pool if cooled_pool else candidate_pool
+
+
+def _score_vibe_track(
+    t: Dict[str, Any],
+    recent_artists: set,
+    recent_genres: List[str],
+    latest_genre: str,
+    target_era_year: float,
+) -> float:
+    score = 100.0
+    cand_artist = t["artist"].strip().lower()
+    cand_genre = (t.get("genre") or "").strip().lower()
+    cand_year = t.get("release_year") or 0
+
+    if cand_artist in recent_artists:
+        score -= 80.0
+    elif recent_artists:
+        score += 50.0
+
+    if cand_genre:
+        if latest_genre and (cand_genre == latest_genre or cand_genre in latest_genre or latest_genre in cand_genre):
+            score += 40.0
+        elif any(cand_genre == g or cand_genre in g or g in cand_genre for g in recent_genres):
+            score += 25.0
+
+    if target_era_year > 0 and cand_year > 0:
+        year_diff = abs(cand_year - target_era_year)
+        if year_diff <= 3:
+            score += 35.0
+        elif year_diff <= 7:
+            score += 20.0
+        elif year_diff <= 12:
+            score += 10.0
+        else:
+            score -= min(25.0, (year_diff - 12) * 1.5)
+
+    return score - ((t.get("play_count") or 0) * 25.0)
+
+
 def get_next_vibe_filler_track(
     last_track_artist: str = "",
     last_track_genre: str = "",
@@ -894,210 +1066,25 @@ def get_next_vibe_filler_track(
     - pure_filler: Only music video downloads from the filler crate.
     - sing_along: Only downloaded sing-along tracks with lyrics.
     - intelligent_mashup: Sing-alongs when queue is naturally empty, music videos when show is paused.
-    
-    Upgraded Vibe Engine:
-    1. Rolling 3-Song Multi-History Context: Smoothed era release year + composite genre set + 3-artist diversity.
-    2. Adaptive FIFO Blacklist Ring Buffer (Last 6 Plays): Strictly excludes recently played filler tracks.
-    3. 90-Minute Sung Song Cooldown: Blocks music videos of tracks live guests sang tonight.
-    4. Fair Rotation across crate: Penalizes high play counts.
     """
     conn = get_db()
-    strict_byom = get_setting("strict_byom_only", "false") == "true"
-    strict_filter = " AND (media_source = 'imported' OR video_id LIKE 'local_%')" if strict_byom else ""
-
-    # Load ready filler tracks
-    filler_rows = [dict(r) for r in conn.execute(f"""
-        SELECT id, video_id, title, artist, original_title, genre, release_year,
-               duration, is_downloaded, local_path, download_status, play_count, last_played,
-               0 as is_sing_along, 'filler' as track_type, coalesce(media_source, 'youtube') as media_source
-        FROM filler_tracks
-        WHERE (download_status = 'ready' OR is_downloaded = 1){strict_filter}
-        ORDER BY play_count ASC, coalesce(last_played, '1970-01-01') ASC, id ASC
-    """).fetchall()]
-
-    # Load ready sing-along tracks
-    sing_along_rows = [dict(r) for r in conn.execute(f"""
-        SELECT id, video_id, title, artist, original_title, coalesce(genre, '') as genre, coalesce(release_year, 0) as release_year,
-               duration, is_downloaded, local_path, download_status, play_count, last_played,
-               1 as is_sing_along, 'sing_along' as track_type, coalesce(media_source, 'youtube') as media_source
-        FROM tracks
-        WHERE is_sing_along = 1 AND (download_status = 'ready' OR is_downloaded = 1){strict_filter}
-        ORDER BY play_count ASC, coalesce(last_played, '1970-01-01') ASC, id ASC
-    """).fetchall()]
-
-    # If any tracks have local files on disk, prefer valid files; otherwise keep ready tracks (for mocks/test fixtures)
-    existing_filler = [t for t in filler_rows if t.get("local_path") and Path(t["local_path"]).exists()]
-    filler_tracks = existing_filler if existing_filler else filler_rows
-
-    existing_sing = [t for t in sing_along_rows if t.get("local_path") and Path(t["local_path"]).exists()]
-    sing_along_tracks = existing_sing if existing_sing else sing_along_rows
-
-    # Select candidate pool based on mode and pause state
-    if not mode:
-        mode = get_setting("intermission_vibe_mode", "sing_along")
-    clean_mode = (mode or "sing_along").strip().lower()
-    if clean_mode == "pure_filler":
-        candidate_pool = filler_tracks if filler_tracks else sing_along_tracks
-    elif clean_mode == "sing_along":
-        candidate_pool = sing_along_tracks if sing_along_tracks else filler_tracks
-    else: # intelligent_mashup
-        if is_paused:
-            candidate_pool = filler_tracks if filler_tracks else sing_along_tracks
-        else:
-            candidate_pool = sing_along_tracks if sing_along_tracks else filler_tracks
-
-    if exclude_track_id is not None and len(candidate_pool) > 1:
-        filtered = [t for t in candidate_pool if t.get("id") != exclude_track_id]
-        if filtered:
-            candidate_pool = filtered
-
-    if not candidate_pool:
+    try:
+        candidate_pool = _load_vibe_candidate_pool(conn, mode, is_paused, exclude_track_id)
+        if not candidate_pool:
+            return None
+        ctx = _load_vibe_history_context(conn, last_track_artist, last_track_genre, last_track_year)
+    finally:
         conn.close()
-        return None
 
-    # 1. FIFO Blacklist Ring Buffer (Last 6 Plays)
-    try:
-        filler_hist_rows = conn.execute("""
-            SELECT filler_id, is_sing_along
-            FROM filler_play_history
-            ORDER BY id DESC
-            LIMIT 7
-        """).fetchall()
-        recent_filler_keys = [(r["filler_id"], r["is_sing_along"]) for r in filler_hist_rows]
-    except Exception as e:
-        print(f"[Database] Error checking filler_play_history: {e}")
-        recent_filler_keys = []
-
-    # Adaptive ring buffer size: never starve a small crate
-    max_blacklist = min(6, max(0, len(candidate_pool) - 2))
-    if max_blacklist > 0 and recent_filler_keys:
-        active_blacklist = set(recent_filler_keys[:max_blacklist])
-        unblacklisted = [t for t in candidate_pool if (t["id"], 1 if t.get("is_sing_along") else 0) not in active_blacklist]
-        if unblacklisted:
-            candidate_pool = unblacklisted
-
-    # 2. 90-Minute Sung Song Cooldown
-    try:
-        recent_sung = conn.execute("""
-            SELECT LOWER(t.title) as title, LOWER(t.artist) as artist
-            FROM history h
-            JOIN tracks t ON h.track_id = t.id
-            WHERE h.played_at >= datetime('now', '-90 minutes')
-        """).fetchall()
-        recent_sung_pairs = {(r["artist"].strip(), r["title"].strip()) for r in recent_sung}
-    except Exception as e:
-        print(f"[Database] Error checking recent sung history: {e}")
-        recent_sung_pairs = set()
-
-    # 3. Rolling 3-Song Multi-History Context (Era & Genre Vectors)
-    try:
-        recent_history_rows = [dict(r) for r in conn.execute("""
-            SELECT t.id, t.title, t.artist, coalesce(t.genre, '') as genre, coalesce(t.release_year, 0) as release_year
-            FROM history h
-            JOIN tracks t ON h.track_id = t.id
-            ORDER BY h.id DESC
-            LIMIT 3
-        """).fetchall()]
-    except Exception as e:
-        print(f"[Database] Error checking recent performance history: {e}")
-        recent_history_rows = []
-
-    conn.close()
-
-    # Build composite rolling window of up to 3 songs
-    history_window = []
-    if last_track_artist or last_track_genre or last_track_year:
-        history_window.append({
-            "artist": last_track_artist or "",
-            "genre": last_track_genre or "",
-            "release_year": int(last_track_year or 0)
-        })
-    for r in recent_history_rows:
-        if len(history_window) >= 3:
-            break
-        # Avoid duplicate if first history row matches last_track
-        if history_window and history_window[0].get("artist", "").lower() == r.get("artist", "").lower() and history_window[0].get("release_year") == r.get("release_year"):
-            continue
-        history_window.append(r)
-
-    # Multi-artist blacklist from last 3 songs
-    recent_artists = {s["artist"].strip().lower() for s in history_window if s.get("artist")}
-
-    # Multi-genre set from last 3 songs (ordered by recency)
-    recent_genres = [s["genre"].strip().lower() for s in history_window if s.get("genre")]
-    latest_genre = recent_genres[0] if recent_genres else ""
-
-    # Weighted era release year calculation
-    years_with_weights = []
-    default_weights = [0.5, 0.3, 0.2]
-    for idx, s in enumerate(history_window):
-        y = s.get("release_year") or 0
-        if y > 0:
-            w = default_weights[idx] if idx < len(default_weights) else 0.2
-            years_with_weights.append((w, y))
-
-    if years_with_weights:
-        total_w = sum(w for w, _ in years_with_weights)
-        target_era_year = sum(w * y for w, y in years_with_weights) / total_w
-    else:
-        target_era_year = float(last_track_year) if last_track_year > 0 else 0.0
-
-    # Filter out tracks sung recently tonight unless doing so leaves 0 candidates
-    cooled_pool = []
-    for t in candidate_pool:
-        t_artist = t["artist"].strip().lower()
-        t_title = t["title"].strip().lower()
-        if (t_artist, t_title) in recent_sung_pairs or (t_title, t_artist) in recent_sung_pairs:
-            continue
-        cooled_pool.append(t)
-
-    pool = cooled_pool if cooled_pool else candidate_pool
-
-    # 4. Upgraded Vibe Scoring Engine
-    def score_track(t: Dict[str, Any]) -> float:
-        score = 100.0
-
-        cand_artist = t["artist"].strip().lower()
-        cand_genre = (t.get("genre") or "").strip().lower()
-        cand_year = t.get("release_year") or 0
-
-        # Multi-artist diversity: heavy penalty if artist appeared anywhere in last 3 songs
-        if cand_artist in recent_artists:
-            score -= 80.0
-        elif recent_artists:
-            score += 50.0
-
-        # Multi-genre affinity
-        if cand_genre:
-            if latest_genre and (cand_genre == latest_genre or cand_genre in latest_genre or latest_genre in cand_genre):
-                score += 40.0
-            elif any(cand_genre == g or cand_genre in g or g in cand_genre for g in recent_genres):
-                score += 25.0
-
-        # Era / Year proximity to smoothed 3-song target year
-        if target_era_year > 0 and cand_year > 0:
-            year_diff = abs(cand_year - target_era_year)
-            if year_diff <= 3:
-                score += 35.0
-            elif year_diff <= 7:
-                score += 20.0
-            elif year_diff <= 12:
-                score += 10.0
-            else:
-                score -= min(25.0, (year_diff - 12) * 1.5)
-
-        # Fair crate rotation: penalize higher play counts
-        play_cnt = t.get("play_count") or 0
-        score -= (play_cnt * 25.0)
-
-        return score
-
+    pool = _apply_vibe_cooldowns(candidate_pool, ctx["recent_filler_keys"], ctx["recent_sung_pairs"])
     sorted_candidates = sorted(
         pool,
-        key=lambda x: (score_track(x), -(1 if x.get("last_played") else 0)),
-        reverse=True
+        key=lambda x: (
+            _score_vibe_track(x, ctx["recent_artists"], ctx["recent_genres"], ctx["latest_genre"], ctx["target_era_year"]),
+            -(1 if x.get("last_played") else 0),
+        ),
+        reverse=True,
     )
-
     chosen = dict(sorted_candidates[0])
     chosen["stream_url"] = f"/stream/{chosen['id']}" if chosen["is_sing_along"] else f"/stream/filler/{chosen['id']}"
     return chosen

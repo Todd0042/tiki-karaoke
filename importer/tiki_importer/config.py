@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger('tiki.importer.config')
 import os
 import sys
 from pathlib import Path
@@ -28,8 +30,8 @@ def get_default_db_path() -> str:
             import config as tiki_cfg
             if hasattr(tiki_cfg, "DB_PATH") and Path(tiki_cfg.DB_PATH).parent.exists():
                 return str(Path(tiki_cfg.DB_PATH).resolve())
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f'[Importer Config] Optional lookup skipped: {e}')
         finally:
             if repo and str(repo) in sys.path:
                 sys.path.remove(str(repo))
@@ -65,8 +67,8 @@ def get_default_library_path() -> str:
             import config as tiki_cfg
             if hasattr(tiki_cfg, "TRACKS_DIR") and Path(tiki_cfg.TRACKS_DIR).exists():
                 return str(Path(tiki_cfg.TRACKS_DIR).resolve())
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f'[Importer Config] Optional lookup skipped: {e}')
         finally:
             if repo and str(repo) in sys.path:
                 sys.path.remove(str(repo))
@@ -158,8 +160,8 @@ def get_default_compuhost_path() -> str:
                 try:
                     if vpath.is_dir():
                         base_folders.append(vpath)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f'[Importer Config] Path scan skipped: {e}')
 
         # Dynamic search for any folder starting with compuhost
         try:
@@ -168,8 +170,8 @@ def get_default_compuhost_path() -> str:
                     if item.name.lower().startswith("compuhost"):
                         if item.is_dir():
                             base_folders.append(item)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f'[Importer Config] Optional lookup skipped: {e}')
 
     for base in base_folders:
         # Top-level install directory (e.g. C:\Program Files (x86)\CompuHost V4\SongList.tps)
@@ -185,16 +187,16 @@ def get_default_compuhost_path() -> str:
             if backup_dir.is_dir():
                 backups = sorted(backup_dir.glob("*.ciqbackup"), key=lambda p: p.stat().st_mtime, reverse=True)
                 candidates.extend(backups)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f'[Importer Config] Optional lookup skipped: {e}')
 
         ciq_dir = base / "Data" / "CatalogIQ"
         try:
             if ciq_dir.is_dir():
                 backups = sorted(ciq_dir.glob("*.ciqbackup"), key=lambda p: p.stat().st_mtime, reverse=True)
                 candidates.extend(backups)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f'[Importer Config] Optional lookup skipped: {e}')
 
     # Relative / local workspace fallback (for test suites or bundled fixtures)
     cwd = Path.cwd()
@@ -212,3 +214,4 @@ def get_default_compuhost_path() -> str:
             continue
 
     return ""
+

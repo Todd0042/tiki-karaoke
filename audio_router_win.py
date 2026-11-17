@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 from typing import Optional
 
-from audio_router_linux import DEFAULT_MONITORING_MODE, MONITORING_MODES
+from audio_base import BaseAudioRouter, DEFAULT_MONITORING_MODE, MONITORING_MODES
 from config import get_bundled_binary_path, load_config
 
 logger = logging.getLogger("tiki.audio_router")
@@ -16,7 +16,7 @@ logger = logging.getLogger("tiki.audio_router")
 MIC_ROUTER_HELPER = "tiki-mic-router"
 
 
-class WasapiAudioRouter:
+class WasapiAudioRouter(BaseAudioRouter):
     """
     Windows native low-latency mic loopback via the bundled tiki-mic-router
     helper (WASAPI shared mode, event-driven). Counterpart of the Linux
@@ -29,20 +29,14 @@ class WasapiAudioRouter:
     """
 
     def __init__(self):
+        super().__init__()
         self.proc: Optional[subprocess.Popen] = None
         self._lock = threading.RLock()
         self._rx: "queue.Queue" = queue.Queue()
         self._reader: Optional[threading.Thread] = None
         self._watchdog: Optional[threading.Thread] = None
         self._exiting = False
-
-        self.current_source: str = "default"
-        self.current_sink: str = "default"
-        self.is_muted: bool = True
-        self.volume_pct: int = 80
-        self.is_active: bool = False
         self.last_negotiated: dict = {}
-        self.monitoring_mode: str = DEFAULT_MONITORING_MODE
 
     # ---------------- helper discovery ----------------
 
@@ -285,28 +279,9 @@ class WasapiAudioRouter:
             self._cmd({"cmd": "set_gain", "gain": max(0.0, min(1.5, self.volume_pct / 100.0))}, timeout=2.0)
 
     def get_state(self) -> dict:
-        st = {
-            "available": self.is_available(),
-            "active": self.is_active,
-            "muted": self.is_muted,
-            "volume": self.volume_pct,
-            "device": self.current_source,
-            "monitoring_mode": self.monitoring_mode,
-        }
+        st = super().get_state()
         st.update(self.last_negotiated)
         return st
-
-    def set_monitoring_mode(self, mode: str):
-        """Switch monitoring mode. Stops native loopback when switching away from 'native'."""
-        if mode not in MONITORING_MODES:
-            logger.warning(f"[AudioRouter] Unknown monitoring mode '{mode}', ignoring")
-            return
-        if mode == self.monitoring_mode:
-            return
-        self.monitoring_mode = mode
-        if mode != "native":
-            self.stop_loopback()
-        logger.info(f"[AudioRouter] Monitoring mode → {mode}")
 
     def shutdown(self):
         """Full teardown (server exit). Helper also dies on stdin EOF."""

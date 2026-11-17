@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger('tiki.routes.launcher')
 """
 routes/launcher.py - Desktop in-process UI and application launchers.
 
@@ -34,9 +36,8 @@ def _check_reg_key_for_exe(key, winreg_mod, exe_name: str) -> Optional[Path]:
             p = Path(str(inst_dir).strip(' "')) / exe_name
             if p.is_file():
                 return p
-    except OSError:
-        pass
-
+    except OSError as _exc:
+        logger.debug(f'[tiki.routes.launcher] Suppressed OSError: {_exc}')
     for unins_val in ["QuietUninstallString", "UninstallString"]:
         try:
             unins, _ = winreg_mod.QueryValueEx(key, unins_val)
@@ -45,9 +46,8 @@ def _check_reg_key_for_exe(key, winreg_mod, exe_name: str) -> Optional[Path]:
                 p = Path(clean_unins).parent / exe_name
                 if p.is_file():
                     return p
-        except OSError:
-            pass
-
+        except OSError as _exc:
+            logger.debug(f'[tiki.routes.launcher] Suppressed OSError: {_exc}')
     return None
 
 
@@ -74,9 +74,8 @@ def _find_windows_registry_app(app_id: str, exe_name: str, display_name: str = "
                     p = _check_reg_key_for_exe(key, winreg, exe_name)
                     if p:
                         return p
-            except OSError:
-                pass
-
+            except OSError as _exc:
+                logger.debug(f'[tiki.routes.launcher] Suppressed OSError: {_exc}')
             # 2. Enumerate uninstall keys for matching DisplayName
             if display_name:
                 try:
@@ -92,13 +91,12 @@ def _find_windows_registry_app(app_id: str, exe_name: str, display_name: str = "
                                             p = _check_reg_key_for_exe(child_key, winreg, exe_name)
                                             if p:
                                                 return p
-                                    except OSError:
-                                        pass
+                                    except OSError as _exc:
+                                        logger.debug(f'[tiki.routes.launcher] Suppressed OSError: {_exc}')
                             except OSError:
                                 continue
-                except OSError:
-                    pass
-
+                except OSError as _exc:
+                    logger.debug(f'[tiki.routes.launcher] Suppressed OSError: {_exc}')
     # 3. App Paths check
     for hive in hives:
         for app_path_sub in [

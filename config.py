@@ -188,7 +188,16 @@ def get_config_path() -> Path:
         return CONFIG_FILE
     return cfg_file
 
+_LAST_CONFIG_ERROR: Optional[str] = None
+
+
+def get_last_config_error() -> Optional[str]:
+    """Return the last config.json parse/read error message, if any."""
+    return _LAST_CONFIG_ERROR
+
+
 def load_config() -> Dict[str, Any]:
+    global _LAST_CONFIG_ERROR
     cfg = DEFAULT_CONFIG.copy()
     cfg_path = get_config_path()
     if cfg_path.exists():
@@ -197,9 +206,15 @@ def load_config() -> Dict[str, Any]:
                 content = f.read().strip()
                 if content:
                     loaded = json.loads(content)
+                    if not isinstance(loaded, dict):
+                        raise ValueError("config.json root must be a JSON object")
                     cfg.update(loaded)
-        except Exception as e:
-            print(f"[Config] Error reading {cfg_path}: {e}")
+            _LAST_CONFIG_ERROR = None
+        except (json.JSONDecodeError, ValueError, OSError) as e:
+            _LAST_CONFIG_ERROR = f"Failed to read {cfg_path.name}: {e}"
+            logger.warning(f"[Config] Error reading {cfg_path}: {e}")
+    else:
+        _LAST_CONFIG_ERROR = None
     return cfg
 
 def get_default_library_dir() -> Path:

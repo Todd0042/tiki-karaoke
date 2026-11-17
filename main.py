@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger('tiki.main')
 #!/usr/bin/env python3
 import sys
 import os
@@ -36,9 +38,8 @@ if sys.platform == "win32":
     try:
         import ctypes
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Todd.TikiKaraoke.Lounge.1.0")
-    except Exception:
-        pass
-
+    except Exception as _exc:
+        logger.debug(f'[tiki.main] Suppressed Exception: {_exc}')
 from config import (
     DATA_DIR, HOST_TOKEN, HOST_PIN, PORT, TARGET_LUFS,
     load_config, is_configured, get_bundled_binary_path,
@@ -74,46 +75,44 @@ class SafeLogger:
             try:
                 self.original_stream.write(data)
                 self.original_stream.flush()
-            except Exception:
-                pass
+            except Exception as _exc:
+                logger.debug(f'[tiki.main] Suppressed Exception: {_exc}')
         if self.file:
             try:
                 self.file.write(data)
                 self.file.flush()
-            except Exception:
-                pass
-
+            except Exception as _exc:
+                logger.debug(f'[tiki.main] Suppressed Exception: {_exc}')
     def flush(self):
         if self.original_stream:
             try:
                 self.original_stream.flush()
-            except Exception:
-                pass
+            except Exception as _exc:
+                logger.debug(f'[tiki.main] Suppressed Exception: {_exc}')
         if self.file:
             try:
                 self.file.flush()
-            except Exception:
-                pass
-
+            except Exception as _exc:
+                logger.debug(f'[tiki.main] Suppressed Exception: {_exc}')
     def isatty(self) -> bool:
         if self.original_stream and hasattr(self.original_stream, "isatty"):
             try:
                 return bool(self.original_stream.isatty())
-            except Exception:
-                pass
+            except Exception as _exc:
+                logger.debug(f'[tiki.main] Suppressed Exception: {_exc}')
         return False
 
     def fileno(self):
         if self.original_stream and hasattr(self.original_stream, "fileno"):
             try:
                 return self.original_stream.fileno()
-            except Exception:
-                pass
+            except Exception as _exc:
+                logger.debug(f'[tiki.main] Suppressed Exception: {_exc}')
         if self.file:
             try:
                 return self.file.fileno()
-            except Exception:
-                pass
+            except Exception as _exc:
+                logger.debug(f'[tiki.main] Suppressed Exception: {_exc}')
         raise OSError("SafeLogger stream has no fileno")
 
     def readable(self) -> bool:
@@ -211,9 +210,8 @@ def set_windows_sleep_prevention(enable: bool = True):
                 )
             else:
                 ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS)
-        except Exception:
-            pass
-
+        except Exception as _exc:
+            logger.debug(f'[tiki.main] Suppressed Exception: {_exc}')
 def init_windows_dpi_awareness():
     """Configures high-DPI awareness on Windows to prevent blurry GUI on 4K TVs and high-res screens."""
     if sys.platform == "win32":
@@ -224,9 +222,8 @@ def init_windows_dpi_awareness():
             try:
                 import ctypes
                 ctypes.windll.user32.SetProcessDPIAware()
-            except Exception:
-                pass
-
+            except Exception as _exc:
+                logger.debug(f'[tiki.main] Suppressed Exception: {_exc}')
 _windows_job_handle = None
 _windows_ctrl_handler_ref = None
 
@@ -294,9 +291,8 @@ def setup_windows_job_object():
         h_process = kernel32.GetCurrentProcess()
         if kernel32.AssignProcessToJobObject(h_job, h_process):
             _windows_job_handle = h_job
-    except Exception:
-        pass
-
+    except Exception as _exc:
+        logger.debug(f'[tiki.main] Suppressed Exception: {_exc}')
 def setup_windows_ctrl_handler():
     """Catches Windows console close / logoff / shutdown events and executes graceful service cleanup."""
     global _windows_ctrl_handler_ref
@@ -314,9 +310,8 @@ def setup_windows_ctrl_handler():
 
         _windows_ctrl_handler_ref = HandlerRoutine(_ctrl_handler)
         ctypes.windll.kernel32.SetConsoleCtrlHandler(_windows_ctrl_handler_ref, True)
-    except Exception:
-        pass
-
+    except Exception as _exc:
+        logger.debug(f'[tiki.main] Suppressed Exception: {_exc}')
 def kill_process_tree(proc: Optional[subprocess.Popen], timeout: float = 2.0):
     """Gracefully terminates proc and its child processes across Unix and Windows."""
     if not proc or proc.poll() is not None:
@@ -334,8 +329,8 @@ def kill_process_tree(proc: Optional[subprocess.Popen], timeout: float = 2.0):
         except Exception:
             try:
                 proc.kill()
-            except Exception:
-                pass
+            except Exception as _exc:
+                logger.debug(f'[tiki.main] Suppressed Exception: {_exc}')
     else:
         try:
             os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
@@ -343,9 +338,8 @@ def kill_process_tree(proc: Optional[subprocess.Popen], timeout: float = 2.0):
         except Exception:
             try:
                 os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-            except Exception:
-                pass
-
+            except Exception as _exc:
+                logger.debug(f'[tiki.main] Suppressed Exception: {_exc}')
 def print_terminal_qr(url: str, label: str):
     print(f"\n--- {label} ---")
     print(url)
@@ -354,9 +348,8 @@ def print_terminal_qr(url: str, label: str):
         qr = qrcode.QRCode()
         qr.add_data(url)
         qr.print_ascii(invert=True)
-    except Exception:
-        pass
-
+    except Exception as _exc:
+        logger.debug(f'[tiki.main] Suppressed Exception: {_exc}')
 def cleanup_all_services():
     """Ensures all spawned background processes, browser windows, and tunnels are cleanly terminated."""
     global active_tunnel_proc, launched_browser_procs, is_shutting_down
@@ -395,9 +388,8 @@ def cleanup_all_services():
                 check=False,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)
             )
-        except Exception:
-            pass
-
+        except Exception as _exc:
+            logger.debug(f'[tiki.main] Suppressed Exception: {_exc}')
     if active_tunnel_proc and active_tunnel_proc.poll() is None:
         print("[Shutdown] Stopping remote tunnel process...")
         kill_process_tree(active_tunnel_proc)
@@ -409,28 +401,25 @@ def cleanup_all_services():
             subprocess.run(["taskkill", "/F", "/IM", "cloudflared.exe", "/T"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2.0, check=False, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             subprocess.run(["taskkill", "/F", "/IM", "bore.exe", "/T"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2.0, check=False, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             subprocess.run(["taskkill", "/F", "/IM", "tiki-mic-router.exe", "/T"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2.0, check=False, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        except Exception:
-            pass
+        except Exception as _exc:
+            logger.debug(f'[tiki.main] Suppressed Exception: {_exc}')
     else:
         try:
             subprocess.run(["pkill", "-9", "-f", "cloudflared tunnel --no-autoupdate --url"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2.0, check=False)
             subprocess.run(["pkill", "-9", "-f", "cloudflared tunnel run --token"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2.0, check=False)
             subprocess.run(["pkill", "-9", "-f", "bore local"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2.0, check=False)
-        except Exception:
-            pass
-
+        except Exception as _exc:
+            logger.debug(f'[tiki.main] Suppressed Exception: {_exc}')
     if PID_FILE.exists():
         try:
             PID_FILE.unlink()
-        except Exception:
-            pass
-
+        except Exception as _exc:
+            logger.debug(f'[tiki.main] Suppressed Exception: {_exc}')
     try:
         from audio_router import audio_router
         audio_router.stop_loopback()
-    except Exception:
-        pass
-
+    except Exception as _exc:
+        logger.debug(f'[tiki.main] Suppressed Exception: {_exc}')
     print("✅ [Shutdown] All services stopped cleanly. Aloha! 🌺\n")
 
 def handle_signal(sig, frame):
@@ -771,9 +760,8 @@ def start_cloudflare_quick_tunnel(port: int):
             subprocess.run(["taskkill", "/F", "/IM", "cloudflared.exe", "/T"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2.0, check=False, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         else:
             subprocess.run(["pkill", "-9", "-f", "cloudflared tunnel --no-autoupdate --url"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2.0, check=False)
-    except Exception:
-        pass
-
+    except Exception as _exc:
+        logger.debug(f'[tiki.main] Suppressed Exception: {_exc}')
     print("[Tunnel] 🔒 Establishing secure Cloudflare Quick Tunnel (Trusted HTTPS)...")
     try:
         proc = subprocess.Popen(
@@ -824,9 +812,8 @@ def start_cloudflare_named_tunnel(token: str, custom_domain: str):
             subprocess.run(["taskkill", "/F", "/IM", "cloudflared.exe", "/T"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2.0, check=False, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         else:
             subprocess.run(["pkill", "-9", "-f", "cloudflared tunnel run --token"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2.0, check=False)
-    except Exception:
-        pass
-
+    except Exception as _exc:
+        logger.debug(f'[tiki.main] Suppressed Exception: {_exc}')
     print(f"[Tunnel] 🔒 Launching Cloudflare Named Tunnel ({custom_domain or 'Branded Domain'})...")
     try:
         proc = subprocess.Popen(
@@ -881,9 +868,8 @@ def start_tailscale_funnel(port: int, tailnet_domain: str = ""):
             dns_name = data.get("Self", {}).get("DNSName", "").rstrip(".")
             if dns_name:
                 url = f"https://{dns_name}"
-        except Exception:
-            pass
-
+        except Exception as _exc:
+            logger.debug(f'[tiki.main] Suppressed Exception: {_exc}')
     return url, None
 
 def start_permanent_tunnel(port: int, remote_port: int = 38480):
@@ -900,9 +886,8 @@ def start_permanent_tunnel(port: int, remote_port: int = 38480):
         else:
             subprocess.run(["pkill", "-9", "-f", "bore local"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         time.sleep(0.4)
-    except Exception:
-        pass
-
+    except Exception as _exc:
+        logger.debug(f'[tiki.main] Suppressed Exception: {_exc}')
     print(f"[Remote] Establishing permanent static tunnel on bore.pub:{remote_port}...")
     proc = subprocess.Popen(
         [str(bin_path), "local", str(port), "--to", "bore.pub", "--port", str(remote_port)],
@@ -1215,8 +1200,8 @@ def main():
                     check=False,
                     **get_console_subprocess_kwargs()
                 )
-            except Exception:
-                pass
+            except Exception as _exc:
+                logger.debug(f'[tiki.main] Suppressed Exception: {_exc}')
         sys.exit(0)
 
     # Prevent Windows computer and display from sleeping during party/karaoke show
@@ -1420,8 +1405,8 @@ def main():
         import traceback
         print(f"[FATAL EXCEPTION IN MAIN]: {e}")
         traceback.print_exc()
-    except (KeyboardInterrupt, SystemExit):
-        pass
+    except (KeyboardInterrupt, SystemExit) as _exc:
+        logger.debug(f'[tiki.main] Suppressed (KeyboardInterrupt, SystemExit): {_exc}')
     finally:
         cleanup_all_services()
         time.sleep(0.2)

@@ -1,4 +1,6 @@
 from __future__ import annotations
+import logging
+logger = logging.getLogger('tiki.control_hub')
 """
 Tiki Karaoke Lounge - Native Desktop Control Hub Window
 Provides a lightweight, zero-terminal desktop launcher with:
@@ -105,13 +107,12 @@ class TikiControlHub:
                 self.root.focus_force()
                 self.root.attributes("-topmost", True)
                 self.root.after(150, lambda: self.root.attributes("-topmost", False) if self.root else None)
-            except Exception:
-                pass
+            except Exception as _exc:
+                logger.debug(f'[tiki.control_hub] Suppressed Exception: {_exc}')
         try:
             self.root.after_idle(_bring)
-        except Exception:
-            pass
-
+        except Exception as _exc:
+            logger.debug(f'[tiki.control_hub] Suppressed Exception: {_exc}')
     def _set_app_icon(self):
         try:
             from tray import get_tray_icon_path
@@ -124,9 +125,8 @@ class TikiControlHub:
                     photo = ImageTk.PhotoImage(img)
                     self.root.iconphoto(False, photo)
                     self._qr_images.append(photo)
-        except Exception:
-            pass
-
+        except Exception as _exc:
+            logger.debug(f'[tiki.control_hub] Suppressed Exception: {_exc}')
     def _build_header(self):
         header_frame = tk.Frame(self.root, bg="#0d0814")
         header_frame.pack(fill="x", padx=20, pady=(16, 8))
@@ -372,8 +372,8 @@ class TikiControlHub:
                     old = self.ticker_lbl.cget("text")
                     self.ticker_lbl.config(text=msg, fg="#39ff14")
                     self.root.after(3000, lambda: self.ticker_lbl.config(text=old, fg="#94a3b8"))
-                except Exception:
-                    pass
+                except Exception as _exc:
+                    logger.debug(f'[tiki.control_hub] Suppressed Exception: {_exc}')
             self.root.after(0, _apply)
 
     def _launch_host_desk(self):
@@ -486,8 +486,8 @@ class TikiControlHub:
                         spawn_detached_process(list(cmd_base), work_dir)
                         self._flash_toast("🌺 Tiki Rehearsal Lounge launched!")
                         return
-                except Exception:
-                    pass
+                except Exception as _exc:
+                    logger.debug(f'[tiki.control_hub] Suppressed Exception: {_exc}')
                 if HAS_GUI:
                     self.root.after(0, lambda: messagebox.showerror("Tiki Rehearsal Lounge", f"Could not launch Tiki Rehearsal Lounge:\n{e}"))
 
@@ -582,9 +582,8 @@ class TikiControlHub:
                         data = json.loads(resp.read().decode("utf-8"))
                         if self.root:
                             self.root.after(0, lambda: self._apply_state(data))
-            except Exception:
-                pass
-
+            except Exception as _exc:
+                logger.debug(f'[tiki.control_hub] Suppressed Exception: {_exc}')
         threading.Thread(target=_fetch, daemon=True).start()
         if not self._is_closing and self.root:
             self.root.after(3000, self._poll_live_state)
@@ -682,10 +681,10 @@ class TikiControlHub:
         if self.on_shutdown:
             try:
                 self.on_shutdown()
-            except Exception:
-                pass
+            except Exception as _exc:
+                logger.debug(f'[tiki.control_hub] Suppressed Exception: {_exc}')
         if self.root:
             try:
                 self.root.destroy()
-            except Exception:
-                pass
+            except Exception as _exc:
+                logger.debug(f'[tiki.control_hub] Suppressed Exception: {_exc}')

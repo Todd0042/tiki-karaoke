@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger('tiki.tray')
 """
 System Tray Icon Manager for Tiki Karaoke Lounge
 Provides cross-platform system tray integration with native right-click menu:
@@ -73,9 +75,8 @@ def get_tray_image():
             if img.width > 64 or img.height > 64:
                 img = img.resize((64, 64), Image.Resampling.LANCZOS)
             return img
-        except Exception:
-            pass
-
+        except Exception as _exc:
+            logger.debug(f'[tiki.tray] Suppressed Exception: {_exc}')
     # Fallback generated icon if no file found: vibrant tropical cyan circle with pink border
     from PIL import ImageDraw
     img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
@@ -107,9 +108,8 @@ def find_qt_python(verbose: bool = False) -> Optional[str]:
         try:
             import PySide6.QtWidgets  # noqa: F401
             return sys.executable
-        except ImportError:
-            pass
-
+        except ImportError as _exc:
+            logger.debug(f'[tiki.tray] Suppressed ImportError: {_exc}')
     # 2. Check host system python interpreters (AppImage running on Linux host)
     candidates = ["/usr/bin/python3", "/usr/local/bin/python3"]
     w3 = shutil.which("python3")
@@ -257,8 +257,8 @@ def run_qt_tray_daemon(args):
                 )
                 with urllib.request.urlopen(req, timeout=1.5):
                     pass
-            except Exception:
-                pass
+            except Exception as _exc:
+                logger.debug(f'[tiki.tray] Suppressed Exception: {_exc}')
         app.quit()
 
     def _focus_hub():
@@ -273,8 +273,8 @@ def run_qt_tray_daemon(args):
                 )
                 with urllib.request.urlopen(req, timeout=1.5):
                     return
-            except Exception:
-                pass
+            except Exception as _exc:
+                logger.debug(f'[tiki.tray] Suppressed Exception: {_exc}')
         _open(args.host)()
 
     if getattr(args, "focus_hub", None):
@@ -414,9 +414,8 @@ def start_tray(
                 subprocess.run(["wl-copy"], input=target.strip().encode("utf-8"), check=False)
             elif shutil.which("xclip"):
                 subprocess.run(["xclip", "-selection", "clipboard"], input=target.strip().encode("utf-8"), check=False)
-        except Exception:
-            pass
-
+        except Exception as _exc:
+            logger.debug(f'[tiki.tray] Suppressed Exception: {_exc}')
     def _quit_app(icon=None, item=None):
         print("\n🛑 [System Tray] Quit requested from system tray icon...")
         stop_tray()
@@ -491,15 +490,15 @@ def stop_tray():
         except Exception:
             try:
                 qt_tray_proc.kill()
-            except Exception:
-                pass
+            except Exception as _exc:
+                logger.debug(f'[tiki.tray] Suppressed Exception: {_exc}')
         qt_tray_proc = None
 
     if tray_icon:
         try:
             tray_icon.stop()
-        except Exception:
-            pass
+        except Exception as _exc:
+            logger.debug(f'[tiki.tray] Suppressed Exception: {_exc}')
         tray_icon = None
 
 if __name__ == "__main__":

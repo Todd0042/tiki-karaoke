@@ -502,125 +502,124 @@ async def api_browse_directories(request: Request, path: str = ""):
     }
 
 
+_SETUP_BOOL_KEYS = (
+    "hotspot_enabled", "tts_enabled", "bgm_enabled", "stage_display_enabled",
+    "kiosk_mode", "host_display_enabled", "host_kiosk_mode",
+)
+
+_SETUP_STR_KEYS = (
+    "remote_mode", "bar_name", "intermission_seconds", "stage_display",
+    "stage_display_name", "stage_display_x", "stage_display_y",
+    "stage_display_width", "stage_display_height", "audio_output_device",
+    "host_display", "host_display_name", "host_display_x", "host_display_y",
+    "host_display_width", "host_display_height", "video_quality_profile",
+)
+
+
+def _migrate_setup_storage_paths(payload: Dict[str, Any]) -> None:
+    old_tracks = get_tracks_dir()
+    old_db = get_db_path()
+
+    new_lib = payload.get("library_dir", "").strip()
+    if new_lib:
+        new_lib_path = Path(new_lib).expanduser().resolve()
+        payload["library_dir"] = str(new_lib_path)
+        new_tracks = new_lib_path / "tracks"
+        if old_tracks.exists() and old_tracks.resolve() != new_tracks.resolve():
+            existing_tracks = list(old_tracks.glob("*/*.mp4"))
+            if existing_tracks and payload.get("migrate_files", True):
+                new_tracks.mkdir(parents=True, exist_ok=True)
+                for artist_dir in old_tracks.iterdir():
+                    if artist_dir.is_dir() and artist_dir.name != "tracks":
+                        target_artist = new_tracks / artist_dir.name
+                        target_artist.mkdir(parents=True, exist_ok=True)
+                        for f in artist_dir.iterdir():
+                            dest_f = target_artist / f.name
+                            if not dest_f.exists():
+                                shutil.move(str(f), str(dest_f))
+                migrate_storage_paths(str(old_tracks), str(new_tracks))
+
+    new_data = payload.get("data_dir", "").strip()
+    if new_data:
+        new_data_path = Path(new_data).expanduser().resolve()
+        payload["data_dir"] = str(new_data_path)
+        new_db = new_data_path / "karaoke.db"
+        if old_db.exists() and old_db.resolve() != new_db.resolve() and not new_db.exists():
+            new_data_path.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(str(old_db), str(new_db))
+
+    new_recs = payload.get("recordings_dir", "").strip()
+    if new_recs:
+        new_recs_path = Path(new_recs).expanduser().resolve()
+        payload["recordings_dir"] = str(new_recs_path)
+        new_recs_path.mkdir(parents=True, exist_ok=True)
+        set_setting("recordings_dir", str(new_recs_path))
+    elif "recordings_dir" in payload:
+        payload["recordings_dir"] = ""
+        set_setting("recordings_dir", "")
+
+
+def _sync_setup_db_settings(payload: Dict[str, Any]) -> None:
+    if "require_room_code" in payload:
+        req_room = bool(payload["require_room_code"])
+        set_setting("require_room_code", "true" if req_room else "false")
+        if req_room:
+            get_active_room_code()
+
+    for key in _SETUP_BOOL_KEYS:
+        if key in payload:
+            set_setting(key, "true" if payload[key] else "false")
+    for key in _SETUP_STR_KEYS:
+        if key in payload:
+            set_setting(key, str(payload[key]))
+    for trimmed_key in ("hotspot_ssid", "hotspot_password"):
+        if trimmed_key in payload:
+            set_setting(trimmed_key, str(payload[trimmed_key]).strip())
+    if "preferred_browser" in payload:
+        set_setting("preferred_browser", str(payload["preferred_browser"]).strip().lower())
+    if "mic_monitoring_mode" in payload:
+        mode = str(payload["mic_monitoring_mode"]).strip()
+        if mode in MONITORING_MODES:
+            set_setting("mic_monitoring_mode", mode)
+            audio_router.set_monitoring_mode(mode)
+
+
+async def _broadcast_setup_network_update() -> None:
+    try:
+        import network_helper
+        from config import PORT
+        from app import get_base_url
+        effective_port = int(os.getenv("TIKI_PORT", str(PORT)))
+        ip = network_helper.get_best_local_ip()
+        base_url = get_base_url()
+        await manager.broadcast({
+            "type": "network_updated",
+            "local_ip": ip,
+            "port": effective_port,
+            "base_url": base_url,
+            "join_url": f"{base_url}/join",
+            "require_room_code": is_room_code_required(),
+            "is_internet_connected": network_helper.is_internet_available(),
+            "is_hotspot": network_helper.is_hotspot_ip(ip),
+            "hotspot_enabled": get_setting("hotspot_enabled", "false") == "true",
+            "hotspot_ssid": network_helper.get_hotspot_ssid(),
+            "hotspot_password": network_helper.get_hotspot_password(),
+            "show_wifi_card": network_helper.is_hotspot_enabled(),
+        })
+    except Exception as ws_err:
+        print(f"[Setup] WebSocket broadcast notice: {ws_err}")
+
+
 @router.post("/api/setup")
 async def api_save_setup(payload: Dict[str, Any], request: Request, response: Response):
     if is_configured() and not (is_host_request(request) or is_local_request(request)):
         raise HTTPException(status_code=403, detail="Host DJ authorization required")
-    
+
     try:
-        old_tracks = get_tracks_dir()
-        old_db = get_db_path()
-
-        # Normalize storage paths if supplied
-        new_lib = payload.get("library_dir", "").strip()
-        if new_lib:
-            new_lib_path = Path(new_lib).expanduser().resolve()
-            payload["library_dir"] = str(new_lib_path)
-            new_tracks = new_lib_path / "tracks"
-
-            # Auto-migrate existing tracks if path changed and old library has files
-            if old_tracks.exists() and old_tracks.resolve() != new_tracks.resolve():
-                existing_tracks = list(old_tracks.glob("*/*.mp4"))
-                if existing_tracks and payload.get("migrate_files", True):
-                    new_tracks.mkdir(parents=True, exist_ok=True)
-                    for artist_dir in old_tracks.iterdir():
-                        if artist_dir.is_dir() and artist_dir.name != "tracks":
-                            target_artist = new_tracks / artist_dir.name
-                            target_artist.mkdir(parents=True, exist_ok=True)
-                            for f in artist_dir.iterdir():
-                                dest_f = target_artist / f.name
-                                if not dest_f.exists():
-                                    shutil.move(str(f), str(dest_f))
-                    migrate_storage_paths(str(old_tracks), str(new_tracks))
-
-        new_data = payload.get("data_dir", "").strip()
-        if new_data:
-            new_data_path = Path(new_data).expanduser().resolve()
-            payload["data_dir"] = str(new_data_path)
-            new_db = new_data_path / "karaoke.db"
-            if old_db.exists() and old_db.resolve() != new_db.resolve() and not new_db.exists():
-                new_data_path.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(str(old_db), str(new_db))
-
-        new_recs = payload.get("recordings_dir", "").strip()
-        if new_recs:
-            new_recs_path = Path(new_recs).expanduser().resolve()
-            payload["recordings_dir"] = str(new_recs_path)
-            new_recs_path.mkdir(parents=True, exist_ok=True)
-            set_setting("recordings_dir", str(new_recs_path))
-        elif "recordings_dir" in payload:
-            payload["recordings_dir"] = ""
-            set_setting("recordings_dir", "")
-
+        _migrate_setup_storage_paths(payload)
         cfg = save_config(payload)
         init_db()
-
-        if "remote_mode" in payload:
-            set_setting("remote_mode", str(payload["remote_mode"]))
-        if "require_room_code" in payload:
-            req_room = bool(payload["require_room_code"])
-            set_setting("require_room_code", "true" if req_room else "false")
-            if req_room:
-                get_active_room_code()
-        if "hotspot_enabled" in payload:
-            set_setting("hotspot_enabled", "true" if payload["hotspot_enabled"] else "false")
-        if "hotspot_ssid" in payload:
-            set_setting("hotspot_ssid", str(payload["hotspot_ssid"]).strip())
-        if "hotspot_password" in payload:
-            set_setting("hotspot_password", str(payload["hotspot_password"]).strip())
-        if "bar_name" in payload:
-            set_setting("bar_name", str(payload["bar_name"]))
-        if "intermission_seconds" in payload:
-            set_setting("intermission_seconds", str(payload["intermission_seconds"]))
-        if "tts_enabled" in payload:
-            set_setting("tts_enabled", "true" if payload["tts_enabled"] else "false")
-        if "bgm_enabled" in payload:
-            set_setting("bgm_enabled", "true" if payload["bgm_enabled"] else "false")
-        if "stage_display_enabled" in payload:
-            set_setting("stage_display_enabled", "true" if payload["stage_display_enabled"] else "false")
-        if "stage_display" in payload:
-            set_setting("stage_display", str(payload["stage_display"]))
-        if "stage_display_name" in payload:
-            set_setting("stage_display_name", str(payload["stage_display_name"]))
-        if "stage_display_x" in payload:
-            set_setting("stage_display_x", str(payload["stage_display_x"]))
-        if "stage_display_y" in payload:
-            set_setting("stage_display_y", str(payload["stage_display_y"]))
-        if "stage_display_width" in payload:
-            set_setting("stage_display_width", str(payload["stage_display_width"]))
-        if "stage_display_height" in payload:
-            set_setting("stage_display_height", str(payload["stage_display_height"]))
-        if "audio_output_device" in payload:
-            set_setting("audio_output_device", str(payload["audio_output_device"]))
-        if "preferred_browser" in payload:
-            set_setting("preferred_browser", str(payload["preferred_browser"]).strip().lower())
-        if "kiosk_mode" in payload:
-            set_setting("kiosk_mode", "true" if payload["kiosk_mode"] else "false")
-        if "host_display_enabled" in payload:
-            set_setting("host_display_enabled", "true" if payload["host_display_enabled"] else "false")
-        if "host_display" in payload:
-            set_setting("host_display", str(payload["host_display"]))
-        if "host_display_name" in payload:
-            set_setting("host_display_name", str(payload["host_display_name"]))
-        if "host_display_x" in payload:
-            set_setting("host_display_x", str(payload["host_display_x"]))
-        if "host_display_y" in payload:
-            set_setting("host_display_y", str(payload["host_display_y"]))
-        if "host_display_width" in payload:
-            set_setting("host_display_width", str(payload["host_display_width"]))
-        if "host_display_height" in payload:
-            set_setting("host_display_height", str(payload["host_display_height"]))
-        if "host_kiosk_mode" in payload:
-            set_setting("host_kiosk_mode", "true" if payload["host_kiosk_mode"] else "false")
-        if "video_quality_profile" in payload:
-            set_setting("video_quality_profile", str(payload["video_quality_profile"]))
-        if "mic_monitoring_mode" in payload:
-            mode = str(payload["mic_monitoring_mode"]).strip()
-            if mode in MONITORING_MODES:
-                set_setting("mic_monitoring_mode", mode)
-                audio_router.set_monitoring_mode(mode)
-
-        # Automatically log host in with cookie
+        _sync_setup_db_settings(payload)
         set_host_cookie(response, max_age=86400 * 30, request=request)
 
         tunnel_reload_cb = get_tunnel_reload_trigger()
@@ -630,36 +629,7 @@ async def api_save_setup(payload: Dict[str, Any], request: Request, response: Re
             except Exception as te:
                 print(f"[Setup] Tunnel reload notice: {te}")
 
-        # Broadcast updated network info to any connected displays/clients
-        try:
-            import network_helper
-            from config import PORT
-            effective_port = int(os.getenv("TIKI_PORT", str(PORT)))
-            ip = network_helper.get_best_local_ip()
-            is_hotspot = network_helper.is_hotspot_ip(ip)
-            is_net = network_helper.is_internet_available()
-            ssid = network_helper.get_hotspot_ssid()
-            password = network_helper.get_hotspot_password()
-            show_wifi_card = network_helper.is_hotspot_enabled()
-            from app import get_base_url
-            base_url = get_base_url()
-            await manager.broadcast({
-                "type": "network_updated",
-                "local_ip": ip,
-                "port": effective_port,
-                "base_url": base_url,
-                "join_url": f"{base_url}/join",
-                "require_room_code": is_room_code_required(),
-                "is_internet_connected": is_net,
-                "is_hotspot": is_hotspot,
-                "hotspot_enabled": get_setting("hotspot_enabled", "false") == "true",
-                "hotspot_ssid": ssid,
-                "hotspot_password": password,
-                "show_wifi_card": show_wifi_card
-            })
-        except Exception:
-            pass
-
+        await _broadcast_setup_network_update()
         return {"status": "ok", "redirect": f"/host?token={HOST_TOKEN}", "config": cfg}
     except Exception as e:
         import traceback

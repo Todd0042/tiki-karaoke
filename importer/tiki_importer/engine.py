@@ -32,8 +32,9 @@ def probe_duration(file_path: str) -> int:
         val = res.stdout.strip()
         if val:
             return max(1, int(float(val)))
-    except Exception:
-        pass
+    except Exception as e:
+        import logging
+        logging.getLogger("tiki.importer.engine").debug(f"[Importer] ffprobe duration parse failed for {file_path}: {e}")
     return 210
 
 

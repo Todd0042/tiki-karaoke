@@ -8,9 +8,12 @@ Handles:
 - MP3+CDG (.zip) packaging and ID3 metadata tagging
 - Disc ID online metadata autofill via MusicBrainz / FreeDB
 """
+import logging
 import os
 import re
 import sys
+
+logger = logging.getLogger("tiki.cdg_ripper")
 import time
 import shutil
 import zipfile
@@ -40,8 +43,8 @@ def list_optical_drives() -> List[Dict[str, str]]:
                             "device": f"{letter}:",
                             "name": f"CD/DVD Drive ({letter}:)"
                         })
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"[CDG Ripper] Windows drive type probe failed: {e}")
         # Fallback: check standard letters if ctypes failed
         if not drives:
             for l in ["D:", "E:", "F:", "G:"]:
@@ -126,8 +129,8 @@ def read_disc_toc(device: str) -> Dict[str, Any]:
                     "total_duration_sec": total_s,
                     "tracks": tracks
                 }
-    except Exception:
-        pass
+    except (subprocess.SubprocessError, OSError) as e:
+        logger.warning(f"[CDG Ripper] cdrdao disk-info failed for {device}: {e}")
 
     # If no physical disc detected or drive empty
     return {
@@ -201,8 +204,8 @@ def lookup_musicbrainz_disc(disc_id: str, track_count: int) -> Optional[List[Dic
                             "artist": t.get("artist-credit", [{}])[0].get("name", "Various Artists"),
                             "title": t.get("title", f"Track {idx+1:02d}")
                         } for idx, t in enumerate(tracks)]
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"[CDG Ripper] MusicBrainz lookup failed for disc_id={disc_id}, using local track names: {e}")
     return None
 
 
@@ -275,31 +278,38 @@ def rip_cdg_track_process(
         cdg_packet[1] = 0x01  # Memory Preset / Clear Screen
         cdg_path.write_bytes(bytes(cdg_packet * 300))
 
-    # Step 2: Encode to MP3 via ffmpeg
-    ffmpeg_bin = shutil.which("ffmpeg") or "ffmpeg"
-    log(f"Encoding MP3 at {bitrate_kbps} kbps with ID3 metadata...")
-    encode_cmd = [
-        ffmpeg_bin, "-y",
-        "-i", str(wav_path),
-        "-vn", "-c:a", "libmp3lame", "-b:a", f"{bitrate_kbps}k",
-        "-id3v2_version", "3",
-        "-metadata", f"title={track.get('title', '')}",
-        "-metadata", f"artist={track.get('artist', '')}",
-        "-metadata", "genre=Karaoke",
-        str(mp3_path)
-    ]
-    try:
-        subprocess.run(encode_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
-    except Exception as e:
-        log(f"FFmpeg encode warning: {e}, using WAV fallback")
-        mp3_path = wav_path
+    # Step 2: Encode to MP3 via ffmpeg (with explicit missing-ffmpeg check and WAV fallback)
+    ffmpeg_bin = shutil.which("ffmpeg")
+    audio_out_path = mp3_path
+    if not ffmpeg_bin:
+        log("Warning: ffmpeg not found on PATH; packaging uncompressed WAV fallback.")
+        logger.warning("[CDG Ripper] ffmpeg executable not found; using WAV fallback")
+        audio_out_path = wav_path
+    else:
+        log(f"Encoding MP3 at {bitrate_kbps} kbps with ID3 metadata...")
+        encode_cmd = [
+            ffmpeg_bin, "-y",
+            "-i", str(wav_path),
+            "-vn", "-c:a", "libmp3lame", "-b:a", f"{bitrate_kbps}k",
+            "-id3v2_version", "3",
+            "-metadata", f"title={track.get('title', '')}",
+            "-metadata", f"artist={track.get('artist', '')}",
+            "-metadata", "genre=Karaoke",
+            str(mp3_path)
+        ]
+        try:
+            subprocess.run(encode_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+        except (subprocess.SubprocessError, OSError) as e:
+            log(f"FFmpeg encode warning: {e}, using WAV fallback")
+            logger.warning(f"[CDG Ripper] FFmpeg encode failed ({e}); using WAV fallback")
+            audio_out_path = wav_path
 
     # Step 3: Package into .zip archive
     log(f"Packaging '{zip_dest.name}'...")
     shutil.copy2(cdg_path, renamed_cdg)
 
     with zipfile.ZipFile(zip_dest, "w", zipfile.ZIP_DEFLATED) as zf:
-        zf.write(mp3_path, arcname=f"{base_name}.mp3")
+        zf.write(audio_out_path, arcname=f"{base_name}{audio_out_path.suffix}")
         zf.write(renamed_cdg, arcname=f"{base_name}.cdg")
 
     # Clean up track temp files
@@ -307,8 +317,8 @@ def rip_cdg_track_process(
         if p.exists():
             try:
                 p.unlink()
-            except Exception:
-                pass
+            except OSError as e:
+                logger.debug(f"[CDG Ripper] Temp file cleanup failed for {p}: {e}")
 
     log(f"✅ Finished: {zip_dest.name} ({zip_dest.stat().st_size // 1024} KB)")
     return zip_dest

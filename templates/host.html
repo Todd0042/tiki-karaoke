@@ -245,6 +245,9 @@
                 <button onclick="event.stopPropagation(); this.blur(); fetchCurrentState(true);" class="btn-ghost" title="Resync Stage Player (Press R)" style="padding: 6px 12px; font-size: 0.9rem; color: var(--neon-cyan); border-color: rgba(0,240,255,0.4);">
                     🔄 Sync
                 </button>
+                <button id="stageHelpBtn" onclick="event.stopPropagation(); this.blur(); document.getElementById('stageHelpModal').style.display='flex';" class="btn-ghost" title="Stage Quick Guide" style="padding: 6px 12px; font-size: 0.9rem; color: var(--neon-gold); border-color: rgba(255,183,3,0.4);">
+                    ❓ Guide
+                </button>
                 <button id="stageFullscreenBtn" onclick="event.stopPropagation(); this.blur(); toggleStageFullscreen();" class="btn-ghost" title="Toggle Fullscreen (F11)" style="padding: 6px 12px; font-size: 0.9rem; color: var(--neon-lime); border-color: rgba(57,255,20,0.4);">
                     ⛶ Fullscreen (F11)
                 </button>
@@ -639,5 +642,19 @@
             }
         });
     </script>
+    <div id="stageHelpModal" onclick="if (event.target === this) this.style.display='none';" style="display: none; position: fixed; inset: 0; z-index: 200; background: rgba(5, 8, 15, 0.88); backdrop-filter: blur(8px); align-items: center; justify-content: center; padding: 20px;">
+        <div class="tiki-card" style="max-width: 500px; width: 100%; padding: 22px; border: 1px solid var(--border-neon);">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                <h2 class="font-tiki neon-cyan" style="margin: 0; font-size: 1.25rem;">❓ Stage Display Quick Guide</h2>
+                <button type="button" onclick="document.getElementById('stageHelpModal').style.display='none';" class="btn-ghost" style="padding: 4px 10px;">✕</button>
+            </div>
+            <ul style="margin: 0; padding-left: 18px; color: #dbe4f0; font-size: 0.9rem; line-height: 1.6;">
+                <li><strong>Guest QR Pairing:</strong> Guests scan the on-screen QR code to join and request songs from their phone.</li>
+                <li><strong>Host Controls:</strong> Open <code>/host</code> on your phone or laptop to manage the queue, mics, reverb, and soundboard.</li>
+                <li><strong>Shortcuts:</strong> Press <code>F11</code> for fullscreen TV mode or <code>R</code> to resync playback state.</li>
+            </ul>
+            <button type="button" onclick="document.getElementById('stageHelpModal').style.display='none';" class="btn-neon-cyan" style="width: 100%; margin-top: 16px; padding: 10px; font-weight: 700;">Got It</button>
+        </div>
+    </div>
 </body>
 </html>

@@ -19,7 +19,10 @@
 
         <div class="setup-mode-bar">
             <span style="font-size: 0.88rem; color: var(--text-muted);">Need custom domains, drive paths, mic DSP, or multi-monitor?</span>
-            <a href="/setup/advanced" class="setup-nav-link">⚙️ Advanced Options →</a>
+            <div style="display: flex; gap: 10px; align-items: center;">
+                <button type="button" onclick="document.getElementById('setupHelpModal').style.display='flex';" class="setup-nav-link" style="background: transparent; cursor: pointer;">❓ Setup Guide</button>
+                <a href="/setup/advanced" class="setup-nav-link">⚙️ Advanced Options →</a>
+            </div>
         </div>
 
         <form id="setupForm" onsubmit="handleSetupSubmit(event)">
@@ -330,5 +333,19 @@
             }
         }
     </script>
+    <div id="setupHelpModal" onclick="if (event.target === this) this.style.display='none';" style="display: none; position: fixed; inset: 0; z-index: 9999; background: rgba(5, 8, 15, 0.86); backdrop-filter: blur(8px); align-items: center; justify-content: center; padding: 16px;">
+        <div class="setup-card" style="max-width: 480px; margin: 0;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                <h2 class="font-tiki neon-cyan" style="margin: 0; font-size: 1.2rem;">❓ Quick Setup Guide</h2>
+                <button type="button" onclick="document.getElementById('setupHelpModal').style.display='none';" style="background: none; border: none; color: #cbd5e1; font-size: 1.1rem; cursor: pointer;">✕</button>
+            </div>
+            <ol style="margin: 0; padding-left: 18px; color: #dbe4f0; font-size: 0.88rem; line-height: 1.6;">
+                <li><strong>Lounge Name &amp; Host PIN:</strong> Sets your bar title and the 4-digit PIN used to unlock Host DJ mode.</li>
+                <li><strong>Stage Display:</strong> Pick which TV/monitor runs the fullscreen karaoke stage.</li>
+                <li><strong>Audio &amp; Mic Routing:</strong> Choose Direct Hardware for external mixers, Native OS for low-latency loopback, or Browser WebRTC for Bluetooth/HDMI TVs.</li>
+            </ol>
+            <button type="button" onclick="document.getElementById('setupHelpModal').style.display='none';" style="width: 100%; margin-top: 14px; padding: 10px; border-radius: 10px; border: none; background: var(--neon-cyan); color: #05080f; font-weight: 700; cursor: pointer;">Got It</button>
+        </div>
+    </div>
 </body>
 </html>

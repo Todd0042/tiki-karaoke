@@ -88,8 +88,9 @@ async def api_upload_recording(
                 "avatar": singer_avatar,
                 "last_recorded_at": datetime.datetime.now().isoformat()
             }, f, indent=2)
-    except Exception:
-        pass
+    except OSError as e:
+        import logging
+        logging.getLogger("tiki.routes.recordings").warning(f"[Recordings] Could not write profile metadata: {e}")
 
     out_dir = singer_folder
     clean_s = re.sub(r'[^\w\-_\. ]', '_', singer_name).strip()
@@ -205,8 +206,9 @@ async def api_get_host_recordings_storage(request: Request):
                     total_bytes += f.stat().st_size
                     total_count += 1
                     singer_dirs.add(f.parent.name)
-        except Exception:
-            pass
+        except OSError as e:
+            import logging
+            logging.getLogger("tiki.routes.recordings").warning(f"[Recordings] Could not scan recordings directory: {e}")
     return {
         "status": "ok",
         "recordings_dir": str(rec_dir),

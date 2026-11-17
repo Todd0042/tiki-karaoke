@@ -4,6 +4,7 @@ set -eo pipefail
 download_elf_binary() {
     local url="$1"
     local dest="$2"
+    local expected_sha256="${3:-}"
     local tmp="${dest}.tmp.$$"
     rm -f "$tmp"
     if ! curl -fsSL --retry 3 --retry-delay 2 "$url" -o "$tmp"; then
@@ -15,6 +16,13 @@ download_elf_binary() {
         rm -f "$tmp"
         echo "❌ Downloaded file is empty: $url" >&2
         return 1
+    fi
+    if [ -n "$expected_sha256" ]; then
+        if ! echo "${expected_sha256}  ${tmp}" | sha256sum -c - >/dev/null; then
+            rm -f "$tmp"
+            echo "❌ SHA-256 verification failed for: $url" >&2
+            return 1
+        fi
     fi
     local magic
     magic="$(head -c 4 "$tmp" | od -An -tx1 | tr -d ' \n')"

@@ -1,4 +1,5 @@
 import io
+import logging
 import os
 import re
 import socket
@@ -8,6 +9,8 @@ import time
 from typing import Dict, List, Tuple
 import qrcode
 from database import get_setting, set_setting
+
+logger = logging.getLogger("tiki.network_helper")
 
 HOTSPOT_SUBNET_PREFIXES = (
     "10.42.0.",      # Linux NetworkManager Hotspot default
@@ -72,8 +75,8 @@ def is_internet_available(timeout: float = 1.2, force_recheck: bool = False) -> 
             _cached_internet_available = True
             _last_internet_check = now
             return True
-    except Exception:
-        pass
+    except (socket.gaierror, OSError) as e:
+        logger.debug(f"[Network] DNS probe failed: {e}")
 
     # 2. Universal HTTPS port 443 TCP probe across Cloudflare, Google, and OpenDNS
     # Port 443 is universally permitted across consumer routers, public Wi-Fi, and firewalls
@@ -86,8 +89,8 @@ def is_internet_available(timeout: float = 1.2, force_recheck: bool = False) -> 
             _cached_internet_available = True
             _last_internet_check = now
             return True
-        except Exception:
-            pass
+        except OSError as e:
+            logger.debug(f"[Network] TCP 443 probe to {host} failed: {e}")
 
     _cached_internet_available = False
     _last_internet_check = now
@@ -128,8 +131,8 @@ def get_interface_ips() -> List[Tuple[str, str]]:
                 _cached_interface_ips = list(results)
                 _last_interface_ips_check = now
                 return results
-        except Exception:
-            pass
+        except (subprocess.SubprocessError, OSError) as e:
+            logger.debug(f"[Network] Linux ip addr lookup failed: {e}")
 
     # 2. Windows via `ipconfig`
     if sys.platform == "win32":
@@ -157,8 +160,8 @@ def get_interface_ips() -> List[Tuple[str, str]]:
                 _cached_interface_ips = list(results)
                 _last_interface_ips_check = now
                 return results
-        except Exception:
-            pass
+        except (subprocess.SubprocessError, OSError) as e:
+            logger.debug(f"[Network] Windows ipconfig lookup failed: {e}")
 
     # 3. Universal UDP Socket Probes across common subnets
     probes = [
@@ -182,8 +185,8 @@ def get_interface_ips() -> List[Tuple[str, str]]:
             if ip and not ip.startswith("127.") and ip not in seen_ips:
                 seen_ips.add(ip)
                 results.append(("adapter", ip))
-        except Exception:
-            pass
+        except OSError as e:
+            logger.debug(f"[Network] UDP probe to {probe} failed: {e}")
 
     if results:
         _cached_interface_ips = list(results)
@@ -198,7 +201,11 @@ def get_best_local_ip() -> str:
     3. Any non-virtual adapter IP
     4. 127.0.0.1 fallback
     """
-    interfaces = get_interface_ips()
+    try:
+        interfaces = get_interface_ips()
+    except Exception as e:
+        logger.warning(f"[Network] Failed to enumerate local interfaces, falling back to 127.0.0.1: {e}")
+        return "127.0.0.1"
 
     # Step 1: Hotspot IP takes top precedence
     for iface, ip in interfaces:
@@ -223,6 +230,7 @@ def get_best_local_ip() -> str:
     if interfaces:
         return interfaces[0][1]
 
+    logger.warning("[Network] No non-loopback local IP detected; using 127.0.0.1")
     return "127.0.0.1"
 
 def get_hotspot_ssid() -> str:

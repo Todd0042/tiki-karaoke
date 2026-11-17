@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger('tiki.routes.host_controls')
 """
 routes/host_controls.py - Host DJ transport controls, playback management, and system triggers.
 
@@ -211,8 +213,8 @@ async def api_complete_queue_item(queue_id: int, request: Request):
                 meta = fetch_track_metadata(last_artist, last_title)
                 last_genre = meta.get("genre", "")
                 last_year = meta.get("release_year", 0)
-            except Exception:
-                pass
+            except Exception as _exc:
+                logger.debug(f'[tiki.routes.host_controls] Suppressed Exception: {_exc}')
         await playback.trigger_filler_sequence(last_artist=last_artist, last_genre=last_genre, last_year=last_year)
 
     return {"status": "completed"}
@@ -303,6 +305,7 @@ async def api_get_state():
 async def api_host_health(request: Request):
     if not (is_host_request(request) or is_local_request(request)):
         raise HTTPException(status_code=403, detail="Host DJ authorization required")
+    from config import get_last_config_error
     effective_port = int(os.getenv("TIKI_PORT", str(PORT)))
     return {
         "status": "ok",
@@ -310,7 +313,9 @@ async def api_host_health(request: Request):
         "ffprobe_installed": bool(shutil.which("ffprobe") or get_bundled_binary_path("ffprobe").exists()),
         "port": effective_port,
         "python_version": sys.version.split()[0],
-        "platform": sys.platform
+        "platform": sys.platform,
+        "config_error": get_last_config_error(),
+        "audio_error": getattr(audio_router, "last_error", None),
     }
 
 
@@ -545,9 +550,8 @@ async def api_download_filler_batch(request: Request):
     data = {}
     try:
         data = await request.json()
-    except Exception:
-        pass
-
+    except Exception as _exc:
+        logger.debug(f'[tiki.routes.host_controls] Suppressed Exception: {_exc}')
     track_ids = data.get("ids", [])
     all_tracks = get_filler_tracks()
 
@@ -782,9 +786,8 @@ async def api_import_filler_from_song(track_id: int, request: Request):
         if meta:
             genre = meta.get("genre", "Pop")
             year = meta.get("release_year", 0)
-    except Exception:
-        pass
-
+    except Exception as _exc:
+        logger.debug(f'[tiki.routes.host_controls] Suppressed Exception: {_exc}')
     tid = add_filler_track(
         video_id=vid,
         title=best.get("title") or title,
@@ -986,15 +989,15 @@ async def host_renormalize_batch(request: Request):
                         "title": trk.get("title", "")
                     }))
                     loop.close()
-                except Exception:
-                    pass
+                except Exception as _exc:
+                    logger.debug(f'[tiki.routes.host_controls] Suppressed Exception: {_exc}')
             try:
                 loop = asyncio.new_event_loop()
                 loop.run_until_complete(manager.broadcast({"type": "renormalize_complete", "total": total}))
                 loop.run_until_complete(manager.broadcast({"type": "queue_updated", "queue": get_queue()}))
                 loop.close()
-            except Exception:
-                pass
+            except Exception as _exc:
+                logger.debug(f'[tiki.routes.host_controls] Suppressed Exception: {_exc}')
         except Exception as e:
             print(f"[HostControls] Batch renormalization error: {e}")
         finally:
@@ -1262,9 +1265,8 @@ async def host_update_ytdlp(request: Request):
     try:
         import yt_dlp
         old_version = getattr(yt_dlp.version, "__version__", "unknown")
-    except Exception:
-        pass
-
+    except Exception as _exc:
+        logger.debug(f'[tiki.routes.host_controls] Suppressed Exception: {_exc}')
     def run_upgrade():
         cmd = [sys.executable, "-m", "pip", "install", "--upgrade", "--no-cache-dir", "yt-dlp"]
         print(f"[System] Running yt-dlp upgrade: {' '.join(cmd)}")
