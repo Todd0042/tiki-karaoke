@@ -170,7 +170,7 @@ class AudioDSPPipeline {
         if (this.micStream) {
             try {
                 this.micStream.getTracks().forEach(t => t.stop());
-            } catch (e) {}
+            } catch (e) { console.debug('[Tiki]', e); }
             this.micStream = null;
         }
 
@@ -230,7 +230,7 @@ class AudioDSPPipeline {
         if (!this.ctx || !stream) return;
 
         if (this.micSourceNode) {
-            try { this.micSourceNode.disconnect(); } catch (e) {}
+            try { this.micSourceNode.disconnect(); } catch (e) { console.debug('[Tiki]', e); }
         }
 
         this.micSourceNode = this.ctx.createMediaStreamSource(stream);

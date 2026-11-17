@@ -46,7 +46,7 @@ class CdgRipperWindow:
         else:
             self.win = tk.Tk()
 
-        self.win.title("📀 CD+G Optical Disc Ripper — Tiki Karaoke")
+        self.win.title("📀 CD+G Optical Disc Ripper v1.0 — Tiki Karaoke")
         self.win.geometry("980x740")
         self.win.minsize(820, 600)
         self.win.configure(bg="#0d0814")

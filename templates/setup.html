@@ -19,7 +19,8 @@
 
         <div class="setup-mode-bar">
             <span style="font-size: 0.88rem; color: var(--text-muted);">Need custom domains, drive paths, mic DSP, or multi-monitor?</span>
-            <div style="display: flex; gap: 10px; align-items: center;">
+            <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                <button type="button" onclick="skipSetupWithDefaults()" class="setup-nav-link" style="background: rgba(57,255,20,0.1); border-color: rgba(57,255,20,0.4); color: #39ff14; cursor: pointer;">⚡ Skip &amp; Use Smart Defaults</button>
                 <button type="button" onclick="document.getElementById('setupHelpModal').style.display='flex';" class="setup-nav-link" style="background: transparent; cursor: pointer;">❓ Setup Guide</button>
                 <a href="/setup/advanced" class="setup-nav-link">⚙️ Advanced Options →</a>
             </div>
@@ -231,7 +232,7 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ x: disp.x, y: disp.y, width: disp.width, height: disp.height, badge: '📺 MAIN STAGE DISPLAY' })
                 });
-            } catch (e) {}
+            } catch (e) { console.debug('[Tiki]', e); }
         }
 
         async function loadAudioDevices() {
@@ -275,7 +276,7 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ device: sel ? sel.value : 'default' })
                 });
-            } catch (e) {}
+            } catch (e) { console.debug('[Tiki]', e); }
         }
 
         window.addEventListener('DOMContentLoaded', () => {
@@ -347,5 +348,13 @@
             <button type="button" onclick="document.getElementById('setupHelpModal').style.display='none';" style="width: 100%; margin-top: 14px; padding: 10px; border-radius: 10px; border: none; background: var(--neon-cyan); color: #05080f; font-weight: 700; cursor: pointer;">Got It</button>
         </div>
     </div>
+    <script>
+        async function skipSetupWithDefaults() {
+            const form = document.getElementById('setupForm');
+            if (form) {
+                form.requestSubmit();
+            }
+        }
+    </script>
 </body>
 </html>

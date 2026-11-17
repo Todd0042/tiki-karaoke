@@ -804,8 +804,8 @@
                 const identUrl = (data && data.url) ? data.url : `/stage/identify?id=${chosenId}&name=${encodeURIComponent(disp.label || disp.name)}&role=stage`;
                 try {
                     const pop = window.open(identUrl, `tiki_ident_${chosenId}`, `left=${disp.x || 0},top=${disp.y || 0},width=${disp.width || 1280},height=${disp.height || 720},menubar=no,toolbar=no,location=no,status=no`);
-                    if (pop) setTimeout(() => { try { pop.close(); } catch(e){} }, 3500);
-                } catch(e){}
+                    if (pop) setTimeout(() => { try { pop.close(); } catch (e) { console.debug('[Tiki]', e); } }, 3500);
+                } catch (e) { console.debug('[Tiki]', e); }
             } catch (e) {
                 console.error("Test display error:", e);
             } finally {
@@ -842,8 +842,8 @@
                 const identUrl = (data && data.url) ? data.url : `/stage/identify?id=${chosenId}&name=${encodeURIComponent(disp.label || disp.name)}&role=host`;
                 try {
                     const pop = window.open(identUrl, `tiki_ident_host_${chosenId}`, `left=${disp.x || 0},top=${disp.y || 0},width=${disp.width || 1280},height=${disp.height || 720},menubar=no,toolbar=no,location=no,status=no`);
-                    if (pop) setTimeout(() => { try { pop.close(); } catch(e){} }, 3500);
-                } catch(e){}
+                    if (pop) setTimeout(() => { try { pop.close(); } catch (e) { console.debug('[Tiki]', e); } }, 3500);
+                } catch (e) { console.debug('[Tiki]', e); }
             } catch (e) {
                 console.error("Test host display error:", e);
             } finally {
@@ -877,7 +877,7 @@
                                 });
                             }
                         });
-                    } catch(e){}
+                    } catch (e) { console.debug('[Tiki]', e); }
                 }
 
                 sel.innerHTML = '';
@@ -983,7 +983,7 @@
                     osc.start(c.time);
                     osc.stop(c.time + c.dur);
                 });
-            } catch(e) {}
+            } catch (e) { console.debug('[Tiki]', e); }
 
             setTimeout(() => {
                 if (btn) btn.innerText = oldText || "🔔 Test Sound";
@@ -1018,7 +1018,7 @@
                                 });
                             }
                         });
-                    } catch(e){}
+                    } catch (e) { console.debug('[Tiki]', e); }
                 }
 
                 sel.innerHTML = '';
@@ -1056,7 +1056,7 @@
             const vuBar = document.getElementById('setupMicVuBar');
 
             if (setupMicStream) {
-                try { setupMicStream.getTracks().forEach(t => t.stop()); } catch(e){}
+                try { setupMicStream.getTracks().forEach(t => t.stop()); } catch (e) { console.debug('[Tiki]', e); }
                 setupMicStream = null;
                 if (setupMicAnimFrame) cancelAnimationFrame(setupMicAnimFrame);
                 if (vuContainer) vuContainer.style.display = 'none';

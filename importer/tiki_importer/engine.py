@@ -135,7 +135,15 @@ class TikiImportEngine:
     ):
         self.db = TikiDatabaseAdapter(db_path)
         self.existing_paths = self.db.get_existing_paths()
-        self.compuhost = CompuHostDatabase(compuhost_path) if compuhost_path else None
+        self.compuhost = None
+        self.compuhost_error: Optional[str] = None
+        if compuhost_path:
+            try:
+                self.compuhost = CompuHostDatabase(compuhost_path)
+            except Exception as e:
+                import logging
+                logging.getLogger("tiki.importer.engine").warning(f"[Importer] CompuHost DB load failed ({compuhost_path}): {e}")
+                self.compuhost_error = str(e)
         self.enricher = MetadataEnricher() if enable_enrichment else None
 
     def scan_and_import(
